@@ -195,7 +195,7 @@ describe('protect-merge', () => {
       'gh api graphql -f query="mutation { mergePullRequest(input: {}) { clientMutationId } }"',
       'gh api graphql -F query=@mutation.graphql',
       'gh api graphql --input body.json',
-      // Unparseable: unbalanced, and not GraphQL at all.
+      // Unparsable: unbalanced, and not GraphQL at all.
       'gh api graphql -f query="mutation { mergeBranch(input: {}) { clientMutationId }"',
       'gh api graphql -f query="this is not graphql"',
       `gh api graphql -f query='mutation { addComment(input: {subjectId: "X", body: "main"}) { clientMutationId } }'`,
