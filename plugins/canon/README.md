@@ -88,6 +88,10 @@ through a symlink that leads outside the project or nowhere. It doesn't commit.
 
 `/canon:review` checks project rules. Run `/code-review` beside it for correctness bugs.
 
+## Walkthrough
+
+TODO: a real run from define to production, taken from a project that has migrated to the plugin.
+
 ## Hooks
 
 The hooks run only in a project with `.claude/canon.json` or `docs/canon/`, so a user-scope
@@ -163,6 +167,27 @@ in CI.
 
 Re-run `/canon:setup` after an update that changes the templates. It shows what would change and
 asks before writing.
+
+## Uninstalling
+
+```text
+/plugin uninstall canon@arhaty
+```
+
+That stops the skills and hooks. Then delete what setup wrote that only the plugin reads:
+
+- `.claude/canon.json`
+- `.claude/canon-index.md`
+- `.claude/canon-domains.json`
+- the section between `<!-- canon:begin -->` and `<!-- canon:end -->` in `CLAUDE.md`
+- the `canon@arhaty` key under `enabledPlugins` in `.claude/settings.json`, if setup added it
+- this repository's entry in `~/.claude/canon/trusted.json`, if you approved a formatter. It is
+  keyed by the repository's git directory; delete the file if canon is not used anywhere else.
+
+Keep `docs/canon/` and `docs/specs/`. They are the project's own documentation: the canon records
+how the code works today and the specs record what was built and why, and both read fine without
+the plugin. `.claude/rules/principles.md` is the project's rules file now; keep it or delete it as
+you would any other.
 
 ## Limitations
 
