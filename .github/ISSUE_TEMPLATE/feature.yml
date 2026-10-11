@@ -1,0 +1,15 @@
+name: Feature
+description: A change to the workflow, a skill or a hook.
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What you were doing and where canon got in the way or fell short.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What you propose

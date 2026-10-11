@@ -1,0 +1,30 @@
+name: Bug
+description: A hook refused something it should allow, allowed something it should refuse, or a skill misbehaved.
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: The command or skill you ran, and what it did.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+  - type: textarea
+    id: payload
+    attributes:
+      label: The command or hook message
+      description: For a hook, the exact Bash command and the refusal text. Remove anything private.
+      render: text
+  - type: input
+    id: versions
+    attributes:
+      label: Versions
+      description: Output of `claude --version`, `node --version`, and the canon version from `/plugin`.
+    validations:
+      required: true
