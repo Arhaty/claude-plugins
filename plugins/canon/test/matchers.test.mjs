@@ -509,6 +509,15 @@ describe('git global options and unresolved targets', () => {
     expect(pushTargets('git push origin main')?.unresolved).toBe(false);
     expect(pushTargets('git push -u origin HEAD')?.unresolved).toBe(false);
   });
+
+  it('marks a brace expansion unresolved, since bash turns it into more refspecs', () => {
+    // `git push origin {main,feat}` read as one refspec named `{main,feat}`, which is not
+    // protected, and bash then pushed `main` and `feat`.
+    expect(pushTargets('git push origin {main,feat}')?.unresolved).toBe(true);
+    expect(pushTargets('git push origin HEAD:{main,feat}')?.unresolved).toBe(true);
+    expect(pushTargets('git push origin feat/{a,b}')?.unresolved).toBe(true);
+    expect(pushTargets('git push origin feat/a')?.unresolved).toBe(false);
+  });
 });
 
 describe('more than one invocation in a call', () => {

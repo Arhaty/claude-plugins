@@ -305,6 +305,12 @@ describe('protect-push', () => {
     expect(push('git push')).toBe(2);
   }, 30_000);
 
+  it('refuses a brace expansion, which bash turns into a push to main', () => {
+    expect(push('git push origin {main,feature}')).toBe(2);
+    expect(push('git push origin HEAD:{main,x}')).toBe(2);
+    expect(push('git push -u origin HEAD')).toBe(0);
+  });
+
   it('reads the protected branches from canon.json', () => {
     const config = {
       ...CONFIG,

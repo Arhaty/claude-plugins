@@ -160,8 +160,9 @@ function readPush({ argv, env, appended }) {
   const targets = [];
   for (const refspec of refspecs) {
     // A target naming a shell variable cannot be compared against the protected
-    // set, and comparing it anyway silently answers "not protected".
-    if (/[$`]/.test(refspec)) unresolved = true;
+    // set, and comparing it anyway silently answers "not protected". Braces are the
+    // same: bash expands `{main,feat}` into two refspecs after this has read one.
+    if (/[$`{}]/.test(refspec)) unresolved = true;
     const read = readRefspec(refspec, { deleting });
     force ||= read.force;
     everyBranch ||= read.everyBranch;
