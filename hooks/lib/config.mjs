@@ -1,0 +1,183 @@
+/**
+ * Where the project is, and what `.claude/canon.json` says about it.
+ *
+ * Every hook and script reads the project through this module, so nothing else
+ * hardcodes a branch, a command or a name. `/canon:setup` writes the file; the
+ * schema that documents each field is `templates/canon.schema.json`.
+ *
+ * **A project that never adopted canon is left alone.** The plugin can be installed
+ * at user scope, which runs its hooks in every repository on the machine. A
+ * repository with neither `.claude/canon.json` nor `docs/canon/` is `absent`, and
+ * every hook exits 0 there in silence. A repository with `docs/canon/` but no
+ * config is `missing`: it adopted the workflow and lost the file, so the guards
+ * refuse until `/canon:setup` restores it rather than guessing which branch is
+ * production.
+ */
+
+import { execFileSync } from 'node:child_process';
+import { existsSync, readFileSync, realpathSync } from 'node:fs';
+import { basename, dirname, join, resolve } from 'node:path';
+
+export const CONFIG_PATH = '.claude/canon.json';
+export const DOMAINS_PATH = '.claude/canon-domains.json';
+
+const COMMANDS = ['typecheck', 'lint', 'format', 'test'];
+const URLS = ['preview', 'staging', 'production'];
+
+/**
+ * Resolve symlinks on both sides before comparing paths. A file not yet written
+ * resolves through its nearest existing ancestor, so a new file under a symlinked
+ * checkout (macOS `/var` is `/private/var`) is still inside the project.
+ */
+export function canonical(path) {
+  const full = resolve(path);
+  try {
+    return realpathSync(full);
+  } catch {
+    const parent = dirname(full);
+    return parent === full ? full : join(canonical(parent), basename(full));
+  }
+}
+
+/**
+ * The project's root: `$CLAUDE_PROJECT_DIR` when Claude Code sets it, else the
+ * work tree that holds the payload's `cwd`, else the process's own directory.
+ */
+export function projectRoot(payload) {
+  const fromEnv = process.env.CLAUDE_PROJECT_DIR;
+  if (fromEnv && existsSync(fromEnv)) return canonical(fromEnv);
+  const cwd = typeof payload?.cwd === 'string' && existsSync(payload.cwd) ? payload.cwd : '.';
+  try {
+    const top = execFileSync('git', ['-C', cwd, 'rev-parse', '--show-toplevel'], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    }).trim();
+    if (top) return canonical(top);
+  } catch {
+    // Not a git work tree. The cwd is the best answer left.
+  }
+  return canonical(cwd);
+}
+
+/** Every problem with a parsed config, as readable lines. Empty means valid. */
+export function validate(config) {
+  const errors = [];
+  const isText = (value) => typeof value === 'string' && value.trim() !== '';
+  const textOrNull = (value) => value === null || isText(value);
+
+  if (config === null || typeof config !== 'object' || Array.isArray(config)) {
+    return ['the file is not a JSON object'];
+  }
+  if (config.version !== 1) errors.push('`version` must be 1');
+  if (!isText(config.owner)) errors.push('`owner` must be a non-empty string');
+
+  const branches = config.branches ?? {};
+  if (!isText(branches.integration)) errors.push('`branches.integration` must be a branch name');
+  if (!isText(branches.production)) errors.push('`branches.production` must be a branch name');
+  if (isText(branches.integration) && branches.integration === branches.production) {
+    errors.push('`branches.integration` and `branches.production` must differ');
+  }
+  if (
+    !Array.isArray(branches.prefixes) ||
+    branches.prefixes.length === 0 ||
+    !branches.prefixes.every((p) => isText(p) && /^[a-z0-9-]+$/.test(p))
+  ) {
+    errors.push('`branches.prefixes` must be a non-empty list of lowercase prefixes');
+  }
+
+  if (!isText(config.packageManager)) errors.push('`packageManager` must be a non-empty string');
+
+  const commands = config.commands;
+  if (commands === null || typeof commands !== 'object') {
+    errors.push('`commands` must be an object');
+  } else {
+    for (const name of COMMANDS) {
+      if (!(name in commands) || !textOrNull(commands[name])) {
+        errors.push(`\`commands.${name}\` must be a command string or null`);
+      }
+    }
+  }
+
+  const formatFile = config.formatFile;
+  if (
+    formatFile !== null &&
+    !(Array.isArray(formatFile) && formatFile.length > 0 && formatFile.every(isText))
+  ) {
+    errors.push('`formatFile` must be a non-empty list of argv strings, or null');
+  }
+
+  const urls = config.urls;
+  if (urls === null || typeof urls !== 'object') {
+    errors.push('`urls` must be an object');
+  } else {
+    for (const name of URLS) {
+      if (!(name in urls) || !textOrNull(urls[name])) {
+        errors.push(`\`urls.${name}\` must be a URL string or null`);
+      }
+    }
+    if (isText(urls.preview) && !urls.preview.includes('{branch}')) {
+      errors.push('`urls.preview` must contain `{branch}`');
+    }
+  }
+  return errors;
+}
+
+/**
+ * The project's canon state:
+ *
+ * - `{ status: 'absent' }`: no config and no `docs/canon/`. Not a canon project.
+ * - `{ status: 'missing' }`: `docs/canon/` exists, the config does not.
+ * - `{ status: 'invalid', errors }`: the config cannot be parsed or fails validation.
+ * - `{ status: 'ok', config }`.
+ */
+export function loadConfig(root) {
+  const file = join(root, CONFIG_PATH);
+  if (!existsSync(file)) {
+    return existsSync(join(root, 'docs/canon')) ? { status: 'missing' } : { status: 'absent' };
+  }
+  let config;
+  try {
+    config = JSON.parse(readFileSync(file, 'utf8'));
+  } catch (error) {
+    return { status: 'invalid', errors: [`it is not valid JSON (${error.message})`] };
+  }
+  const errors = validate(config);
+  return errors.length ? { status: 'invalid', errors } : { status: 'ok', config };
+}
+
+/** The refusal text for a project whose config is `missing` or `invalid`. */
+export function configProblem(state, hook) {
+  const what =
+    state.status === 'missing'
+      ? `This project has docs/canon/ but no ${CONFIG_PATH}.`
+      : `${CONFIG_PATH} is invalid:\n${state.errors.map((e) => `  - ${e}`).join('\n')}`;
+  return (
+    `canon: ${hook} cannot run. ${what}\n\n` +
+    'Run /canon:setup to write or repair it. The canon hooks read the branch names and\n' +
+    'commands from that file and will not guess them.'
+  );
+}
+
+/**
+ * Is the plugin enabled in the project's own `.claude/settings.json`, as opposed
+ * to only at user scope? Any `canon@<marketplace>` key set to true counts.
+ */
+export function enabledInProject(root) {
+  try {
+    const settings = JSON.parse(readFileSync(join(root, '.claude/settings.json'), 'utf8'));
+    const plugins = settings?.enabledPlugins;
+    if (plugins === null || typeof plugins !== 'object') return false;
+    return Object.entries(plugins).some(([key, on]) => /^canon@/.test(key) && on === true);
+  } catch {
+    return false;
+  }
+}
+
+/** Read and parse a hook's stdin payload. `null` when it is not JSON. */
+export async function readPayload() {
+  try {
+    return JSON.parse(await new Response(process.stdin).text());
+  } catch {
+    return null;
+  }
+}
