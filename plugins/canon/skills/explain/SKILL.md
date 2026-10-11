@@ -7,6 +7,8 @@ allowed-tools: Bash, Read, Grep, Glob
 
 # Explain it, short, so a decision can be made
 
+Run `node "${CLAUDE_PLUGIN_ROOT}/scripts/config.mjs"`. If it fails, stop and pass its message on.
+
 This produces an explanation, never a change. Do not edit, commit or run anything that writes. It
 exists for the moment before a decision: the answer has to fit on a screen.
 

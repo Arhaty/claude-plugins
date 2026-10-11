@@ -3,7 +3,7 @@ name: setup
 description: Set up canon in this project: write .claude/canon.json and scaffold docs/canon, docs/specs and the CLAUDE.md section, asking before changing any existing file
 argument-hint: (none)
 disable-model-invocation: true
-allowed-tools: Bash, Read, Glob, Grep, AskUserQuestion
+allowed-tools: Bash, Read, Write, Edit, Glob, Grep, AskUserQuestion
 ---
 
 # Set up canon in this project
