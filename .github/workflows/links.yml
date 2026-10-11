@@ -1,0 +1,25 @@
+name: Links
+
+on:
+  schedule:
+    - cron: '41 5 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  lychee:
+    name: Check Markdown links
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: lychee
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          .github/scripts/install-tool.sh lychee
+          lychee --no-progress --config lychee.toml './**/*.md'
