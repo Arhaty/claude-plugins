@@ -767,7 +767,6 @@ const MERGES = [
   ['x=$((1<<2))\ngh pr merge 5', ['5']],
   ['function f { gh pr merge 5; }; f', ['5']],
   ["bash -c $'echo hi\\ngh pr merge 5'", ['5']],
-  ['gh api graphql -f query="mutation { mergePullRequest(input: {}) { clientMutationId } }"', null],
   ['gh api -X PUT repos/{owner}/{repo}/pulls/5/ccr/auto_merge', ['5']],
   ['timeout --kill-after 5 600 gh pr merge 5', ['5']],
   ['timeout --signal KILL 600 gh pr merge 5', ['5']],
@@ -848,9 +847,97 @@ const NOT_DIRECT = [
   'gh api -X PATCH repos/o/r/git/refs/heads/main-old -f sha=abc',
 ];
 
+/** Writes to the production branch through the REST API, other than a merge. */
+const BRANCH_WRITES = [
+  [
+    'gh api -X PUT repos/{owner}/{repo}/contents/a.md -f message=x -f content=eA== -f branch=main',
+    'main',
+  ],
+  ['gh api -X PUT repos/o/r/contents/a.md -f message=x -f content=eA==', null],
+  [
+    'gh api -X DELETE repos/o/r/contents/a.md -f message=x -f sha=abc -f branch=refs/heads/main',
+    'main',
+  ],
+  ['gh api -X PUT repos/o/r/contents/a.md --input body.json', null],
+  ['gh api -X PUT repos/o/r/contents/a.md -f message=x -F branch={branch}', null],
+  ['gh api -X PUT repos/o/r/contents/a.md -f message=x -f branch=feat/x', 'feat/x'],
+  ['gh api repos/o/r/git/refs -f ref=refs/heads/main -f sha=abc', 'main'],
+  ['gh api repos/o/r/git/refs -F ref=@ref.txt -f sha=abc', null],
+  ['gh api repos/o/r/merge-upstream -f branch=main', 'main'],
+  ['gh api -X DELETE repos/o/r/branches/main/protection', 'main'],
+  ['gh api repos/o/r/branches/main/rename -f new_name=old', 'main'],
+];
+
+const GRAPHQL = [
+  [
+    'gh api graphql -f query="mutation { mergePullRequest(input: {}) { clientMutationId } }"',
+    ['mergePullRequest'],
+  ],
+  [
+    'gh api graphql -f query=\'mutation($id: ID!) { m: mergeBranch(input: {repositoryId: $id, base: "main", head: "x"}) { clientMutationId } }\'',
+    ['mergeBranch'],
+  ],
+  [
+    'gh api graphql -f query=\'mutation { updateRef(input: {refId: "R", oid: "abc"}) { clientMutationId } }\'',
+    ['updateRef'],
+  ],
+  [
+    "gh api graphql -f query='mutation { createCommitOnBranch(input: {}) { commit { oid } } enablePullRequestAutoMerge(input: {}) { clientMutationId } }'",
+    ['createCommitOnBranch', 'enablePullRequestAutoMerge'],
+  ],
+  [
+    'gh api graphql -f query=\'# merge\nmutation { addComment(input: {subjectId: "X", body: "{ }"}) { clientMutationId } }\'',
+    ['addComment'],
+  ],
+  [
+    'gh api https://api.github.com/graphql -f query="mutation { updateRef(input: {}) { clientMutationId } }"',
+    ['updateRef'],
+  ],
+];
+
+const GRAPHQL_UNREADABLE = [
+  'gh api graphql -F query=@mutation.graphql',
+  'gh api graphql --input body.json',
+  'gh api graphql -f query="$Q"',
+  "gh api graphql -f query='mutation { ...F } fragment F on Mutation { mergeBranch(input: {}) { clientMutationId } }'",
+  "gh api graphql -f query='mutation { mergeBranch(input: {}) { clientMutationId }'",
+];
+
 describe('every spelling of a merge', () => {
   it.each(MERGES)('reads %s', (command, selector) => {
     expect(mergeTargets(command)).toEqual([{ selector }]);
+  });
+
+  it.each(BRANCH_WRITES)('reads the branch a REST write lands on in %s', (command, branch) => {
+    expect(mergeTargets(command)).toEqual([{ branch }]);
+  });
+
+  it.each(GRAPHQL)('reads the mutations in %s', (command, fields) => {
+    expect(mergeTargets(command)[0].mutation).toEqual(fields);
+  });
+
+  it.each(GRAPHQL_UNREADABLE.map((c) => [c]))('marks %s unreadable', (command) => {
+    expect(mergeTargets(command)[0].mutation).toBeNull();
+  });
+
+  it('reads no mutation in a GraphQL query, and keeps what a mutation names', () => {
+    expect(
+      mergeTargets("gh api graphql -f query='query($n: Int!) { viewer { login } }' -F n=5")
+    ).toEqual([]);
+    expect(mergeTargets("gh api graphql -f query='{ viewer { login } }'")).toEqual([]);
+    const [named] = mergeTargets(
+      "gh api graphql -f query='mutation($b: String!) { updatePullRequest(input: {baseRefName: $b}) { clientMutationId } }' -f b=main"
+    );
+    expect(named.writes).toContain('main');
+  });
+
+  it('lists what any other REST write names, so the hook can refuse one naming production', () => {
+    expect(mergeTargets('gh api repos/o/r/pulls/5 -X PATCH -f base=main')).toEqual([
+      { writes: ['pulls', '5', 'main'] },
+    ]);
+    expect(mergeTargets('gh api repos/o/r/git/refs -f ref=refs/tags/v1 -f sha=abc')).toEqual([
+      { writes: ['git', 'refs', 'refs/tags/v1', 'abc'] },
+    ]);
   });
 
   it.each(PROSE.map((command) => [command]))('reads no merge in %s', (command) => {

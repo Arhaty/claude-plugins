@@ -859,45 +859,228 @@ const MERGE_METHODS = { merge: ['PUT'], 'ccr/auto_merge': ['PUT', 'POST'] };
 
 /**
  * Writes that land on a branch with no pull request at all: the merges endpoint,
- * which merges one ref into another, and a write to a branch's ref, which moves,
- * creates or deletes it outright.
+ * which merges one ref into another, a write to a branch's ref, which moves,
+ * creates or deletes it outright, a file written through the contents API, a fork
+ * synced with `merge-upstream`, and a change to a branch's protection or name.
  */
 const API_REPO = /^(?:https?:\/\/[^/]+(?:\/api\/v3)?)?\/?repos\/[^/]+\/[^/]+\//;
 const API_MERGES = /^merges\/?(?:\?.*)?$/;
 const API_REF = /^git\/refs\/heads\/(.+?)\/?(?:\?.*)?$/;
+const API_REFS = /^git\/refs\/?(?:\?.*)?$/;
+const API_CONTENTS = /^contents(?:\/|\?|$)/;
+const API_UPSTREAM = /^merge-upstream\/?(?:\?.*)?$/;
+const API_BRANCH = /^branches\/(.+?)(?:\/(?:protection|rename)(?:\/[^?]*)?)?\/?(?:\?.*)?$/;
+
+/** `main`, `heads/main` and `refs/heads/main` name one branch. */
+const bareBranch = (ref) => ref.replace(/^(?:refs\/)?heads\//, '');
+
+/**
+ * A value whose text is not on the line: from a file (`@`), a variable, a
+ * substitution, or gh's `{branch}` placeholder, which is whatever is checked out.
+ * A bare backtick separates words here, so `base=` followed by one reads as empty.
+ */
+const unreadable = (value) => /^$|^@|\$|`|\{branch\}/.test(value);
+
+/** Each `-f`/`-F` field as `[name, value]`, in order. `--input` gives none. */
+function bodyFields(pairs) {
+  return pairs
+    .filter(
+      ([flag, field]) => API_BODY.has(flag) && flag !== '--input' && typeof field === 'string'
+    )
+    .map(([, field]) => {
+      const at = field.indexOf('=');
+      return at === -1 ? [field, ''] : [field.slice(0, at), field.slice(at + 1)];
+    });
+}
+
+/**
+ * `{ branch }` for a field that names the branch a write lands on, and
+ * `{ branch: null }` when the field is missing or its value is not on the line:
+ * a contents write with no `branch` goes to the default branch, which is often
+ * production.
+ */
+function branchField(fields, name) {
+  const value = fields.filter(([key]) => key === name).at(-1)?.[1];
+  if (value === undefined || unreadable(value)) return { branch: null };
+  return { branch: bareBranch(value) };
+}
 
 /**
  * `{ branch }` for a merge or ref write made without a pull request, naming the
- * branch it lands on, `{ branch: null }` for a merge whose base cannot be read,
- * and `null` for anything else. The caller decides which branches matter: a
- * write to a feature branch's ref is cleanup, not a merge, and passes.
+ * branch it lands on, and `{ branch: null }` for one whose branch cannot be read.
+ * Any other write to the repository is `{ writes }`: every path segment and field
+ * value it names, so the caller can refuse one that names production however it
+ * reaches it. `null` for a read. The caller decides which branches matter: a write
+ * to a feature branch's ref is cleanup, not a merge, and passes.
  */
 function directWrite(endpoint, method, pairs) {
   const repo = API_REPO.exec(endpoint);
   if (!repo || method === 'GET' || method === 'HEAD') return null;
   const rest = endpoint.slice(repo[0].length);
+  const fields = bodyFields(pairs);
 
-  if (API_MERGES.test(rest)) {
-    if (method !== 'POST') return null;
-    const fields = pairs.filter(([flag]) => API_BODY.has(flag) && flag !== '--input');
-    const base = fields
-      .map(([, field]) => (typeof field === 'string' ? /^base=(.*)$/s.exec(field) : null))
-      .filter(Boolean)
-      .at(-1)?.[1];
-    // From a file, a variable, a substitution or the standard input, the base is
-    // not on the line. A bare backtick separates words here, so `base=` followed
-    // by one reads as empty.
-    if (base === undefined || /^$|^@|\$|`/.test(base)) return { branch: null };
-    return { branch: base.replace(/^refs\/heads\//, '') };
+  if (API_MERGES.test(rest)) return method === 'POST' ? branchField(fields, 'base') : null;
+  if (API_UPSTREAM.test(rest)) return branchField(fields, 'branch');
+  if (API_CONTENTS.test(rest) && (method === 'PUT' || method === 'DELETE')) {
+    return branchField(fields, 'branch');
+  }
+
+  // Creating a ref names it in the body. A tag is not a branch, and falls through.
+  if (API_REFS.test(rest) && method === 'POST') {
+    const ref = fields.filter(([key]) => key === 'ref').at(-1)?.[1];
+    if (ref === undefined || unreadable(ref)) return { branch: null };
+    if (/^refs\/heads\//.test(ref)) return { branch: bareBranch(ref) };
   }
 
   const ref = API_REF.exec(rest)?.[1];
-  if (ref === undefined) return null;
-  // `{branch}` is the checked-out branch, which may be production. A ref named by a
-  // shell variable is not judged: a cleanup names the merged branch as
-  // `heads/$branch`, and refusing it would refuse every one.
-  if (ref === '{branch}') return { branch: null };
-  return { branch: ref };
+  if (ref !== undefined) {
+    // `{branch}` is the checked-out branch, which may be production. A ref named by
+    // a shell variable is not judged: a cleanup names the merged branch as
+    // `heads/$branch`, and refusing it would refuse every one.
+    if (ref === '{branch}') return { branch: null };
+    return { branch: ref };
+  }
+
+  const branch = API_BRANCH.exec(rest)?.[1];
+  if (branch !== undefined) {
+    return branch === '{branch}' ? { branch: null } : { branch: decode(branch) };
+  }
+
+  const named = [
+    ...rest.replace(/\?.*$/, '').split('/').filter(Boolean).map(decode),
+    ...fields.map(([, value]) => value),
+  ].map(bareBranch);
+  return named.length ? { writes: named } : null;
+}
+
+function decode(segment) {
+  try {
+    return decodeURIComponent(segment);
+  } catch {
+    return segment;
+  }
+}
+
+const API_GRAPHQL = /^(?:https?:\/\/[^/]+(?:\/api)?)?\/?graphql\/?(?:\?.*)?$/;
+
+/**
+ * Mutations that move, create or delete a branch or its commits, merge into one,
+ * or loosen what protects it. Each names its branch by node ID, so whether it is
+ * production cannot be read off the command, and each is refused.
+ */
+export const BRANCH_MUTATIONS = new Set([
+  'mergePullRequest',
+  'enablePullRequestAutoMerge',
+  'enqueuePullRequest',
+  'mergeBranch',
+  'createRef',
+  'updateRef',
+  'updateRefs',
+  'deleteRef',
+  'createCommitOnBranch',
+  'updateBranchProtectionRule',
+  'deleteBranchProtectionRule',
+  'updateRepositoryRuleset',
+  'deleteRepositoryRuleset',
+]);
+
+const GRAPHQL_TOKEN =
+  /\s+|,|#[^\n]*|"""(?:\\"""|[^])*?"""|"(?:\\.|[^"\\\n])*"|\.\.\.|[{}()[\]:!$@=|&]|[_A-Za-z][_0-9A-Za-z]*|-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?/y;
+
+/** A GraphQL document as tokens, strings unquoted. `null` when it is not one. */
+function graphqlTokens(text) {
+  const tokens = [];
+  GRAPHQL_TOKEN.lastIndex = 0;
+  while (GRAPHQL_TOKEN.lastIndex < text.length) {
+    const at = GRAPHQL_TOKEN.lastIndex;
+    const match = GRAPHQL_TOKEN.exec(text);
+    if (!match) return null;
+    const [token] = match;
+    if (/^\s|^,|^#/.test(token)) continue;
+    if (token.startsWith('"')) {
+      const body = token.startsWith('"""') ? token.slice(3, -3) : token.slice(1, -1);
+      tokens.push({ string: body.replace(/\\(.)/g, '$1') });
+    } else tokens.push({ at, text: token });
+  }
+  return tokens;
+}
+
+/**
+ * The top-level fields of every mutation in a GraphQL document, and every string
+ * it holds. `null` when the document cannot be read well enough to say what it
+ * mutates: not GraphQL, a fragment spread at the top of a mutation, or a field
+ * name that is not a literal name. A document with no mutation gives no fields.
+ */
+export function graphqlMutations(text) {
+  const tokens = graphqlTokens(text);
+  if (tokens === null || tokens.length === 0) return null;
+  const fields = [];
+  const strings = tokens.filter((t) => 'string' in t).map((t) => t.string);
+  const word = (i) => tokens[i]?.text;
+
+  let i = 0;
+  while (i < tokens.length) {
+    const kind = word(i);
+    if (kind !== '{' && !['query', 'mutation', 'subscription', 'fragment'].includes(kind)) {
+      return null;
+    }
+    // Up to the operation's selection set, past any variable definitions.
+    let parens = 0;
+    while (i < tokens.length && !(word(i) === '{' && parens === 0)) {
+      if (word(i) === '(') parens += 1;
+      if (word(i) === ')') parens -= 1;
+      i += 1;
+    }
+    if (i >= tokens.length) return null;
+
+    let depth = 0;
+    parens = 0;
+    for (; i < tokens.length; i += 1) {
+      const token = word(i);
+      if (token === '(') parens += 1;
+      else if (token === ')') parens -= 1;
+      else if (parens > 0 || token === undefined) continue;
+      else if (token === '{') depth += 1;
+      else if (token === '}') {
+        depth -= 1;
+        if (depth === 0) break;
+      } else if (kind === 'mutation' && depth === 1) {
+        if (token === '...') return null;
+        if (token === '@') {
+          i += 1;
+          continue;
+        }
+        if (!/^[_A-Za-z]/.test(token)) continue;
+        // `alias: field` names the field second.
+        fields.push(word(i + 1) === ':' ? word(i + 2) : token);
+        if (word(i + 1) === ':') i += 2;
+      }
+    }
+    if (depth !== 0) return null;
+    i += 1;
+  }
+  if (fields.some((field) => field === undefined || !/^[_A-Za-z]\w*$/.test(field))) return null;
+  return { fields, strings };
+}
+
+/**
+ * A `gh api graphql` call: `{ mutation: fields, writes }` for one that mutates,
+ * `{ mutation: null, writes }` for a document this cannot read (`-F query=@file`,
+ * `--input`, a variable), and `null` for a read. `writes` is every string and
+ * field value it carries, judged like a REST write's.
+ */
+function graphqlCall(pairs) {
+  const fields = bodyFields(pairs);
+  const values = fields.filter(([key]) => key !== 'query').map(([, value]) => value);
+  const query = fields.filter(([key]) => key === 'query').at(-1)?.[1];
+  const input = pairs.some(([flag]) => flag === '--input');
+  if (query === undefined) return input ? { mutation: null, writes: values } : null;
+  if (query.startsWith('@')) return { mutation: null, writes: values };
+
+  const read = graphqlMutations(query);
+  if (read === null) return { mutation: null, writes: values };
+  if (read.fields.length === 0) return null;
+  return { mutation: read.fields, writes: [...values, ...read.strings].map(bareBranch) };
 }
 
 /**
@@ -905,7 +1088,8 @@ function directWrite(endpoint, method, pairs) {
  * `prDetails`: a number or URL, or nothing for the current branch.
  * `{ selector: null }` is a merge whose target cannot be read, and each hook
  * keeps its own answer to that. `{ branch }` is a write with no pull request,
- * from `directWrite`.
+ * and `{ writes }` any other write with what it names, from `directWrite`.
+ * `{ mutation }` is a GraphQL mutation, from `graphqlCall`.
  */
 function mergeOf({ argv, env, appended }) {
   if (argv[0] !== 'gh') return null;
@@ -929,9 +1113,7 @@ function mergeOf({ argv, env, appended }) {
     const { positionals, flags, pairs } = parseArgs(argv.slice(2), API_VALUES);
     const endpoint = positionals[0] ?? '';
 
-    if (endpoint === 'graphql') {
-      return argv.some((arg) => arg.includes('mergePullRequest')) ? { selector: null } : null;
-    }
+    if (API_GRAPHQL.test(endpoint)) return graphqlCall(pairs);
 
     // `gh api` sends GET, or POST once a field or an input is given, unless the
     // method is named.

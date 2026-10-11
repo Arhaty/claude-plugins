@@ -4,7 +4,18 @@
  * merge whose target is the production branch, however it is issued: `gh pr merge`,
  * a `gh api` PUT to `/pulls/{n}/merge` or `/pulls/{n}/ccr/auto_merge`, or the MCP
  * merge tool. Also blocks landing on production with no pull request at all: a
- * `gh api` POST to `/merges` with that base, or any write to its branch ref.
+ * `gh api` POST to `/merges` with that base, a write to its branch ref, a file
+ * written to it through the contents API, a change to its protection, and any
+ * other `gh api` write that names it in its path or fields. A write whose branch
+ * is not on the line is refused too: a contents write with no `branch` lands on
+ * the default branch.
+ *
+ * GraphQL names branches by node ID, so the name is no help there. A mutation
+ * that merges, moves or unprotects a branch (`mergeBranch`, `updateRef`,
+ * `createCommitOnBranch`, `enablePullRequestAutoMerge` and the rest of
+ * `BRANCH_MUTATIONS`) is refused wherever it points, and so is a query this cannot
+ * read: one from a file (`-F query=@file`), from `--input` or a variable, or one
+ * that does not parse. A query that only reads passes.
  *
  * Production only. `/canon:staging` merges into the integration branch itself once
  * CI is green, which is the asymmetry the workflow rests on: a bad merge into
@@ -50,7 +61,7 @@ const block = (message) => {
 };
 
 try {
-  const { mergesIn, prDetails } = await import('./lib/merge-command.mjs');
+  const { BRANCH_MUTATIONS, mergesIn, prDetails } = await import('./lib/merge-command.mjs');
   const { configProblem, loadConfig, projectRoot, readPayload } = await import('./lib/config.mjs');
 
   const payload = await readPayload();
@@ -74,13 +85,42 @@ try {
   const production = branches.production;
 
   for (const merge of merges) {
+    if ('mutation' in merge) {
+      if (merge.mutation === null) {
+        block(
+          'Refusing the GraphQL call: its query is not on the command line (a file, `--input` or\n' +
+            'a variable) or cannot be read, so this hook cannot tell whether it is a mutation\n' +
+            `that lands on \`${production}\`.\n\n` +
+            'Pass the query literally with `-f query=...`, or use a `gh pr` command.'
+        );
+      }
+      const moving = merge.mutation.filter((field) => BRANCH_MUTATIONS.has(field));
+      if (moving.length) {
+        block(
+          `Refusing the GraphQL mutation \`${moving.join('`, `')}\`: it merges, moves or\n` +
+            'unprotects a branch named by node ID, so this hook cannot tell whether that branch\n' +
+            `is \`${production}\`.\n\n` +
+            'Merge and push through `gh pr` and `git push`, which the canon hooks can read. The\n' +
+            `release into \`${production}\` is ${owner}'s, in the GitHub UI.`
+        );
+      }
+      if (merge.writes.includes(production)) refuseNamed(production, owner);
+      continue;
+    }
+
+    if ('writes' in merge) {
+      if (merge.writes.includes(production)) refuseNamed(production, owner);
+      continue;
+    }
+
     if ('branch' in merge) {
       if (merge.branch === production) refuseDirect(production, owner);
       if (merge.branch === null) {
         block(
-          'Refusing the merge: it merges branches with no pull request, and its base cannot be\n' +
-            `read from the command, so it may land on \`${production}\`.\n\n` +
-            'Name the base literally, or merge through a pull request.'
+          'Refusing the write: it lands on a branch with no pull request (a merge, a ref, a file\n' +
+            'through the contents API), and which branch cannot be read from the command, so it\n' +
+            `may be \`${production}\`. A contents write with no \`branch\` goes to the default branch.\n\n` +
+            'Name the branch literally, or go through a pull request.'
         );
       }
       continue;
@@ -145,6 +185,16 @@ function refuseDirect(production, owner) {
       `\`${production}\` is production and takes no direct push. The release is ${owner}'s,\n` +
       'always, and it goes through the release pull request. Run `/canon:production`, which\n' +
       'opens it and stops at the button.'
+  );
+}
+
+function refuseNamed(production, owner) {
+  block(
+    `Refusing the \`gh api\` write: it names \`${production}\`, in its path, a field or a\n` +
+      'GraphQL argument.\n\n' +
+      `\`${production}\` is production. A write that names it is refused rather than read\n` +
+      'endpoint by endpoint, because the API has more ways to move a branch than any list here.\n' +
+      `The release is ${owner}'s, through the release pull request: run \`/canon:production\`.`
   );
 }
 

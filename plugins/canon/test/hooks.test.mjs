@@ -152,6 +152,59 @@ describe('protect-merge', () => {
     const intoStaging = 'gh api repos/o/r/merges -f base=staging -f head=x';
     expect(runHook('protect-merge.mjs', intoStaging, 'exit 1')).toBe(0);
   });
+
+  it('refuses a contents, ref or protection write to production, and any write naming it', () => {
+    for (const command of [
+      'gh api -X PUT repos/{owner}/{repo}/contents/a.md -f message=x -f content=eA== -f branch=main',
+      'gh api -X PUT repos/o/r/contents/a.md -f message=x -f content=eA==',
+      'gh api repos/o/r/git/refs -f ref=refs/heads/main -f sha=abc',
+      'gh api -X DELETE repos/o/r/branches/main/protection',
+      'gh api -X PATCH repos/o/r/pulls/5 -f base=main',
+    ]) {
+      expect(runHook('protect-merge.mjs', command, 'exit 1'), command).toBe(2);
+    }
+    for (const command of [
+      'gh api -X PUT repos/o/r/contents/a.md -f message=x -f content=eA== -f branch=feat/x',
+      'gh api repos/o/r/git/refs -f ref=refs/heads/feat/x -f sha=abc',
+      'gh api repos/o/r/issues/5/comments -f body=hello',
+    ]) {
+      expect(runHook('protect-merge.mjs', command, 'exit 1'), command).toBe(0);
+    }
+  });
+
+  it('allows opening the release pull request into production', () => {
+    // `/canon:production` runs this, and a pull request opened is not a merge.
+    for (const command of [
+      'gh pr create --base main --head staging --title "release" --body "x"',
+      'gh pr create -B main -H staging --fill',
+    ]) {
+      expect(runHook('protect-merge.mjs', command, 'exit 1'), command).toBe(0);
+    }
+  });
+
+  it('refuses a GraphQL mutation that moves a branch, or one it cannot read', () => {
+    for (const command of [
+      'gh api graphql -f query="mutation { mergeBranch(input: {}) { clientMutationId } }"',
+      'gh api graphql -f query="mutation { updateRef(input: {}) { clientMutationId } }"',
+      'gh api graphql -f query="mutation { createCommitOnBranch(input: {}) { commit { oid } } }"',
+      'gh api graphql -f query="mutation { enablePullRequestAutoMerge(input: {}) { clientMutationId } }"',
+      'gh api graphql -f query="mutation { mergePullRequest(input: {}) { clientMutationId } }"',
+      'gh api graphql -F query=@mutation.graphql',
+      'gh api graphql --input body.json',
+      // Unparseable: unbalanced, and not GraphQL at all.
+      'gh api graphql -f query="mutation { mergeBranch(input: {}) { clientMutationId }"',
+      'gh api graphql -f query="this is not graphql"',
+      `gh api graphql -f query='mutation { addComment(input: {subjectId: "X", body: "main"}) { clientMutationId } }'`,
+    ]) {
+      expect(runHook('protect-merge.mjs', command, 'exit 1'), command).toBe(2);
+    }
+    for (const command of [
+      'gh api graphql -f query="{ viewer { login } }"',
+      `gh api graphql -f query='mutation { addComment(input: {subjectId: "X", body: "hi"}) { clientMutationId } }'`,
+    ]) {
+      expect(runHook('protect-merge.mjs', command, 'exit 1'), command).toBe(0);
+    }
+  });
 });
 
 describe('require-canon on an MCP merge', () => {
