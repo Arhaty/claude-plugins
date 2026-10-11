@@ -1,0 +1,20 @@
+{
+  "name": "canon",
+  "owner": {
+    "name": "Arhaty",
+    "url": "https://github.com/arhaty"
+  },
+  "metadata": {
+    "description": "The canon plugin for Claude Code."
+  },
+  "plugins": [
+    {
+      "name": "canon",
+      "source": "./",
+      "description": "A spec, build, review, canon workflow for Claude Code: specs plan the work, docs/canon records how the project works today, and hooks enforce the git rules.",
+      "category": "development",
+      "homepage": "https://github.com/arhaty/canon",
+      "license": "MIT"
+    }
+  ]
+}
