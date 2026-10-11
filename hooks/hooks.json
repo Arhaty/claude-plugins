@@ -1,0 +1,102 @@
+{
+  "description": "canon: keep work off the integration and production branches, refuse pushes and production merges, require a canon update with governed changes, format edited files, and report red CI",
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/branch-notice.mjs\"",
+            "timeout": 10,
+            "statusMessage": "Checking the branch"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/protect-branch.mjs\"",
+            "timeout": 10,
+            "statusMessage": "Checking the branch"
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/protect-branch.mjs\"",
+            "timeout": 10,
+            "statusMessage": "Checking the branch"
+          },
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/protect-push.mjs\"",
+            "timeout": 15,
+            "statusMessage": "Checking the push target"
+          },
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/protect-merge.mjs\"",
+            "timeout": 20,
+            "statusMessage": "Checking the merge target"
+          },
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/require-canon.mjs\"",
+            "timeout": 20,
+            "statusMessage": "Checking the canon"
+          }
+        ]
+      },
+      {
+        "matcher": "mcp__.*__merge_pull_request",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/protect-merge.mjs\"",
+            "timeout": 20,
+            "statusMessage": "Checking the merge target"
+          },
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/require-canon.mjs\"",
+            "timeout": 20,
+            "statusMessage": "Checking the canon"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/format-file.mjs\"",
+            "timeout": 30,
+            "statusMessage": "Formatting the file"
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/ci-watch.sh\"",
+            "timeout": 900,
+            "statusMessage": "Watching CI",
+            "asyncRewake": true,
+            "rewakeSummary": "CI failed"
+          }
+        ]
+      }
+    ]
+  }
+}
