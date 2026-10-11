@@ -40,6 +40,9 @@ must be a conventional commit using a type from
 `refactor`, `docs`, `style`, `test`, `perf`). The PR body says what changed, why, and how to
 verify it.
 
+Commits carry no Co-authored-by trailer and use the GitHub noreply author email
+(`5563384+sandrolonardi@users.noreply.github.com`). This overrides the global attribution rule.
+
 ## Adding a plugin
 
 1. Create `plugins/<name>/` with `.claude-plugin/plugin.json`, README, CHANGELOG and `test/`.
