@@ -95,6 +95,14 @@ try {
   }
   const { integration, production } = state.config.branches;
 
+  /**
+   * Where the command runs: the payload's cwd, as `protect-push.mjs` reads it. A
+   * worktree has its own `HEAD`, so reading ROOT judged a pull request from a
+   * worktree by whatever the main checkout had out, and `gh` with no selector acts on
+   * the cwd's branch too.
+   */
+  const DIR = typeof payload.cwd === 'string' && existsSync(payload.cwd) ? payload.cwd : ROOT;
+
   // A merge through an MCP server's tool carries no command, so it is judged on the pull
   // request it names rather than on a local diff: the files GitHub lists for it. Without
   // this branch the tool's `settings.json` entry ran the hook and the hook found nothing
@@ -115,7 +123,7 @@ try {
   // A git failure is an unreadable diff, not a crash: it fails open, per the header.
   const git = (...args) => {
     try {
-      return execFileSync('git', ['-C', ROOT, ...args], {
+      return execFileSync('git', ['-C', DIR, ...args], {
         encoding: 'utf8',
         stdio: ['ignore', 'pipe', 'ignore'],
       });
@@ -156,10 +164,10 @@ try {
 
   /** Reads the pull request `selector` names and judges the files GitHub lists for it. */
   function fromPullRequest(selector, action) {
-    const details = prDetails(selector, { cwd: ROOT });
+    const details = prDetails(selector, { cwd: DIR });
     // A release pull request: see `fromDiff`.
     if (!details.ok || details.pr.baseRefName === production) return null;
-    const files = prFiles(details.pr, { cwd: ROOT });
+    const files = prFiles(details.pr, { cwd: DIR });
     if (!files.ok) return null;
     return refusal(files.paths, `${action}: pull request #${details.pr.number}`);
   }
@@ -218,7 +226,7 @@ try {
      * against it, which is exactly the behaviour this had before the fetch existed.
      */
     try {
-      execFileSync('git', ['-C', ROOT, 'fetch', '--quiet', 'origin', baseBranch], {
+      execFileSync('git', ['-C', DIR, 'fetch', '--quiet', 'origin', baseBranch], {
         stdio: 'ignore',
         timeout: 10_000,
         // No terminal prompt for credentials: a hook must never wait on input nobody can

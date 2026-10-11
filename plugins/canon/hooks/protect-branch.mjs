@@ -22,7 +22,7 @@
  * edit means the recoverable window is the only one that ever exists.
  *
  * **It fails open, on purpose.** Every case this cannot answer, whether no git, a
- * detached HEAD, an unreadable payload, a path outside the project, or a missing
+ * detached HEAD, an unreadable payload, a path outside the repository's work trees, or a missing
  * or invalid `.claude/canon.json`, allows the edit. A hook that blocks when its own
  * check is broken costs more than the mistake it prevents, and the mistake here is
  * recoverable by construction. `/canon:setup` also has to be able to write the
@@ -37,7 +37,8 @@
  */
 
 import { execFileSync } from 'node:child_process';
-import { resolve, sep } from 'node:path';
+import { existsSync, statSync } from 'node:fs';
+import { dirname, resolve, sep } from 'node:path';
 
 import { canonical, loadConfig, projectRoot, readPayload } from './lib/config.mjs';
 import { writesToWorktree } from './lib/writes-to-worktree.mjs';
@@ -56,11 +57,7 @@ if (state.status !== 'ok') allow();
 const { branches, owner } = state.config;
 const PROTECTED = new Set([branches.integration, branches.production]);
 
-const cwd = typeof payload.cwd === 'string' ? payload.cwd : ROOT;
-const inRepo = (path) => {
-  const file = canonical(resolve(cwd, path));
-  return file === ROOT || file.startsWith(ROOT.endsWith(sep) ? ROOT : ROOT + sep);
-};
+const cwd = typeof payload.cwd === 'string' && existsSync(payload.cwd) ? payload.cwd : ROOT;
 
 const bash = payload.tool_name === 'Bash';
 const command = payload.tool_input?.command;
@@ -69,18 +66,41 @@ const file = payload.tool_input?.file_path ?? payload.tool_input?.notebook_path;
 
 if (bash) {
   if (!writesToWorktree(command)) allow();
-  if (!inRepo('.')) allow();
-} else {
-  if (typeof file !== 'string' || file.length === 0) allow();
-  if (!inRepo(file)) allow();
+} else if (typeof file !== 'string' || file.length === 0) {
+  allow();
 }
 
-let branch;
-try {
-  branch = execFileSync('git', ['-C', ROOT, 'rev-parse', '--abbrev-ref', 'HEAD'], {
+/**
+ * **The branch of the work tree the write lands in**, not the project root's. A
+ * worktree has its own `HEAD`, so reading ROOT judged work in a worktree by the main
+ * checkout's branch: refused on a feature branch, allowed on `main`. Bash writes
+ * where it runs, so that is the payload's cwd, as `protect-push.mjs` reads it; a file
+ * tool writes where the file is, so that is its nearest existing directory.
+ */
+let dir = bash ? cwd : canonical(resolve(cwd, file));
+while (!existsSync(dir) || !statSync(dir).isDirectory()) {
+  const parent = dirname(dir);
+  if (parent === dir) allow();
+  dir = parent;
+}
+
+const git = (at, ...args) =>
+  execFileSync('git', ['-C', at, ...args], {
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'ignore'],
   }).trim();
+
+let branch;
+try {
+  // A work tree of another repository is not this project's business, whatever its
+  // branch is called. One sharing this project's git directory is.
+  const common = (at) => canonical(resolve(at, git(at, 'rev-parse', '--git-common-dir')));
+  if (common(dir) !== common(ROOT)) allow();
+  const top = canonical(git(dir, 'rev-parse', '--show-toplevel'));
+  if (!bash && !canonical(resolve(cwd, file)).startsWith(top.endsWith(sep) ? top : top + sep)) {
+    allow();
+  }
+  branch = git(dir, 'rev-parse', '--abbrev-ref', 'HEAD');
 } catch {
   allow();
 }

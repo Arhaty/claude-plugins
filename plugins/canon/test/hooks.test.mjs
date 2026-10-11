@@ -5,7 +5,15 @@
  */
 
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -197,6 +205,22 @@ describe('require-canon on a gh command', () => {
     for (const command of DIRECT) {
       expect(runHook('require-canon.mjs', command, migrations), command).toBe(0);
     }
+  });
+
+  it('reads the branch and diff from the payload cwd, so a worktree is judged by its own', () => {
+    // The stub answers with whichever directory `git -C` was given.
+    const git = (worktree) =>
+      `case "$*" in *${worktree}*rev-parse*) echo feature;; *rev-parse*) echo staging;; ` +
+      `*${worktree}*diff*) echo src/lib/content.ts;; *diff*) echo README.md;; *) exit 0;; esac`;
+    const project = makeProject();
+    const tree = mkdtempSync(join(tmpdir(), 'canon-wt-'));
+    const create = (cwd) =>
+      run('require-canon.mjs', 'gh pr create --fill', governed, { project, cwd, git: git(tree) })
+        .status;
+    expect(create(tree)).toBe(2);
+    expect(create(project)).toBe(0);
+    rmSync(tree, { recursive: true, force: true });
+    rmSync(project, { recursive: true, force: true });
   });
 
   it('reads the map from the project, and refuses with a reason when it is missing', () => {
@@ -515,6 +539,39 @@ describe('protect-branch and branch-notice', () => {
       run('protect-branch.mjs', command, 'exit 1', { cwd: repo.dir, project: repo.dir }).status;
     expect(bash("sed -i '' s/a/b/ README.md")).toBe(2);
     expect(bash('git status')).toBe(0);
+  });
+
+  it("judges a write in a worktree by the worktree's branch, not the main checkout's", () => {
+    const tree = join(tmpdir(), `canon-wt-${process.pid}-${Date.now()}`);
+    repo.git('checkout', '-q', 'main');
+    repo.git('worktree', 'add', '-q', '-b', 'feat/x', tree, 'staging');
+    try {
+      const write = (file, cwd) =>
+        run(
+          'protect-branch.mjs',
+          { tool_name: 'Write', tool_input: { file_path: file }, cwd },
+          'exit 1',
+          { project: repo.dir }
+        ).status;
+      const bash = (cwd) =>
+        run('protect-branch.mjs', "sed -i '' s/a/b/ README.md", 'exit 1', {
+          cwd,
+          project: repo.dir,
+        }).status;
+      // Main checkout on `main`, worktree on a feature branch.
+      expect(write(join(tree, 'src/a.ts'), tree)).toBe(0);
+      expect(bash(tree)).toBe(0);
+      expect(write(join(repo.dir, 'src/a.ts'), tree)).toBe(2);
+      expect(bash(repo.dir)).toBe(2);
+      // And the other way round.
+      repo.git('checkout', '-q', 'feature');
+      spawnSync('git', ['-C', tree, 'checkout', '-q', 'staging']);
+      expect(write(join(tree, 'src/a.ts'), tree)).toBe(2);
+      expect(bash(tree)).toBe(2);
+      expect(write(join(repo.dir, 'src/a.ts'), repo.dir)).toBe(0);
+    } finally {
+      repo.git('worktree', 'remove', '--force', tree);
+    }
   });
 
   it('says a protected branch is checked out, and nothing on a feature branch', () => {

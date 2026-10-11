@@ -40,6 +40,8 @@
  * stderr back to Claude.
  */
 
+import { existsSync } from 'node:fs';
+
 const allow = () => process.exit(0);
 
 const block = (message) => {
@@ -58,6 +60,7 @@ try {
   const ROOT = projectRoot(payload);
   const state = loadConfig(ROOT);
   if (state.status === 'absent') allow();
+  const CWD = typeof payload.cwd === 'string' && existsSync(payload.cwd) ? payload.cwd : ROOT;
 
   /**
    * **Every merge in the call, not the first.** `gh pr merge 7 && gh pr merge 9` was
@@ -108,7 +111,9 @@ try {
 
     // Fails closed. `prDetails` reports an unreadable pull request rather than
     // throwing, because the caller decides what that means and this one refuses.
-    const details = prDetails(merge.selector, { cwd: ROOT });
+    // From the payload's cwd, as `protect-push.mjs` reads it: with no selector, `gh`
+    // acts on the branch checked out there, which in a worktree is not ROOT's.
+    const details = prDetails(merge.selector, { cwd: CWD });
 
     if (!details.ok) {
       block(
