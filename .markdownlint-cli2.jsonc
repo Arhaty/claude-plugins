@@ -1,0 +1,19 @@
+{
+  // Rules for every Markdown file in the repository, including the skills and templates
+  // that are written into user projects.
+  "config": {
+    "default": true,
+    // Prose is wrapped by hand at about 100 columns; tables, code and long links run over.
+    "MD013": false,
+    // Skills and templates use inline HTML markers (<!-- canon:begin -->) and nothing else.
+    "MD033": false,
+    // A SKILL.md opens with frontmatter and a heading below it, not a top-level title.
+    "MD041": false,
+    // Bold lead-ins are used as paragraph labels, which is not a heading.
+    "MD036": false,
+    // Ordered lists continue across fenced code blocks inside steps.
+    "MD029": false,
+  },
+  "globs": ["**/*.md"],
+  "ignores": ["node_modules/**", "CHANGELOG.md"],
+}

@@ -1,0 +1,23 @@
+{
+  "name": "canon",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Development tooling for the canon Claude Code plugin. The plugin itself has no dependencies.",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "packageManager": "pnpm@9.15.1",
+  "scripts": {
+    "test": "node --test test/*.test.mjs",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "lint": "markdownlint-cli2",
+    "validate": "claude plugin validate --strict ."
+  },
+  "devDependencies": {
+    "markdownlint-cli2": "0.23.3",
+    "prettier": "3.9.10"
+  }
+}
