@@ -14,9 +14,10 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "lint": "markdownlint-cli2",
-    "validate": "claude plugin validate --strict ."
+    "validate": "claude plugin validate . --strict"
   },
   "devDependencies": {
+    "@anthropic-ai/claude-code": "2.1.296",
     "markdownlint-cli2": "0.23.3",
     "prettier": "3.9.10"
   }
