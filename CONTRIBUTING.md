@@ -5,15 +5,30 @@ change can be discussed before it is built.
 
 ## Setup
 
-Requires Node 20 or later, pnpm, and Claude Code (for `claude plugin validate`).
+Requires macOS or Linux, Node 20 or later, and pnpm.
 
 ```bash
 pnpm install
 pnpm test           # node --test, no dependencies
-pnpm validate       # claude plugin validate --strict .
+pnpm validate       # claude plugin validate . --strict
 pnpm format:check   # prettier
 pnpm lint           # markdownlint
 ```
+
+The three devDependencies are the tools CI runs, pinned by the lockfile and kept current by
+Dependabot: `prettier`, `markdownlint-cli2`, and `@anthropic-ai/claude-code` for the plugin
+validator. The plugin itself installs nothing.
+
+CI also runs typos over the repository, and actionlint and zizmor over `.github/workflows/`, as
+release binaries pinned by version and SHA-256 in
+[.github/scripts/install-tool.sh](.github/scripts/install-tool.sh). The same script installs them
+locally on Linux x86_64 or macOS arm64:
+
+```bash
+.github/scripts/install-tool.sh typos ~/.local/bin
+```
+
+Dependabot doesn't update those pins; bump them by hand from each tool's release page.
 
 To try the plugin from a checkout, add it as a local marketplace in a throwaway repository:
 

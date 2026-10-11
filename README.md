@@ -1,5 +1,7 @@
 # canon
 
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/arhaty/canon/badge)](https://scorecard.dev/viewer/?uri=github.com/arhaty/canon)
+
 A Claude Code plugin for one workflow: write a spec, build it, review it, record what it settled,
 ship it. Specs in `docs/specs/` plan the work in flight and get archived when it ships.
 `docs/canon/` is the living record of how the project works today, written from the code and
@@ -17,6 +19,7 @@ enforce the git rules around it.
 ## Prerequisites
 
 - Claude Code
+- macOS or Linux (see [Limitations](#limitations)).
 - Node 20 or later. The hooks and scripts use only Node built-ins; nothing is installed.
 - The GitHub CLI, `gh`, authenticated. The build, staging and production steps open, read and
   merge pull requests through it.
@@ -159,6 +162,9 @@ asks before writing.
 ## Limitations
 
 - **Two branches are required.** A repository with only `main` isn't supported in this version.
+- **macOS and Linux only.** Windows isn't supported in v0.1 and isn't in the CI matrix. The hook
+  tests stub `gh` and `git` with POSIX shell scripts, `ci-watch` is a bash script, and the
+  scaffolder hasn't been checked with Windows path separators.
 - **GitHub only.** The pull request steps use `gh`.
 - **Merge commits into the integration branch.** `/canon:staging` merges with a merge commit, and
   `/canon:production` relies on that to spot commits that skipped a pull request. A repository
@@ -166,7 +172,7 @@ asks before writing.
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md). The [examples](examples/) show a filled-in spec and the
+See [CONTRIBUTING.md](CONTRIBUTING.md). To report a vulnerability, see [SECURITY.md](SECURITY.md). The [examples](examples/) show a filled-in spec and the
 canon file it produced.
 
 ## License
