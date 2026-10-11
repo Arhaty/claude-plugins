@@ -63,6 +63,22 @@ Paths below are relative to `plugins/canon/`.
 - **Templates use `{{placeholders}}`** filled by `scripts/scaffold.mjs`. An unknown placeholder
   throws, and `test/templates.test.mjs` checks none survive.
 
+## Evals
+
+`plugins/<name>/evals/` holds `claude plugin eval` cases: does a skill trigger on the prompts it
+should, stay quiet on near-misses, and behave once it runs. **They are local only.** Each case runs
+Claude on your own account several times and an LLM judge grades the result, so a run costs money
+and CI never runs them. Run them before changing a skill's `description` or its stopping rules:
+
+```bash
+pnpm exec claude plugin eval plugins/canon --scaffold --allow-tools Bash Write Edit --ablation none
+```
+
+`--scaffold` lets a case build its throwaway fixture repository from its `scaffold.sh`, and
+`--allow-tools` lets the skill under test run git and write the spec. Calibrate first with one
+case and one run (`--case review-cites-spec --runs 1`), and cap a full run with
+`--max-cost-usd`. Results go to `evals/results/`, which is ignored.
+
 ## Pull requests and releases
 
 Pull request titles are conventional commits (`feat:`, `fix:`, `docs:` and so on). Merges are

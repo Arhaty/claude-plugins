@@ -1,3 +1,4 @@
 node_modules/
 .DS_Store
 *.log
+plugins/*/evals/results/

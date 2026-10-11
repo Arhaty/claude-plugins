@@ -1,0 +1,17 @@
+schema_version: '1.1'
+name: review-near-miss-prose
+description: Reviewing a piece of writing is not a code review against the canon.
+tags: [review, trigger, negative]
+execution:
+  prompt: >-
+    Can you review this sentence for tone before I send it to a client? "Per my last email, the
+    invoice is still outstanding."
+  max_turns: 4
+  allowed_tools: [Read, Glob, Grep, Skill]
+graders:
+  - type: tool_used
+    tool: Skill
+    input_match: '"skill"\s*:\s*"(?:canon:)?review"'
+    min: 0
+    max: 0
+    arm: both

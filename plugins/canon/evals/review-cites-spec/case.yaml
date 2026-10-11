@@ -1,0 +1,27 @@
+schema_version: '1.1'
+name: review-cites-spec
+description: >-
+  Asked in prose to check the branch against the project's rules, review runs and cites the spec
+  requirement and the canon rule the change breaks.
+tags: [review, trigger, behaviour]
+execution:
+  prompt: >-
+    Before I open the pull request, check this branch against the project's canon and the spec it
+    implements.
+  max_turns: 30
+  timeout_seconds: 900
+  allowed_tools: [Read, Glob, Grep, Skill, Bash]
+context:
+  scaffold_script: scaffold.sh
+graders:
+  - type: tool_used
+    tool: Skill
+    input_match: '"skill"\s*:\s*"(?:canon:)?review"'
+  - type: llm
+    weight: 3
+    focus: last_message
+    criteria: >-
+      PASS if the reply reports that MAX_FAILED_ATTEMPTS = 10 contradicts the limit of 5, and
+      cites both spec 001 (docs/specs/001-sign-in-limit.md, requirement R1) and the canon rule in
+      docs/canon/auth.md by file. FAIL if it misses the limit, or names the problem without citing
+      the spec.
