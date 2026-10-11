@@ -1,0 +1,20 @@
+{
+  "$comment": [
+    "Which canon file governs which path. Read by the canon plugin's require-canon hook, by",
+    "/canon:canon and by /canon:review. Editing this file is how the map changes; none of",
+    "those hardcodes a path.",
+    "",
+    "Each key is a file in docs/canon/. Each value is a list of patterns. A pattern ending in /",
+    "matches any path under that directory. A pattern containing / but not ending in one matches",
+    "that exact repo-relative path. A pattern with no / matches any file with that basename,",
+    "wherever it sits. Nothing here is a glob, on purpose: a map that needs a glob engine to",
+    "predict is a map nobody edits.",
+    "",
+    "A path has exactly one owner. That keeps the hook's message short enough to act on.",
+    "",
+    "Example: \"architecture.md\": [\"src/lib/\", \"package.json\"]",
+    "",
+    "A path that is deliberately ungoverned gets a line here saying why, so its absence reads as",
+    "a decision rather than an oversight."
+  ]
+}
