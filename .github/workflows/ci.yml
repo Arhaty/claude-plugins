@@ -58,8 +58,7 @@ jobs:
         run: pnpm lint
       - name: Typos
         run: |
-          .github/scripts/install-tool.sh typos
-          typos
+          "$(.github/scripts/install-tool.sh typos)"
 
   workflows:
     name: Lint workflows
@@ -71,11 +70,9 @@ jobs:
           persist-credentials: false
       - name: actionlint
         run: |
-          .github/scripts/install-tool.sh actionlint
-          actionlint
+          "$(.github/scripts/install-tool.sh actionlint)"
       - name: zizmor
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          .github/scripts/install-tool.sh zizmor
-          zizmor --format=github .github/workflows
+          "$(.github/scripts/install-tool.sh zizmor)" --format=github .github/workflows
