@@ -28,8 +28,6 @@ jobs:
             style
             test
             perf
-            ci
-            build
           requireScope: false
           subjectPattern: ^[a-z].+[^.]$
           subjectPatternError: The subject must start lowercase and not end with a period.
