@@ -64,10 +64,11 @@ file that exists and differs, and writes nothing until each one is approved by n
    - **Preview URL pattern** with `{branch}`, or none if feature branches get no preview. Also
      the staging and production URLs, or none.
    - **Branch prefixes**: default `feat`, `fix`, `chore`, `refactor`, `docs`.
-   - **Per-file formatter** (argv list) or none, and **whether to enable canon in the project's
-     own `.claude/settings.json`**. Explain the trade in one line: the formatter hook only runs
-     when the plugin is enabled there, and enabling it there turns canon on for everyone who
-     clones the project and has the plugin installed.
+   - **Per-file formatter** (argv list) or none. If one is set, show the exact argv and ask
+     whether to approve running it after every edit. Only that approval, recorded outside the
+     repository, lets the hook run it; a changed command needs approving again.
+   - **Whether to enable canon in the project's own `.claude/settings.json`.** That turns canon on
+     for everyone who clones the project and has the plugin installed.
 
 4. **Write the answers to a scratch file and plan.** The answers file is the full config:
 
@@ -105,6 +106,15 @@ file that exists and differs, and writes nothing until each one is approved by n
    ```bash
    node "${CLAUDE_PLUGIN_ROOT}/scripts/scaffold.mjs" apply --root <project root> --answers <file> [--enable-plugin] --allow <path> ...
    ```
+
+   If the user approved the formatter, record it:
+
+   ```bash
+   node "${CLAUDE_PLUGIN_ROOT}/scripts/scaffold.mjs" trust --root <project root> --answers <file>
+   ```
+
+   Never run `trust` without that yes. A declined formatter stays in `.claude/canon.json` and
+   never runs.
 
    A conflict the user declines stays as it is. If declining it means the setup is incomplete
    (for example an existing `.claude/canon.json` they will not replace), say what that leaves

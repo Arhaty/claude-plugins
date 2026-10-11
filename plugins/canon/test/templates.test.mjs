@@ -19,7 +19,7 @@ import {
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 
-import { validate } from '../hooks/lib/config.mjs';
+import { trustKey, validate } from '../hooks/lib/config.mjs';
 import { apply, fill, plan } from '../scripts/scaffold.mjs';
 import { CONFIG, ROOT, afterEach, beforeEach, describe, expect, it } from './helpers.mjs';
 
@@ -225,6 +225,23 @@ describe('scaffold', () => {
     expect(result.status).toBe(2);
     expect(result.stderr).toMatch(/^scaffold: \.claude\/settings\.json is not valid JSON/);
     expect(result.stderr).not.toMatch(/at \w+ \(/);
+  });
+
+  it('records the formatter approval outside the project with trust', () => {
+    const home = mkdtempSync(join(tmpdir(), 'canon-home-'));
+    const answers = join(root, 'answers.json');
+    const argv = ['pnpm', 'exec', 'prettier', '--write'];
+    writeFileSync(answers, JSON.stringify({ ...config(), formatFile: argv }));
+    const result = spawnSync(
+      process.execPath,
+      [join(ROOT, 'scripts/scaffold.mjs'), 'trust', '--root', root, '--answers', answers],
+      { encoding: 'utf8', env: { ...process.env, HOME: home } }
+    );
+    expect(result.status).toBe(0);
+    const stored = JSON.parse(readFileSync(join(home, '.claude/canon/trusted.json'), 'utf8'));
+    expect(stored[trustKey(root)].formatFile).toEqual(argv);
+    expect(existsSync(join(root, '.claude'))).toBe(false);
+    rmSync(home, { recursive: true, force: true });
   });
 
   it('throws on an unknown placeholder rather than shipping it', () => {

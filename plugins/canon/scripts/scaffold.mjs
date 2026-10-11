@@ -4,6 +4,7 @@
  *
  *   node scaffold.mjs plan  --root <dir> --answers <file> [--enable-plugin] [--json]
  *   node scaffold.mjs apply --root <dir> --answers <file> [--enable-plugin] [--allow <path>]...
+ *   node scaffold.mjs trust --root <dir> --answers <file>
  *
  * `--answers` is a JSON file holding the `.claude/canon.json` to write; it is
  * validated against the same rules the hooks use. `--enable-plugin` also sets
@@ -26,6 +27,10 @@
  * link anywhere. A link that stays inside, such as `CLAUDE.md -> AGENTS.md`, is
  * written through.
  *
+ * `trust` records the owner's approval of the answers' `formatFile` for this
+ * repository in `~/.claude/canon/trusted.json`, outside it, which is the only
+ * thing that lets `format-file.mjs` run it. Setup runs it after asking.
+ *
  * Two files are edited rather than replaced, and still count as a conflict when
  * they exist: `CLAUDE.md`, where only the section between the `canon:begin` and
  * `canon:end` markers is written (appended when there are no markers), and
@@ -44,7 +49,7 @@ import {
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { CONFIG_PATH, DOMAINS_PATH, symlinkIn, validate } from '../hooks/lib/config.mjs';
+import { CONFIG_PATH, DOMAINS_PATH, symlinkIn, trust, validate } from '../hooks/lib/config.mjs';
 import { build as buildIndex } from './canon-index.mjs';
 
 const PLUGIN = fileURLToPath(new URL('../', import.meta.url));
@@ -206,7 +211,9 @@ function parse(argv) {
     else if (arg === '--json') options.json = true;
     else throw new Error(`unknown argument ${arg}`);
   }
-  if (!['plan', 'apply'].includes(mode)) throw new Error('first argument must be plan or apply');
+  if (!['plan', 'apply', 'trust'].includes(mode)) {
+    throw new Error('first argument must be plan, apply or trust');
+  }
   if (!options.root || !options.answers) throw new Error('--root and --answers are required');
   return options;
 }
@@ -240,6 +247,18 @@ function main(argv) {
       `scaffold: the answers are not a valid config:\n${errors.map((e) => `  - ${e}`).join('\n')}\n`
     );
     return 2;
+  }
+
+  if (options.mode === 'trust') {
+    if (config.formatFile === null) {
+      process.stderr.write(
+        'scaffold: the answers set no formatFile, so there is nothing to trust.\n'
+      );
+      return 1;
+    }
+    trust(root, config.formatFile);
+    process.stdout.write(`trusted   ${JSON.stringify(config.formatFile)} for ${root}\n`);
+    return 0;
   }
 
   let result;

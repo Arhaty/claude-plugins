@@ -17,6 +17,7 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+import { commandDigest, trustKey } from '../hooks/lib/config.mjs';
 import {
   CONFIG,
   HOOKS,
@@ -711,54 +712,94 @@ describe('protect-branch and branch-notice', () => {
 
 /**
  * The formatter runs a command named in the repository's own files, so it runs only when the
- * project's committed settings enable the plugin, and never through a shell.
+ * owner approved that exact command for that project, in a file outside it, and never through a
+ * shell.
  */
 describe('format-file', () => {
   let project;
+  let home;
   let log;
+  let argv;
 
   beforeEach(() => {
     project = makeProject();
+    home = mkdtempSync(join(tmpdir(), 'canon-home-'));
     log = join(project, 'argv.json');
     const formatter = join(project, 'fake-format.mjs');
     writeFileSync(
       formatter,
       `import { writeFileSync } from 'node:fs';\nwriteFileSync(${JSON.stringify(log)}, JSON.stringify(process.argv.slice(2)));\n`
     );
+    argv = [process.execPath, formatter, '--write'];
     writeFileSync(
       join(project, '.claude/canon.json'),
-      JSON.stringify({ ...CONFIG, formatFile: [process.execPath, formatter, '--write'] })
+      JSON.stringify({ ...CONFIG, formatFile: argv })
     );
   });
-  afterEach(() => rmSync(project, { recursive: true, force: true }));
+  afterEach(() => {
+    rmSync(project, { recursive: true, force: true });
+    rmSync(home, { recursive: true, force: true });
+  });
 
-  const write = (file) =>
+  const write = (file, tool = 'Write') =>
     run(
       'format-file.mjs',
-      { tool_name: 'Write', tool_input: { file_path: file }, cwd: project },
-      'exit 1',
       {
-        project,
-      }
+        tool_name: tool,
+        tool_input: tool === 'NotebookEdit' ? { notebook_path: file } : { file_path: file },
+        cwd: project,
+      },
+      'exit 1',
+      { project, env: { HOME: home } }
     );
-  const enable = (value) =>
+  /** What `scaffold.mjs trust` writes, for `command` in this project. */
+  const approve = (command = argv) => {
+    mkdirSync(join(home, '.claude/canon'), { recursive: true });
     writeFileSync(
-      join(project, '.claude/settings.json'),
-      JSON.stringify({ enabledPlugins: { 'canon@arhaty': value } })
+      join(home, '.claude/canon/trusted.json'),
+      JSON.stringify({
+        [trustKey(project)]: { sha256: commandDigest(command), formatFile: command },
+      })
     );
+  };
 
-  it('does nothing unless the project settings enable the plugin', () => {
+  it('does nothing until the owner approves the command outside the repository', () => {
     const file = join(project, 'a.ts');
     writeFileSync(file, 'x');
+    // The old gate: the repository enabling the plugin in its own settings proves nothing.
+    writeFileSync(
+      join(project, '.claude/settings.json'),
+      JSON.stringify({ enabledPlugins: { 'canon@arhaty': true } })
+    );
     expect(write(file).status).toBe(0);
     expect(existsSync(log)).toBe(false);
-    enable(false);
+    approve();
+    write(file);
+    expect(existsSync(log)).toBe(true);
+  });
+
+  it('stays off once the command changes', () => {
+    const file = join(project, 'a.ts');
+    writeFileSync(file, 'x');
+    approve();
+    writeFileSync(
+      join(project, '.claude/canon.json'),
+      JSON.stringify({ ...CONFIG, formatFile: [...argv, '--extra'] })
+    );
     write(file);
     expect(existsSync(log)).toBe(false);
   });
 
+  it('runs on a notebook edit too', () => {
+    approve();
+    const file = join(project, 'a.ipynb');
+    writeFileSync(file, '{}');
+    write(file, 'NotebookEdit');
+    expect(JSON.parse(readFileSync(log, 'utf8'))).toEqual(['--write', realpathSync(file)]);
+  });
+
   it('passes the path as one argument, with no shell in between', () => {
-    enable(true);
+    approve();
     mkdirSync(join(project, 'odd dir'));
     const file = join(project, 'odd dir', 'a $(touch pwned) b.ts');
     writeFileSync(file, 'x');
@@ -768,9 +809,10 @@ describe('format-file', () => {
   });
 
   it('never runs without a path, or on a path outside the project', () => {
-    enable(true);
+    approve();
     run('format-file.mjs', { tool_name: 'Write', tool_input: {}, cwd: project }, 'exit 1', {
       project,
+      env: { HOME: home },
     });
     expect(existsSync(log)).toBe(false);
     const outside = join(tmpdir(), `canon-outside-${process.pid}.ts`);
@@ -793,6 +835,13 @@ describe('hooks.json', () => {
     expect(runs('mcp__github-official__merge_pull_request')).toBe(true);
     expect(runs('mcp__claude_ai_GitHub__merge_pull_request')).toBe(true);
     expect(runs('mcp__github__get_pull_request')).toBe(false);
+  });
+
+  it('formats after every file tool, notebooks included', () => {
+    const [formatter] = config.hooks.PostToolUse.filter((entry) =>
+      entry.hooks.some((hook) => hook.command?.includes('/format-file.mjs'))
+    );
+    expect(formatter.matcher.split('|').sort()).toEqual(['Edit', 'NotebookEdit', 'Write']);
   });
 
   it('points every command at a file that exists, through CLAUDE_PLUGIN_ROOT', () => {

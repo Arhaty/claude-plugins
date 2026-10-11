@@ -78,7 +78,7 @@
         { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } },
         { "type": "null" }
       ],
-      "description": "The formatter the PostToolUse hook runs on each file Claude edits, as an argv list, e.g. [\"pnpm\", \"exec\", \"prettier\", \"--write\", \"--ignore-unknown\"]. The file path is appended as the last argument and the command runs with no shell. It runs only when the plugin is enabled in the project's own .claude/settings.json. null disables it."
+      "description": "The formatter the PostToolUse hook runs on each file Claude edits, as an argv list, e.g. [\"pnpm\", \"exec\", \"prettier\", \"--write\", \"--ignore-unknown\"]. The file path is appended as the last argument and the command runs with no shell. It runs only after the owner approves this exact command for this project in /canon:setup, which records the approval in ~/.claude/canon/trusted.json, outside the repository; a changed command is not run until it is approved again. null disables it."
     },
     "urls": {
       "type": "object",

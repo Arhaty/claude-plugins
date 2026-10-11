@@ -44,7 +44,8 @@ enforce the git rules around it.
 - the typecheck, lint, format-check and test commands, each one optional
 - a per-branch preview URL pattern with `{branch}`, and the staging and production URLs, each
   optional
-- a per-file formatter, and whether to enable canon in the project's `.claude/settings.json`
+- a per-file formatter, and whether you approve running it
+- whether to enable canon in the project's `.claude/settings.json`
 
 It then writes:
 
@@ -56,6 +57,7 @@ It then writes:
 | `docs/specs/archive/`                             | Where shipped specs go.                                                     |
 | `CLAUDE.md`                                       | A workflow section between `<!-- canon:begin -->` and `<!-- canon:end -->`. |
 | `.claude/canon-domains.json`                      | Maps repository paths to the canon file that governs them. Starts empty.    |
+| `~/.claude/canon/trusted.json`                    | Outside the project, only if you approved a formatter: see below.           |
 | `.claude/canon-index.md`                          | Every canon claim on one line, generated, for scoped reviews.               |
 | `.claude/rules/principles.md`                     | Starter engineering principles.                                             |
 | `.claude/settings.json`                           | Only if you said yes: `enabledPlugins["canon@arhaty"]: true`, merged in.    |
@@ -99,7 +101,7 @@ invalid, the push, merge and canon guards refuse what they guard and say to run 
 | `protect-push`   | Before Bash                                            | A push landing on either protected branch, however it is spelled (refspec, upstream, `push.default`, `--all`, `--mirror`). Any force push, to any branch.                                                                                                                                                    | `ALLOW_PROTECTED_PUSH=1`, `ALLOW_FORCE_PUSH=1` |
 | `protect-merge`  | Before Bash and any MCP `merge_pull_request`           | Any merge into the production branch: `gh pr merge`, `gh api` merges and auto-merge, the MCP tool, or a direct ref write. Any `gh api` write naming that branch, a contents write with no branch, and a GraphQL mutation that moves a branch or can't be read. A pull request it cannot read is refused too. | None. The owner merges in the GitHub UI.       |
 | `require-canon`  | Before Bash and any MCP `merge_pull_request`           | `gh pr create`, `gh pr ready` or a merge into the integration branch when the change touches a path in `.claude/canon-domains.json` and no file in `docs/canon/`.                                                                                                                                            | `ALLOW_UNDECIDED_MERGE=1`                      |
-| `format-file`    | After Edit and Write                                   | Nothing. Runs the configured formatter on the one file written.                                                                                                                                                                                                                                              |                                                |
+| `format-file`    | After Edit, Write and NotebookEdit                     | Nothing. Runs the configured formatter on the one file written.                                                                                                                                                                                                                                              |                                                |
 | `ci-watch`       | After `git push` and `gh pr create`, in the background | Nothing. If the CI run for that commit fails, it wakes Claude with the failing step and log.                                                                                                                                                                                                                 |                                                |
 
 Each refusal says why and names its bypass. Set a bypass in front of the one command it is for,
@@ -120,15 +122,14 @@ protection is the boundary.
 `["pnpm", "exec", "prettier", "--write", "--ignore-unknown"]`. The edited file's path is appended
 as one argument and the command runs with no shell, so a path can't inject anything.
 
-It runs only when the project's own `.claude/settings.json` enables the plugin:
-
-```json
-{ "enabledPlugins": { "canon@arhaty": true } }
-```
-
-A user-scope install alone is not enough. Running a command named in a repository's files should
-be that repository's decision, made in its committed settings. Setup offers to add the key. Set
-`formatFile` to `null` to turn the hook off.
+It runs only a command you approved. `formatFile` comes from the repository, so a cloned project
+could name any program there, and any switch kept in the repository can be committed beside it.
+`/canon:setup` shows the command and asks; on a yes it records the approval in
+`~/.claude/canon/trusted.json`, outside every repository, keyed by the repository's git directory
+and the sha256 of the argv list. The hook runs only on an exact match. If the command changes,
+through a pull, a branch switch or an edit, the hook stays off until you re-run `/canon:setup` and
+approve the new one. Worktrees of one clone share its approval; another clone of the same project
+needs its own. Set `formatFile` to `null` to turn the hook off.
 
 ## Migrating an existing project
 

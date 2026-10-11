@@ -15,7 +15,16 @@
  */
 
 import { execFileSync } from 'node:child_process';
-import { existsSync, lstatSync, readFileSync, realpathSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import {
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  readFileSync,
+  realpathSync,
+  writeFileSync,
+} from 'node:fs';
+import { homedir } from 'node:os';
 import { basename, dirname, join, resolve, sep } from 'node:path';
 
 export const CONFIG_PATH = '.claude/canon.json';
@@ -224,18 +233,64 @@ export function configProblem(state, hook) {
 }
 
 /**
- * Is the plugin enabled in the project's own `.claude/settings.json`, as opposed
- * to only at user scope? Any `canon@<marketplace>` key set to true counts.
+ * Where the owner's approval of each project's `formatFile` is kept: in their home
+ * directory, outside every repository. A record inside the repository proves
+ * nothing, because whoever commits the command can commit the approval beside it.
  */
-export function enabledInProject(root) {
+export const trustFile = () => join(homedir(), '.claude', 'canon', 'trusted.json');
+
+/** The sha256 of a `formatFile` argv list, which is what an approval records. */
+export function commandDigest(argv) {
+  return createHash('sha256').update(JSON.stringify(argv)).digest('hex');
+}
+
+function readTrust() {
   try {
-    const settings = JSON.parse(readFileSync(join(root, '.claude/settings.json'), 'utf8'));
-    const plugins = settings?.enabledPlugins;
-    if (plugins === null || typeof plugins !== 'object') return false;
-    return Object.entries(plugins).some(([key, on]) => /^canon@/.test(key) && on === true);
+    const trusted = JSON.parse(readFileSync(trustFile(), 'utf8'));
+    return trusted !== null && typeof trusted === 'object' && !Array.isArray(trusted)
+      ? trusted
+      : {};
   } catch {
-    return false;
+    return {};
   }
+}
+
+/**
+ * What an approval is keyed by: the repository's git directory, resolved to an
+ * absolute path through any symlink. Every worktree of one clone shares it, so
+ * they share one approval; a second clone has its own, and is asked again. A
+ * project that is not a git repository is keyed by its root.
+ */
+export function trustKey(root) {
+  try {
+    const common = execFileSync('git', ['-C', root, 'rev-parse', '--git-common-dir'], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    }).trim();
+    if (common) return canonical(resolve(root, common));
+  } catch {
+    // Not a git repository.
+  }
+  return canonical(root);
+}
+
+/**
+ * Has the owner approved exactly this `formatFile` for this repository? Keyed by
+ * `trustKey` and the command's digest, so a changed command, or the same command
+ * in another clone, is not approved until setup asks again.
+ */
+export function isTrusted(root, argv) {
+  const entry = readTrust()[trustKey(root)];
+  return typeof entry?.sha256 === 'string' && entry.sha256 === commandDigest(argv);
+}
+
+/** Record the owner's approval of `argv` for `root`, replacing any earlier one. */
+export function trust(root, argv) {
+  const file = trustFile();
+  const trusted = readTrust();
+  trusted[trustKey(root)] = { sha256: commandDigest(argv), formatFile: argv };
+  mkdirSync(dirname(file), { recursive: true, mode: 0o700 });
+  writeFileSync(file, `${JSON.stringify(trusted, null, 2)}\n`, { mode: 0o600 });
 }
 
 /** Read and parse a hook's stdin payload. `null` when it is not JSON. */
