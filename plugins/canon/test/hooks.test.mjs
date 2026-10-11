@@ -555,7 +555,7 @@ describe('format-file', () => {
   const enable = (value) =>
     writeFileSync(
       join(project, '.claude/settings.json'),
-      JSON.stringify({ enabledPlugins: { 'canon@canon': value } })
+      JSON.stringify({ enabledPlugins: { 'canon@arhaty': value } })
     );
 
   it('does nothing unless the project settings enable the plugin', () => {

@@ -3,7 +3,7 @@
 ## Reporting a vulnerability
 
 Report vulnerabilities privately through GitHub: open the
-[Security tab](https://github.com/arhaty/canon/security), choose **Report a vulnerability**, and
+[Security tab](https://github.com/arhaty/claude-plugins/security), choose **Report a vulnerability**, and
 describe the issue. Don't open a public issue for a vulnerability.
 
 A hook that lets a guarded command through counts: a push, merge or edit that the README says is

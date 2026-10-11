@@ -7,7 +7,7 @@
  *
  * `--answers` is a JSON file holding the `.claude/canon.json` to write; it is
  * validated against the same rules the hooks use. `--enable-plugin` also sets
- * `enabledPlugins["canon@canon"]` in the project's `.claude/settings.json`.
+ * `enabledPlugins["canon@arhaty"]` in the project's `.claude/settings.json`.
  *
  * **Nothing that exists is overwritten without asking.** `plan` lists every file
  * with what would happen to it: `create`, `same` (already identical), or `conflict`
@@ -40,8 +40,8 @@ const PLUGIN = fileURLToPath(new URL('../', import.meta.url));
 const TEMPLATES = join(PLUGIN, 'templates', 'project');
 const SECTION = join(PLUGIN, 'templates', 'claude-md-section.md');
 const SCHEMA_URL =
-  'https://raw.githubusercontent.com/arhaty/canon/main/templates/canon.schema.json';
-const PLUGIN_KEY = 'canon@canon';
+  'https://raw.githubusercontent.com/arhaty/claude-plugins/main/plugins/canon/templates/canon.schema.json';
+const PLUGIN_KEY = 'canon@arhaty';
 const BEGIN = '<!-- canon:begin -->';
 const END = '<!-- canon:end -->';
 

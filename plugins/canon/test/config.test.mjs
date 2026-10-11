@@ -87,7 +87,7 @@ describe('enabledInProject', () => {
     expect(enabledInProject(project)).toBe(true);
     settings({ enabledPlugins: { 'canon@arhaty-fork': true } });
     expect(enabledInProject(project)).toBe(true);
-    settings({ enabledPlugins: { 'canon@canon': false, 'other@canon': true } });
+    settings({ enabledPlugins: { 'canon@canon': false, 'other@arhaty': true } });
     expect(enabledInProject(project)).toBe(false);
     settings('not an object');
     expect(enabledInProject(project)).toBe(false);

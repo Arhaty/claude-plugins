@@ -1,8 +1,7 @@
 {
-  "name": "canon",
-  "version": "0.1.0",
+  "name": "arhaty-claude-plugins",
   "private": true,
-  "description": "Development tooling for the canon Claude Code plugin. The plugin itself has no dependencies.",
+  "description": "Development tooling for the Arhaty Claude Code plugins. The plugins themselves have no dependencies.",
   "license": "MIT",
   "type": "module",
   "engines": {
@@ -10,11 +9,11 @@
   },
   "packageManager": "pnpm@9.15.1",
   "scripts": {
-    "test": "node --test test/*.test.mjs",
+    "test": "node --test plugins/*/test/*.test.mjs",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "lint": "markdownlint-cli2",
-    "validate": "claude plugin validate . --strict"
+    "validate": "claude plugin validate . --strict && for p in plugins/*/; do claude plugin validate \"$p\" --strict || exit 1; done"
   },
   "devDependencies": {
     "@anthropic-ai/claude-code": "2.1.296",

@@ -31,7 +31,7 @@ jobs:
         with:
           node-version: ${{ matrix.node }}
       # No install step: the hooks and scripts use Node built-ins only, and so do the tests.
-      - run: node --test test/*.test.mjs
+      - run: node --test plugins/*/test/*.test.mjs
 
   check:
     name: Validate, format, lint, typos
@@ -47,7 +47,11 @@ jobs:
       - run: corepack enable
       - run: pnpm install --frozen-lockfile
       - name: Validate the plugin
-        run: pnpm exec claude plugin validate . --strict
+        run: |
+          pnpm exec claude plugin validate . --strict
+          for plugin in plugins/*/; do
+            pnpm exec claude plugin validate "$plugin" --strict
+          done
       - name: Format
         run: pnpm format:check
       - name: Markdown lint

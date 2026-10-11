@@ -1,6 +1,6 @@
 # Weekly link check over every Markdown file (.github/workflows/links.yml).
 # claude-md-section.md links resolve inside the project it is written into, not here.
-exclude_path = ["node_modules", "templates/claude-md-section.md"]
+exclude_path = ["node_modules", "plugins/canon/templates/claude-md-section.md"]
 max_retries = 3
 accept = ["200..=299", "429"]
 exclude = [

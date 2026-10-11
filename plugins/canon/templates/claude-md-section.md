@@ -2,7 +2,7 @@
 
 ## Workflow (canon)
 
-This project uses the [canon](https://github.com/arhaty/canon) plugin. `.claude/canon.json` holds
+This project uses the [canon](https://github.com/arhaty/claude-plugins/tree/main/plugins/canon) plugin. `.claude/canon.json` holds
 the branch names and check commands; `/canon:setup` changes them.
 
 ### Where things are written

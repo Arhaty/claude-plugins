@@ -129,7 +129,7 @@ describe('scaffold', () => {
     apply(root, config(), { enablePlugin: true, allow: ['.claude/settings.json'] });
     expect(JSON.parse(readFileSync(join(root, '.claude/settings.json'), 'utf8'))).toEqual({
       permissions: { allow: ['Read'] },
-      enabledPlugins: { 'canon@canon': true },
+      enabledPlugins: { 'canon@arhaty': true },
     });
   });
 

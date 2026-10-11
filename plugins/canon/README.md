@@ -1,7 +1,5 @@
 # canon
 
-[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/arhaty/canon/badge)](https://scorecard.dev/viewer/?uri=github.com/arhaty/canon)
-
 A Claude Code plugin for one workflow: write a spec, build it, review it, record what it settled,
 ship it. Specs in `docs/specs/` plan the work in flight and get archived when it ships.
 `docs/canon/` is the living record of how the project works today, written from the code and
@@ -29,8 +27,8 @@ enforce the git rules around it.
 ## Install
 
 ```text
-/plugin marketplace add arhaty/canon
-/plugin install canon@canon
+/plugin marketplace add arhaty/claude-plugins
+/plugin install canon@arhaty
 /canon:setup
 ```
 
@@ -60,7 +58,7 @@ It then writes:
 | `.claude/canon-domains.json`                      | Maps repository paths to the canon file that governs them. Starts empty.    |
 | `.claude/canon-index.md`                          | Every canon claim on one line, generated, for scoped reviews.               |
 | `.claude/rules/principles.md`                     | Starter engineering principles.                                             |
-| `.claude/settings.json`                           | Only if you said yes: `enabledPlugins["canon@canon"]: true`, merged in.     |
+| `.claude/settings.json`                           | Only if you said yes: `enabledPlugins["canon@arhaty"]: true`, merged in.    |
 
 **Setup never overwrites a file without asking.** It plans first, lists every file that exists
 and would change, and writes nothing until you approve each one by name. In `CLAUDE.md` it only
@@ -121,7 +119,7 @@ as one argument and the command runs with no shell, so a path can't inject anyth
 It runs only when the project's own `.claude/settings.json` enables the plugin:
 
 ```json
-{ "enabledPlugins": { "canon@canon": true } }
+{ "enabledPlugins": { "canon@arhaty": true } }
 ```
 
 A user-scope install alone is not enough. Running a command named in a repository's files should
@@ -152,8 +150,8 @@ in CI.
 ## Updating
 
 ```text
-/plugin marketplace update canon
-/plugin update canon@canon
+/plugin marketplace update arhaty
+/plugin update canon@arhaty
 ```
 
 Re-run `/canon:setup` after an update that changes the templates. It shows what would change and
@@ -172,9 +170,10 @@ asks before writing.
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md). To report a vulnerability, see [SECURITY.md](SECURITY.md). The [examples](examples/) show a filled-in spec and the
+See [CONTRIBUTING.md](../../CONTRIBUTING.md). To report a vulnerability, see
+[SECURITY.md](../../SECURITY.md). The [examples](examples/) show a filled-in spec and the
 canon file it produced.
 
 ## License
 
-MIT. See [LICENSE](LICENSE).
+MIT. See [LICENSE](../../LICENSE).

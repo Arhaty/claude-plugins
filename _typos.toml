@@ -7,4 +7,4 @@
 locale = "en"
 
 [files]
-extend-exclude = ["pnpm-lock.yaml", "CHANGELOG.md"]
+extend-exclude = ["pnpm-lock.yaml", "**/CHANGELOG.md"]

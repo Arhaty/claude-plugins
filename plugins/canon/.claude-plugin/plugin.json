@@ -6,8 +6,8 @@
     "name": "Arhaty",
     "url": "https://github.com/arhaty"
   },
-  "homepage": "https://github.com/arhaty/canon",
-  "repository": "https://github.com/arhaty/canon",
+  "homepage": "https://github.com/arhaty/claude-plugins/tree/main/plugins/canon",
+  "repository": "https://github.com/arhaty/claude-plugins",
   "license": "MIT",
   "keywords": ["workflow", "specs", "documentation", "git", "hooks", "code-review"]
 }

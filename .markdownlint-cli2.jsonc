@@ -15,5 +15,5 @@
     "MD029": false,
   },
   "globs": ["**/*.md"],
-  "ignores": ["node_modules/**", "CHANGELOG.md"],
+  "ignores": ["**/node_modules/**", "**/CHANGELOG.md"],
 }

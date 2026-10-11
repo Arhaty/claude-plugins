@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://raw.githubusercontent.com/arhaty/canon/main/templates/canon.schema.json",
+  "$id": "https://raw.githubusercontent.com/arhaty/claude-plugins/main/plugins/canon/templates/canon.schema.json",
   "title": "canon project config",
   "description": "Per-project settings for the canon Claude Code plugin, written by /canon:setup to .claude/canon.json. Every hook and skill reads branch names, commands and URLs from here; nothing is hardcoded.",
   "type": "object",
