@@ -9,6 +9,7 @@
     "plugins/canon": {
       "component": "canon",
       "package-name": "canon",
+      "release-as": "0.1.0",
       "changelog-path": "CHANGELOG.md",
       "extra-files": [
         {
