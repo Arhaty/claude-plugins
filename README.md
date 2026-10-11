@@ -13,6 +13,9 @@ A Claude Code plugin marketplace. Add it once, then install the plugins you want
 | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------ |
 | [canon](plugins/canon/) | A spec, build, review, canon workflow: specs plan the work, `docs/canon/` records how the project works today, hooks enforce the git rules. | `/plugin install canon@arhaty` |
 
+Before installing canon, check its [prerequisites](plugins/canon/README.md#prerequisites) and
+[limitations](plugins/canon/README.md#limitations).
+
 Each plugin has its own README, version and changelog. Releases are tagged per plugin
 (`canon-v0.1.0`).
 
