@@ -517,6 +517,10 @@ describe('git global options and unresolved targets', () => {
     expect(pushTargets('git push origin HEAD:{main,feat}')?.unresolved).toBe(true);
     expect(pushTargets('git push origin feat/{a,b}')?.unresolved).toBe(true);
     expect(pushTargets('git push origin feat/a')?.unresolved).toBe(false);
+    // Braces on the source side are git's reflog syntax, not an expansion of the destination.
+    expect(pushTargets('git push origin HEAD@{1}:feat/x')?.unresolved).toBe(false);
+    expect(pushTargets('git push origin HEAD@{1}:feat/x')?.targets).toEqual(['feat/x']);
+    expect(pushTargets('git push origin HEAD@{1}:main')?.targets).toEqual(['main']);
   });
 });
 

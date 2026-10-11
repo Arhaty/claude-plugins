@@ -50,6 +50,12 @@ const FORCE = new Set(['--force', '--force-with-lease', '--force-if-includes', '
  */
 const EVERY_BRANCH = new Set(['--all', '--branches', '--mirror']);
 
+/** The destination side of a refspec: after the colon, or the whole of it. */
+const destination = (refspec) => {
+  const colon = refspec.indexOf(':');
+  return colon === -1 ? refspec : refspec.slice(colon + 1) || refspec.slice(0, colon);
+};
+
 /** `main`, `heads/main` and `refs/heads/main` all name the same branch to git. */
 const branchName = (ref) => ref.replace(/^(?:refs\/)?heads\//, '');
 
@@ -161,8 +167,10 @@ function readPush({ argv, env, appended }) {
   for (const refspec of refspecs) {
     // A target naming a shell variable cannot be compared against the protected
     // set, and comparing it anyway silently answers "not protected". Braces are the
-    // same: bash expands `{main,feat}` into two refspecs after this has read one.
-    if (/[$`{}]/.test(refspec)) unresolved = true;
+    // same on the destination side: bash expands `{main,feat}` into two refspecs
+    // after this has read one. On the source side they are git's own syntax, as in
+    // `HEAD@{1}:feat/x`, and the destination is still read.
+    if (/[$`]/.test(refspec) || /[{}]/.test(destination(refspec))) unresolved = true;
     const read = readRefspec(refspec, { deleting });
     force ||= read.force;
     everyBranch ||= read.everyBranch;

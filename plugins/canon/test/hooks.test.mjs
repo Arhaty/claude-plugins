@@ -309,6 +309,8 @@ describe('protect-push', () => {
     expect(push('git push origin {main,feature}')).toBe(2);
     expect(push('git push origin HEAD:{main,x}')).toBe(2);
     expect(push('git push -u origin HEAD')).toBe(0);
+    expect(push('git push origin HEAD@{0}:feat/x')).toBe(0);
+    expect(push('git push origin HEAD@{0}:main')).toBe(2);
   });
 
   it('reads the protected branches from canon.json', () => {
