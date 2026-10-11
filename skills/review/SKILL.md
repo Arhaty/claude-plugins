@@ -1,6 +1,6 @@
 ---
 name: review
-description: Check a branch, a spec, or the paths you name against this project's own rules - the canon, the rule files, reuse, and the spec the work was built to. Complements /code-review, which finds correctness bugs
+description: Check a branch, spec or paths against this project's canon, rule files and spec. Complements /code-review
 argument-hint: <spec number (optionally with a sha range), paths, globs, or a git range; nothing reviews the branch>
 allowed-tools: Bash, Read, Grep, Glob
 ---

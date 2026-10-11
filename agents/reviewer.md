@@ -1,6 +1,6 @@
 ---
 name: reviewer
-description: Read-only reviewer for the canon workflow. Checks a branch or a spec against the project's canon, rule files and spec, and returns findings only. Used by /canon:ship and /canon:review; never edits, commits or pushes.
+description: Read-only reviewer for canon: checks a branch or spec against the project's canon, rules and spec, and returns findings only
 tools: Bash, Read, Grep, Glob
 ---
 

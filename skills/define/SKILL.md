@@ -1,6 +1,6 @@
 ---
 name: define
-description: Research a change and write its spec to docs/specs/NNN-slug.md on a fresh branch, asking the owner questions in rounds until nothing is open, then stop for them to read it
+description: Research a change and write its spec to docs/specs, asking the owner questions until nothing is open
 argument-hint: <slug or one-line description, or a spec number for a revision round>
 disable-model-invocation: true
 ---

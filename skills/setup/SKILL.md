@@ -1,6 +1,6 @@
 ---
 name: setup
-description: Set up the canon workflow in this project. Asks for the owner, branches, package manager, check commands and URLs, writes .claude/canon.json, and scaffolds docs/canon, docs/specs, the CLAUDE.md workflow section, the domain map and the starter rules, never overwriting a file without asking
+description: Set up canon in this project: write .claude/canon.json and scaffold docs/canon, docs/specs and the CLAUDE.md section, asking before changing any existing file
 argument-hint: (none)
 disable-model-invocation: true
 allowed-tools: Bash, Read, Glob, Grep, AskUserQuestion

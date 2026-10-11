@@ -1,6 +1,6 @@
 ---
 name: production
-description: Prepare the release from the integration branch to production. Opens or refreshes the release pull request with a manifest of everything that would ship, watches CI, and stops for the owner to merge
+description: Open the release pull request into production with a manifest of what ships, then stop for the owner to merge
 argument-hint: (none, always integration into production)
 disable-model-invocation: true
 allowed-tools: Bash, Read, Grep, Glob

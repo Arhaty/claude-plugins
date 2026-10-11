@@ -1,6 +1,6 @@
 ---
 name: staging
-description: Land the current branch on the integration branch. Archives its spec, opens the pull request if there is none, marks it ready, waits for CI, merges it, and reports where to see it
+description: Archive the branch's spec, wait for CI, and merge the branch into the integration branch
 argument-hint: (none, works on the current branch)
 disable-model-invocation: true
 allowed-tools: Bash, Read, Grep, Glob, Edit
