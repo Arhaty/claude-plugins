@@ -13,29 +13,65 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  check:
-    name: Validate, test, lint
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
+  test:
+    name: Test (${{ matrix.os }}, Node ${{ matrix.node }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
     strategy:
+      fail-fast: false
       matrix:
-        # The floor the README promises, and the current LTS.
-        node: [20, 24]
+        # Windows is not in the matrix: see "Limitations" in the README.
+        os: [ubuntu-latest, macos-latest]
+        node: [20, 22]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: pnpm/action-setup@d9184bf108216479bc5a137cc391f4d7b14c870b # v6.1.0
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: ${{ matrix.node }}
-          cache: pnpm
+      # No install step: the hooks and scripts use Node built-ins only, and so do the tests.
+      - run: node --test test/*.test.mjs
+
+  check:
+    name: Validate, format, lint, typos
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+      - run: corepack enable
       - run: pnpm install --frozen-lockfile
       - name: Validate the plugin
-        run: |
-          npm install --global @anthropic-ai/claude-code
-          claude plugin validate --strict .
-      - name: Test
-        run: pnpm test
+        run: pnpm exec claude plugin validate . --strict
       - name: Format
         run: pnpm format:check
       - name: Markdown lint
         run: pnpm lint
+      - name: Typos
+        run: |
+          .github/scripts/install-tool.sh typos
+          typos
+
+  workflows:
+    name: Lint workflows
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: actionlint
+        run: |
+          .github/scripts/install-tool.sh actionlint
+          actionlint
+      - name: zizmor
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          .github/scripts/install-tool.sh zizmor
+          zizmor --format=github .github/workflows

@@ -1,0 +1,10 @@
+# typos (https://github.com/crate-ci/typos) runs over the whole repository in CI.
+#
+# The workflow prose uses British spelling ("behaviour", "artefact", "normalised") carried over
+# from the projects it was extracted from. The `en` locale accepts both spellings.
+
+[default]
+locale = "en"
+
+[files]
+extend-exclude = ["pnpm-lock.yaml", "CHANGELOG.md"]
