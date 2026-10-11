@@ -866,6 +866,10 @@ const BRANCH_WRITES = [
   ['gh api repos/o/r/merge-upstream -f branch=main', 'main'],
   ['gh api -X DELETE repos/o/r/branches/main/protection', 'main'],
   ['gh api repos/o/r/branches/main/rename -f new_name=old', 'main'],
+  ['gh api -X PATCH repos/o/r/git/refs/heads/ma%69n -f sha=abc', 'main'],
+  ['gh api -X DELETE repos/o/r/branches/$b/protection', null],
+  ['gh api -X DELETE repositories/42/branches/main/protection', 'main'],
+  ['gh api repositories/42/merges -f base=main -f head=x', 'main'],
 ];
 
 const GRAPHQL = [
@@ -874,7 +878,7 @@ const GRAPHQL = [
     ['mergePullRequest'],
   ],
   [
-    'gh api graphql -f query=\'mutation($id: ID!) { m: mergeBranch(input: {repositoryId: $id, base: "main", head: "x"}) { clientMutationId } }\'',
+    'gh api graphql -f query=\'mutation { m: mergeBranch(input: {base: "main", head: "x"}) { clientMutationId } }\'',
     ['mergeBranch'],
   ],
   [
@@ -896,14 +900,25 @@ const GRAPHQL = [
 ];
 
 const GRAPHQL_UNREADABLE = [
+  'gh api graphql -f query=\'mutation($id: ID!) { m: mergeBranch(input: {repositoryId: $id, base: "main", head: "x"}) { clientMutationId } }\'',
   'gh api graphql -F query=@mutation.graphql',
   'gh api graphql --input body.json',
   'gh api graphql -f query="$Q"',
   "gh api graphql -f query='mutation { ...F } fragment F on Mutation { mergeBranch(input: {}) { clientMutationId } }'",
   "gh api graphql -f query='mutation { mergeBranch(input: {}) { clientMutationId }'",
+  "gh api graphql -f query='mutation($b: String!) { updatePullRequest(input: {baseRefName: $b}) { clientMutationId } }' -f b=main",
+  "gh api graphql -f query='mutation { }'",
+  "gh api graphql -f query='mutation { @skip(if: true) }'",
 ];
 
 describe('every spelling of a merge', () => {
+  it('reads a merge by repository id as unreadable', () => {
+    expect(mergeTargets('gh api -X PUT repositories/42/pulls/5/merge')).toEqual([
+      { selector: null },
+    ]);
+    expect(mergeTargets('gh api repositories/42/pulls/5/merge')).toEqual([]);
+  });
+
   it.each(MERGES)('reads %s', (command, selector) => {
     expect(mergeTargets(command)).toEqual([{ selector }]);
   });
@@ -926,7 +941,7 @@ describe('every spelling of a merge', () => {
     ).toEqual([]);
     expect(mergeTargets("gh api graphql -f query='{ viewer { login } }'")).toEqual([]);
     const [named] = mergeTargets(
-      "gh api graphql -f query='mutation($b: String!) { updatePullRequest(input: {baseRefName: $b}) { clientMutationId } }' -f b=main"
+      `gh api graphql -f query='mutation { updatePullRequest(input: {baseRefName: "main"}) { clientMutationId } }'`
     );
     expect(named.writes).toContain('main');
   });

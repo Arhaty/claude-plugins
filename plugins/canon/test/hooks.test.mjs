@@ -172,11 +172,14 @@ describe('protect-merge', () => {
     }
   });
 
-  it('allows opening the release pull request into production', () => {
-    // `/canon:production` runs this, and a pull request opened is not a merge.
+  it('allows the release pull request and reads that change nothing', () => {
+    // `/canon:production` opens the release pull request, which is not a merge.
     for (const command of [
       'gh pr create --base main --head staging --title "release" --body "x"',
       'gh pr create -B main -H staging --fill',
+      'gh api repos/o/r/pulls',
+      'gh api graphql -f query=query{viewer{login}}',
+      'gh api graphql -f query=\'query($n: Int!) { repository(owner: "o", name: "r") { pullRequest(number: $n) { baseRefName } } }\' -F n=5',
     ]) {
       expect(runHook('protect-merge.mjs', command, 'exit 1'), command).toBe(0);
     }

@@ -108,7 +108,9 @@ fails open, since a wrong edit is cheap to move to a branch.
 
 **The hooks catch the routine mistake, one command early.** They read shell commands, and a
 determined command can get past a string matcher. Branch protection on GitHub, for both branches,
-is what stops a bad change reaching production.
+is what stops a bad change reaching production. `protect-merge` reads the common `gh api` and
+GraphQL ways to move a branch, not every one the API offers: it catches mistakes, and branch
+protection is the boundary.
 
 ### The formatter
 

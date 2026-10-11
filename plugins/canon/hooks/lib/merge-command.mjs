@@ -849,7 +849,7 @@ const API_BODY = new Set(['-f', '--raw-field', '-F', '--field', '--input']);
  * reads one spelling of a merge and not another is the gap these hooks keep closing.
  */
 const API_MERGE =
-  /^(?:https?:\/\/[^/]+(?:\/api\/v3)?)?\/?repos\/([^/]+)\/([^/]+)\/pulls\/(\d+)\/(merge|ccr\/auto_merge)\/?(?:\?.*)?$/;
+  /^(?:https?:\/\/[^/]+(?:\/api\/v3)?)?\/?(?:repos\/(?<owner>[^/]+)\/(?<repo>[^/]+)|repositories\/(?<id>\d+))\/pulls\/(?<number>\d+)\/(?<route>merge|ccr\/auto_merge)\/?(?:\?.*)?$/;
 
 /**
  * The methods that merge, per endpoint. A DELETE on `auto_merge` turns it off,
@@ -863,7 +863,8 @@ const MERGE_METHODS = { merge: ['PUT'], 'ccr/auto_merge': ['PUT', 'POST'] };
  * creates or deletes it outright, a file written through the contents API, a fork
  * synced with `merge-upstream`, and a change to a branch's protection or name.
  */
-const API_REPO = /^(?:https?:\/\/[^/]+(?:\/api\/v3)?)?\/?repos\/[^/]+\/[^/]+\//;
+const API_REPO =
+  /^(?:https?:\/\/[^/]+(?:\/api\/v3)?)?\/?(?:repos\/[^/]+\/[^/]+|repositories\/\d+)\//;
 const API_MERGES = /^merges\/?(?:\?.*)?$/;
 const API_REF = /^git\/refs\/heads\/(.+?)\/?(?:\?.*)?$/;
 const API_REFS = /^git\/refs\/?(?:\?.*)?$/;
@@ -938,12 +939,12 @@ function directWrite(endpoint, method, pairs) {
     // a shell variable is not judged: a cleanup names the merged branch as
     // `heads/$branch`, and refusing it would refuse every one.
     if (ref === '{branch}') return { branch: null };
-    return { branch: ref };
+    return { branch: decode(ref) };
   }
 
   const branch = API_BRANCH.exec(rest)?.[1];
   if (branch !== undefined) {
-    return branch === '{branch}' ? { branch: null } : { branch: decode(branch) };
+    return unreadable(branch) ? { branch: null } : { branch: decode(branch) };
   }
 
   const named = [
@@ -1034,9 +1035,13 @@ export function graphqlMutations(text) {
     if (i >= tokens.length) return null;
 
     let depth = 0;
+    let found = 0;
     parens = 0;
     for (; i < tokens.length; i += 1) {
       const token = word(i);
+      // A `$` past the variable definitions is a variable whose value this cannot
+      // see, or a shell substitution that never happened. Either way, unreadable.
+      if (kind === 'mutation' && token === '$') return null;
       if (token === '(') parens += 1;
       else if (token === ')') parens -= 1;
       else if (parens > 0 || token === undefined) continue;
@@ -1053,10 +1058,13 @@ export function graphqlMutations(text) {
         if (!/^[_A-Za-z]/.test(token)) continue;
         // `alias: field` names the field second.
         fields.push(word(i + 1) === ':' ? word(i + 2) : token);
+        found += 1;
         if (word(i + 1) === ':') i += 2;
       }
     }
     if (depth !== 0) return null;
+    // A mutation with no field this can name mutates something it cannot see.
+    if (kind === 'mutation' && found === 0) return null;
     i += 1;
   }
   if (fields.some((field) => field === undefined || !/^[_A-Za-z]\w*$/.test(field))) return null;
@@ -1123,8 +1131,10 @@ function mergeOf({ argv, env, appended }) {
 
     const path = API_MERGE.exec(endpoint);
     if (!path) return directWrite(endpoint, method, pairs);
-    if (!MERGE_METHODS[path[4]].includes(method)) return null;
-    const [, owner, repo, number] = path;
+    const { owner, repo, id, number, route } = path.groups;
+    if (!MERGE_METHODS[route].includes(method)) return null;
+    // `repositories/<id>` names a repository by number, which `prDetails` cannot read.
+    if (id !== undefined) return { selector: null };
 
     // The placeholders, `{owner}` or the older `:owner`, mean the current
     // repository, unless `GH_REPO` says which.
