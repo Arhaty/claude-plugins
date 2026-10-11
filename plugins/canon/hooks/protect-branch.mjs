@@ -38,9 +38,11 @@
 
 import { execFileSync } from 'node:child_process';
 import { existsSync, statSync } from 'node:fs';
+import { userInfo } from 'node:os';
 import { dirname, resolve, sep } from 'node:path';
 
 import { canonical, loadConfig, projectRoot, readPayload } from './lib/config.mjs';
+import { invocations } from './lib/merge-command.mjs';
 import { writesToWorktree } from './lib/writes-to-worktree.mjs';
 
 /** Allow, silently. Used for every case this hook cannot answer. */
@@ -70,18 +72,52 @@ if (bash) {
   allow();
 }
 
+/** The nearest existing directory at or above `path`, or `null`. */
+function existingDir(path) {
+  let dir = path;
+  while (!existsSync(dir) || !statSync(dir).isDirectory()) {
+    const parent = dirname(dir);
+    if (parent === dir) return null;
+    dir = parent;
+  }
+  return dir;
+}
+
+/** `git -C a -C b ...` runs in `a/b`, relative to where the command runs. */
+function gitDir(argv, at) {
+  let dir = at;
+  for (let i = 1; i < argv.length && argv[i].startsWith('-'); i += 1) {
+    if (argv[i] === '-C') dir = resolve(dir, argv[++i] ?? '.');
+    else if (['-c', '--git-dir', '--work-tree', '--namespace'].includes(argv[i])) i += 1;
+  }
+  return dir;
+}
+
 /**
- * **The branch of the work tree the write lands in**, not the project root's. A
- * worktree has its own `HEAD`, so reading ROOT judged work in a worktree by the main
- * checkout's branch: refused on a feature branch, allowed on `main`. Bash writes
- * where it runs, so that is the payload's cwd, as `protect-push.mjs` reads it; a file
- * tool writes where the file is, so that is its nearest existing directory.
+ * Where each command of a Bash call runs: the payload's cwd, moved by `cd` and
+ * `pushd` as the call goes, and by `git -C` for that one git command. Only the
+ * commands that write count, so `cd /tmp && sed -i ...` from the project is not a
+ * project write, and `cd <project> && sed -i ...` from anywhere is. A write the
+ * matcher only sees on the whole line, such as a redirect, counts every command's
+ * directory. A `cd` to a path this cannot read leaves the rest of the call unjudged.
  */
-let dir = bash ? cwd : canonical(resolve(cwd, file));
-while (!existsSync(dir) || !statSync(dir).isDirectory()) {
-  const parent = dirname(dir);
-  if (parent === dir) allow();
-  dir = parent;
+function bashDirs(command, start) {
+  const runs = [];
+  let at = start;
+  for (const { argv } of invocations(command)) {
+    if (argv[0] === 'cd' || argv[0] === 'pushd') {
+      const to = argv.slice(1).find((arg) => !arg.startsWith('-'));
+      if (to === undefined) at = userInfo().homedir;
+      else at = /[$`~]/.test(to) ? null : resolve(at ?? start, to);
+      continue;
+    }
+    if (at === null) continue;
+    const dir = argv[0] === 'git' ? gitDir(argv, at) : at;
+    const line = argv.map((arg) => (/\s/.test(arg) ? `'${arg}'` : arg)).join(' ');
+    runs.push({ dir, writes: writesToWorktree(line) });
+  }
+  const writing = runs.filter((run) => run.writes);
+  return [...new Set((writing.length ? writing : runs).map((run) => run.dir))];
 }
 
 const git = (at, ...args) =>
@@ -90,19 +126,45 @@ const git = (at, ...args) =>
     stdio: ['ignore', 'pipe', 'ignore'],
   }).trim();
 
-let branch;
-try {
-  // A work tree of another repository is not this project's business, whatever its
-  // branch is called. One sharing this project's git directory is.
-  const common = (at) => canonical(resolve(at, git(at, 'rev-parse', '--git-common-dir')));
-  if (common(dir) !== common(ROOT)) allow();
-  const top = canonical(git(dir, 'rev-parse', '--show-toplevel'));
-  if (!bash && !canonical(resolve(cwd, file)).startsWith(top.endsWith(sep) ? top : top + sep)) {
-    allow();
+const common = (at) =>
+  canonical(git(at, 'rev-parse', '--path-format=absolute', '--git-common-dir'));
+
+/**
+ * The branch checked out in the work tree holding `dir`, when that work tree is this
+ * project's main checkout or one of its worktrees, else `null`. A work tree of another
+ * repository is not this project's business, whatever its branch is called.
+ */
+function branchAt(dir, file) {
+  try {
+    if (common(dir) !== common(ROOT)) return null;
+    const top = canonical(git(dir, 'rev-parse', '--show-toplevel'));
+    if (file !== undefined && !file.startsWith(top.endsWith(sep) ? top : top + sep)) return null;
+    return git(dir, 'rev-parse', '--abbrev-ref', 'HEAD');
+  } catch {
+    return null;
   }
-  branch = git(dir, 'rev-parse', '--abbrev-ref', 'HEAD');
-} catch {
-  allow();
+}
+
+/**
+ * **The branch of the work tree the write lands in**, not the project root's. A
+ * worktree has its own `HEAD`, so reading ROOT judged work in a worktree by the main
+ * checkout's branch: refused on a feature branch, allowed on `main`. Bash writes
+ * where each command runs; a file tool writes where the file is.
+ */
+let branch;
+if (bash) {
+  for (const at of bashDirs(command, cwd)) {
+    const dir = existingDir(canonical(at));
+    const found = dir === null ? null : branchAt(dir);
+    if (PROTECTED.has(found)) {
+      branch = found;
+      break;
+    }
+  }
+} else {
+  const target = canonical(resolve(cwd, file));
+  const dir = existingDir(target);
+  branch = dir === null ? null : branchAt(dir, target);
 }
 
 // `HEAD` is what a detached checkout reports. Not a protected branch, and not a

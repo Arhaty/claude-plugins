@@ -70,7 +70,7 @@ if (process.env.ALLOW_UNDECIDED_MERGE === '1') allow();
 
 try {
   const { mergesIn, prCalls, prDetails, prFiles } = await import('./lib/merge-command.mjs');
-  const { DOMAINS_PATH, configProblem, loadConfig, projectRoot, readPayload } =
+  const { DOMAINS_PATH, canonical, configProblem, loadConfig, projectRoot, readPayload } =
     await import('./lib/config.mjs');
 
   const payload = await readPayload();
@@ -102,6 +102,29 @@ try {
    * the cwd's branch too.
    */
   const DIR = typeof payload.cwd === 'string' && existsSync(payload.cwd) ? payload.cwd : ROOT;
+
+  // A command run in another repository is about that repository's pull requests,
+  // which this project's map does not govern. Unreadable on either side is judged
+  // as before, against the project.
+  const commonDir = (dir) => {
+    try {
+      return canonical(
+        execFileSync(
+          'git',
+          ['-C', dir, 'rev-parse', '--path-format=absolute', '--git-common-dir'],
+          {
+            encoding: 'utf8',
+            stdio: ['ignore', 'pipe', 'ignore'],
+          }
+        ).trim()
+      );
+    } catch {
+      return null;
+    }
+  };
+  const here = commonDir(DIR);
+  const project = commonDir(ROOT);
+  if (here !== null && project !== null && here !== project) allow();
 
   // A merge through an MCP server's tool carries no command, so it is judged on the pull
   // request it names rather than on a local diff: the files GitHub lists for it. Without

@@ -124,6 +124,25 @@ describe('protect-merge', () => {
     expect(runHook('protect-merge.mjs', unreadable, into('staging', 12))).toBe(2);
   });
 
+  it('reads a merge with no number from the worktree it runs in', () => {
+    const repo = scratchRepo();
+    const tree = join(repo.dir, '.wt');
+    try {
+      repo.git('worktree', 'add', '-q', '-b', 'feat/x', tree, 'staging');
+      // The stub answers for the pull request of whichever checkout gh runs in.
+      const gh =
+        'case "$(pwd)" in *.wt*) echo \'{"baseRefName":"staging","number":7}\';; ' +
+        '*) echo \'{"baseRefName":"main","number":8}\';; esac';
+      const merge = (cwd) =>
+        run('protect-merge.mjs', 'gh pr merge --merge', gh, { cwd, project: repo.dir }).status;
+      expect(merge(tree)).toBe(0);
+      expect(merge(repo.dir)).toBe(2);
+    } finally {
+      repo.git('worktree', 'remove', '--force', tree);
+      rmSync(repo.dir, { recursive: true, force: true });
+    }
+  });
+
   it('refuses landing on production with no pull request, and allows a branch cleanup', () => {
     for (const command of DIRECT) {
       expect(runHook('protect-merge.mjs', command, 'exit 1'), command).toBe(2);
@@ -207,20 +226,49 @@ describe('require-canon on a gh command', () => {
     }
   });
 
-  it('reads the branch and diff from the payload cwd, so a worktree is judged by its own', () => {
-    // The stub answers with whichever directory `git -C` was given.
-    const git = (worktree) =>
-      `case "$*" in *${worktree}*rev-parse*) echo feature;; *rev-parse*) echo staging;; ` +
-      `*${worktree}*diff*) echo src/lib/content.ts;; *diff*) echo README.md;; *) exit 0;; esac`;
-    const project = makeProject();
-    const tree = mkdtempSync(join(tmpdir(), 'canon-wt-'));
-    const create = (cwd) =>
-      run('require-canon.mjs', 'gh pr create --fill', governed, { project, cwd, git: git(tree) })
-        .status;
-    expect(create(tree)).toBe(2);
-    expect(create(project)).toBe(0);
-    rmSync(tree, { recursive: true, force: true });
-    rmSync(project, { recursive: true, force: true });
+  it('judges a worktree by its own branch, and leaves another repository alone', () => {
+    const c = ['-c', 'user.name=t', '-c', 'user.email=t@t'];
+    /** A scratch repository with `origin` pointing at itself, so `origin/staging` exists. */
+    const withOrigin = () => {
+      const repo = scratchRepo();
+      repo.git('remote', 'add', 'origin', repo.dir);
+      repo.git('fetch', '-q', 'origin');
+      return repo;
+    };
+    /** Commit a governed path on the branch checked out in `dir`. */
+    const governedCommit = (dir) => {
+      mkdirSync(join(dir, 'src/lib'), { recursive: true });
+      writeFileSync(join(dir, 'src/lib/content.ts'), 'x\n');
+      spawnSync('git', ['-C', dir, 'add', 'src/lib/content.ts']);
+      const done = spawnSync('git', ['-C', dir, ...c, 'commit', '-q', '-m', 'x'], {
+        encoding: 'utf8',
+      });
+      expect(done.status, done.stderr).toBe(0);
+    };
+
+    const repo = withOrigin();
+    const other = withOrigin();
+    const tree = join(repo.dir, '.wt');
+    try {
+      repo.git('checkout', '-q', 'staging');
+      repo.git('worktree', 'add', '-q', '-b', 'feat/x', tree, 'staging');
+      governedCommit(tree);
+      governedCommit(other.dir);
+
+      const create = (cwd, project = repo.dir) =>
+        run('require-canon.mjs', 'gh pr create --fill', 'exit 1', { cwd, project }).status;
+      // The worktree's feature branch carries a governed change; the main checkout is on
+      // the integration branch, which is not judged.
+      expect(create(tree)).toBe(2);
+      expect(create(repo.dir)).toBe(0);
+      // The same change in another repository is refused there, and not from this project.
+      expect(create(other.dir, other.dir)).toBe(2);
+      expect(create(other.dir)).toBe(0);
+    } finally {
+      repo.git('worktree', 'remove', '--force', tree);
+      rmSync(repo.dir, { recursive: true, force: true });
+      rmSync(other.dir, { recursive: true, force: true });
+    }
   });
 
   it('reads the map from the project, and refuses with a reason when it is missing', () => {
@@ -542,8 +590,8 @@ describe('protect-branch and branch-notice', () => {
   });
 
   it("judges a write in a worktree by the worktree's branch, not the main checkout's", () => {
-    const tree = join(tmpdir(), `canon-wt-${process.pid}-${Date.now()}`);
-    repo.git('checkout', '-q', 'main');
+    const tree = join(repo.dir, '.wt');
+    repo.git('checkout', '-q', 'staging');
     repo.git('worktree', 'add', '-q', '-b', 'feat/x', tree, 'staging');
     try {
       const write = (file, cwd) =>
@@ -558,19 +606,39 @@ describe('protect-branch and branch-notice', () => {
           cwd,
           project: repo.dir,
         }).status;
-      // Main checkout on `main`, worktree on a feature branch.
+      // Main checkout on the integration branch, worktree under it on a feature branch.
       expect(write(join(tree, 'src/a.ts'), tree)).toBe(0);
+      expect(write(join(tree, 'src/a.ts'), repo.dir)).toBe(0);
       expect(bash(tree)).toBe(0);
       expect(write(join(repo.dir, 'src/a.ts'), tree)).toBe(2);
       expect(bash(repo.dir)).toBe(2);
       // And the other way round.
       repo.git('checkout', '-q', 'feature');
-      spawnSync('git', ['-C', tree, 'checkout', '-q', 'staging']);
+      spawnSync('git', ['-C', tree, 'checkout', '-q', 'main']);
       expect(write(join(tree, 'src/a.ts'), tree)).toBe(2);
       expect(bash(tree)).toBe(2);
       expect(write(join(repo.dir, 'src/a.ts'), repo.dir)).toBe(0);
     } finally {
       repo.git('worktree', 'remove', '--force', tree);
+    }
+  });
+
+  it('judges a Bash write where it runs, after cd and git -C', () => {
+    repo.git('checkout', '-q', 'main');
+    const scratch = mkdtempSync(join(tmpdir(), 'canon-elsewhere-'));
+    const bash = (command, cwd) =>
+      run('protect-branch.mjs', command, 'exit 1', { cwd, project: repo.dir }).status;
+    try {
+      // Into the project from elsewhere is a project write.
+      expect(bash(`cd ${repo.dir} && sed -i '' s/a/b/ README.md`, scratch)).toBe(2);
+      expect(bash(`git -C ${repo.dir} commit -m x`, scratch)).toBe(2);
+      // Out of the project to write elsewhere is not.
+      expect(bash(`cd ${scratch} && sed -i '' s/a/b/ notes.md`, repo.dir)).toBe(0);
+      expect(bash(`git -C ${scratch} commit -m x`, repo.dir)).toBe(0);
+      // A read in the project beside a write elsewhere is not a project write either.
+      expect(bash(`git status && cd ${scratch} && touch a`, repo.dir)).toBe(0);
+    } finally {
+      rmSync(scratch, { recursive: true, force: true });
     }
   });
 
