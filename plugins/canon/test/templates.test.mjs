@@ -18,6 +18,7 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 import { trustKey, validate } from '../hooks/lib/config.mjs';
 import { apply, fill, plan } from '../scripts/scaffold.mjs';
@@ -235,7 +236,14 @@ describe('scaffold', () => {
     const result = spawnSync(
       process.execPath,
       [join(ROOT, 'scripts/scaffold.mjs'), 'trust', '--root', root, '--answers', answers],
-      { encoding: 'utf8', env: { ...process.env, HOME: home } }
+      {
+        encoding: 'utf8',
+        env: {
+          ...process.env,
+          CANON_TEST_HOME: home,
+          NODE_OPTIONS: `--import=${pathToFileURL(join(ROOT, 'test/fake-home.mjs'))}`,
+        },
+      }
     );
     expect(result.status).toBe(0);
     const stored = JSON.parse(readFileSync(join(home, '.claude/canon/trusted.json'), 'utf8'));

@@ -750,7 +750,7 @@ describe('format-file', () => {
         cwd: project,
       },
       'exit 1',
-      { project, env: { HOME: home } }
+      { project, home }
     );
   /** What `scaffold.mjs trust` writes, for `command` in this project. */
   const approve = (command = argv) => {
@@ -812,7 +812,7 @@ describe('format-file', () => {
     approve();
     run('format-file.mjs', { tool_name: 'Write', tool_input: {}, cwd: project }, 'exit 1', {
       project,
-      env: { HOME: home },
+      home,
     });
     expect(existsSync(log)).toBe(false);
     const outside = join(tmpdir(), `canon-outside-${process.pid}.ts`);

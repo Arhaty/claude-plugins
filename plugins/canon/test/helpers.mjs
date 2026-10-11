@@ -11,10 +11,11 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { cpSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { createRequire, syncBuiltinESMExports } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, it as nodeIt } from 'node:test';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 export { afterEach, beforeEach, describe };
 
@@ -64,6 +65,26 @@ export function expect(actual, message) {
   };
   return { ...positive, not: negative };
 }
+
+const os = createRequire(import.meta.url)('node:os');
+const realUserInfo = os.userInfo;
+
+/**
+ * Point `os.userInfo().homedir` at `home` in this process, so the trust store reads
+ * and writes a scratch file. Returns the function that undoes it.
+ */
+export function fakeHome(home) {
+  os.userInfo = (options) => ({ ...realUserInfo(options), homedir: home });
+  syncBuiltinESMExports();
+  return () => {
+    os.userInfo = realUserInfo;
+    syncBuiltinESMExports();
+  };
+}
+
+const FAKE_HOME = pathToFileURL(
+  join(fileURLToPath(new URL('.', import.meta.url)), 'fake-home.mjs')
+);
 
 /** The `.claude/canon.json` every fixture project starts from. */
 export const CONFIG = {
@@ -123,10 +144,12 @@ const NO_BYPASS = {
  * whole payload. `git`, when given, is stubbed too, so a hook reading the branch diff
  * sees one the test chose. `project` defaults to a fresh fixture project.
  *
+ * `home` is the home directory the hook's `os.userInfo()` reports, for the trust store.
+ *
  * Returns `{ status, stdout, stderr }`.
  */
 export function run(hook, command, gh = 'exit 1', options = {}) {
-  const { cwd, git, env = {}, hooksDir = HOOKS } = options;
+  const { cwd, git, env = {}, hooksDir = HOOKS, home } = options;
   const project = options.project ?? makeProject();
   const bin = mkdtempSync(join(tmpdir(), 'canon-bin-'));
   writeFileSync(join(bin, 'gh'), `#!/bin/sh\n${gh}\n`, { mode: 0o755 });
@@ -144,6 +167,7 @@ export function run(hook, command, gh = 'exit 1', options = {}) {
       PATH: `${bin}:${process.env.PATH ?? ''}`,
       CLAUDE_PROJECT_DIR: project,
       ...NO_BYPASS,
+      ...(home ? { CANON_TEST_HOME: home, NODE_OPTIONS: `--import=${FAKE_HOME}` } : {}),
       ...env,
     },
   });

@@ -66,7 +66,9 @@ file that exists and differs, and writes nothing until each one is approved by n
    - **Branch prefixes**: default `feat`, `fix`, `chore`, `refactor`, `docs`.
    - **Per-file formatter** (argv list) or none. If one is set, show the exact argv and ask
      whether to approve running it after every edit. Only that approval, recorded outside the
-     repository, lets the hook run it; a changed command needs approving again.
+     repository, lets the hook run it; a changed command needs approving again. Say plainly that
+     the approval covers the command line, not the code it runs: a config file or script in the
+     repository that the command reads can change later without asking again.
    - **Whether to enable canon in the project's own `.claude/settings.json`.** That turns canon on
      for everyone who clones the project and has the plugin installed.
 

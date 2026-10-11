@@ -12,7 +12,7 @@ import {
   trustKey,
   validate,
 } from '../hooks/lib/config.mjs';
-import { CONFIG, describe, expect, it, makeProject, scratchRepo } from './helpers.mjs';
+import { CONFIG, describe, expect, fakeHome, it, makeProject, scratchRepo } from './helpers.mjs';
 
 const valid = () => structuredClone(CONFIG);
 
@@ -106,8 +106,7 @@ describe('loadConfig', () => {
 describe('the formatter trust store', () => {
   it('trusts only the exact command, for the exact root, from outside the repository', () => {
     const home = mkdtempSync(join(tmpdir(), 'canon-home-'));
-    const saved = process.env.HOME;
-    process.env.HOME = home;
+    const restore = fakeHome(home);
     try {
       const project = makeProject();
       const other = makeProject();
@@ -126,35 +125,42 @@ describe('the formatter trust store', () => {
       rmSync(project, { recursive: true, force: true });
       rmSync(other, { recursive: true, force: true });
     } finally {
-      process.env.HOME = saved;
+      restore();
       rmSync(home, { recursive: true, force: true });
     }
   });
 
   it('shares one approval across worktrees of a clone, and not with another clone', () => {
     const home = mkdtempSync(join(tmpdir(), 'canon-home-'));
-    const saved = process.env.HOME;
-    process.env.HOME = home;
+    const restore = fakeHome(home);
     const { dir, git } = scratchRepo();
-    const tree = join(tmpdir(), `canon-wt-${process.pid}-${Date.now()}`);
-    const clone = mkdtempSync(join(tmpdir(), 'canon-clone-'));
+    const trees = [1, 2].map((n) => join(tmpdir(), `canon-wt${n}-${process.pid}-${Date.now()}`));
+    const clones = [1, 2].map(() => mkdtempSync(join(tmpdir(), 'canon-clone-')));
     try {
-      git('worktree', 'add', '-q', '-b', 'feat/x', tree, 'staging');
-      const cloned = spawnSync('git', ['clone', '-q', dir, clone], { encoding: 'utf8' });
-      expect(cloned.status, cloned.stderr).toBe(0);
+      git('worktree', 'add', '-q', '-b', 'feat/a', trees[0], 'staging');
+      git('worktree', 'add', '-q', '-b', 'feat/b', trees[1], 'staging');
+      for (const clone of clones) {
+        const cloned = spawnSync('git', ['clone', '-q', dir, clone], { encoding: 'utf8' });
+        expect(cloned.status, cloned.stderr).toBe(0);
+      }
       const argv = ['pnpm', 'exec', 'prettier', '--write'];
 
-      expect(trustKey(tree)).toBe(trustKey(dir));
-      expect(trustKey(clone) === trustKey(dir)).toBe(false);
+      expect(trustKey(trees[0])).toBe(trustKey(dir));
+      expect(trustKey(trees[1])).toBe(trustKey(dir));
+      expect(trustKey(clones[0]) === trustKey(clones[1])).toBe(false);
 
-      trust(tree, argv);
+      trust(trees[0], argv);
+      expect(isTrusted(trees[1], argv)).toBe(true);
       expect(isTrusted(dir, argv)).toBe(true);
-      expect(isTrusted(tree, argv)).toBe(true);
-      expect(isTrusted(clone, argv)).toBe(false);
+      expect(isTrusted(clones[0], argv)).toBe(false);
+
+      trust(clones[0], argv);
+      expect(isTrusted(clones[0], argv)).toBe(true);
+      expect(isTrusted(clones[1], argv)).toBe(false);
     } finally {
-      process.env.HOME = saved;
-      git('worktree', 'remove', '--force', tree);
-      for (const path of [home, dir, clone]) rmSync(path, { recursive: true, force: true });
+      restore();
+      for (const tree of trees) git('worktree', 'remove', '--force', tree);
+      for (const path of [home, dir, ...clones]) rmSync(path, { recursive: true, force: true });
     }
   });
 });

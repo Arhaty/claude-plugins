@@ -24,7 +24,7 @@ import {
   realpathSync,
   writeFileSync,
 } from 'node:fs';
-import { homedir } from 'node:os';
+import { userInfo } from 'node:os';
 import { basename, dirname, join, resolve, sep } from 'node:path';
 
 export const CONFIG_PATH = '.claude/canon.json';
@@ -236,8 +236,11 @@ export function configProblem(state, hook) {
  * Where the owner's approval of each project's `formatFile` is kept: in their home
  * directory, outside every repository. A record inside the repository proves
  * nothing, because whoever commits the command can commit the approval beside it.
+ *
+ * The home directory comes from the account, not from `$HOME`, which a project's
+ * settings can set for the session and so point at a file the repository holds.
  */
-export const trustFile = () => join(homedir(), '.claude', 'canon', 'trusted.json');
+export const trustFile = () => join(userInfo().homedir, '.claude', 'canon', 'trusted.json');
 
 /** The sha256 of a `formatFile` argv list, which is what an approval records. */
 export function commandDigest(argv) {
@@ -263,10 +266,11 @@ function readTrust() {
  */
 export function trustKey(root) {
   try {
-    const common = execFileSync('git', ['-C', root, 'rev-parse', '--git-common-dir'], {
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'ignore'],
-    }).trim();
+    const common = execFileSync(
+      'git',
+      ['-C', root, 'rev-parse', '--path-format=absolute', '--git-common-dir'],
+      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }
+    ).trim();
     if (common) return canonical(resolve(root, common));
   } catch {
     // Not a git repository.
