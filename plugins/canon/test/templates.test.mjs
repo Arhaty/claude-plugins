@@ -150,7 +150,7 @@ describe('scaffold', () => {
     for (const path of Object.keys(mine)) {
       expect(steps.find((s) => s.path === path).action, path).toBe('keep');
     }
-    expect(apply(root, config(), { allow: Object.keys(mine) }).ok).toBe(true);
+    expect(apply(root, config()).ok).toBe(true);
     for (const [path, content] of Object.entries(mine)) {
       expect(readFileSync(join(root, path), 'utf8'), path).toBe(content);
     }
@@ -167,6 +167,25 @@ describe('scaffold', () => {
     expect(readdirSync(outside)).toEqual([]);
     expect(existsSync(join(root, 'docs'))).toBe(false);
     rmSync(outside, { recursive: true, force: true });
+  });
+
+  it('refuses a dangling symlink, writing nothing', () => {
+    symlinkSync(join(root, 'nowhere.md'), join(root, 'CLAUDE.md'));
+    const result = apply(root, config());
+    expect(result.ok).toBe(false);
+    expect(result.symlinks).toEqual(['CLAUDE.md']);
+    expect(existsSync(join(root, 'nowhere.md'))).toBe(false);
+    expect(existsSync(join(root, '.claude'))).toBe(false);
+  });
+
+  it('writes through a symlink that stays inside the project', () => {
+    writeFileSync(join(root, 'AGENTS.md'), '# Agents\n');
+    symlinkSync('AGENTS.md', join(root, 'CLAUDE.md'));
+    expect(plan(root, config()).find((s) => s.path === 'CLAUDE.md').action).toBe('conflict');
+    expect(apply(root, config(), { allow: ['CLAUDE.md'] }).ok).toBe(true);
+    expect(readFileSync(join(root, 'AGENTS.md'), 'utf8')).toMatch(
+      /^# Agents\n\n<!-- canon:begin -->/
+    );
   });
 
   it('refuses a symlinked canon-index.md in the index writer', () => {

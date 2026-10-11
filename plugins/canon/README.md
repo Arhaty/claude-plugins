@@ -64,7 +64,7 @@ It then writes:
 and would change, and writes nothing until you approve each one by name. In `CLAUDE.md` it only
 touches its own marked section. An existing `.claude/canon-domains.json`, `docs/canon/README.md`
 or `docs/specs/README.md` is kept as it is, never offered for replacement. It refuses to write
-through a symlink. It doesn't commit.
+through a symlink that leads outside the project or nowhere. It doesn't commit.
 
 [templates/canon.schema.json](templates/canon.schema.json) documents every field of
 `.claude/canon.json`.

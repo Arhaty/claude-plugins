@@ -63,19 +63,36 @@ export function canonical(path) {
 }
 
 /**
- * The first part of `path`, relative to `root`, that exists and is a symlink, or
- * `null`. A write to a path under one lands wherever the link points, which a
- * cloned repository can aim outside itself: `.claude -> ~/.ssh` would turn a
- * scaffold into a write to the user's keys. The writers refuse instead.
+ * The first part of `path`, relative to `root`, that is a symlink a write must not
+ * follow, or `null`. A link that resolves inside the project is fine: `CLAUDE.md ->
+ * AGENTS.md` is a common setup and a write through it lands in the project. A
+ * dangling link, or one that resolves outside `realpath(root)`, is refused: a
+ * cloned repository can aim one anywhere, and `.claude -> ~/.ssh` would turn a
+ * scaffold into a write to the user's keys.
  */
 export function symlinkIn(root, path) {
+  let base;
+  try {
+    base = realpathSync(root);
+  } catch {
+    return null;
+  }
+  const inside = (real) => real === base || real.startsWith(base.endsWith(sep) ? base : base + sep);
   let at = root;
   for (const part of path.split(/[\\/]+/).filter(Boolean)) {
     at = join(at, part);
+    let link;
     try {
-      if (lstatSync(at).isSymbolicLink()) return at.slice(root.length + sep.length);
+      link = lstatSync(at).isSymbolicLink();
     } catch {
       return null;
+    }
+    if (!link) continue;
+    const name = at.slice(root.length + sep.length);
+    try {
+      if (!inside(realpathSync(at))) return name;
+    } catch {
+      return name;
     }
   }
   return null;

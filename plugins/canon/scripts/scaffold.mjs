@@ -20,9 +20,11 @@
  * `docs/specs/README.md`. The templates hold an empty map and an empty index, so
  * approving them as a conflict would have wiped what the project had written.
  *
- * Nothing is written through a symlink. A path whose file or any directory above
- * it, inside the root, is a link is `symlink` in the plan, and `apply` writes
- * nothing while any is: a cloned repository can point a link anywhere.
+ * Nothing is written through a symlink that leads outside the project or nowhere.
+ * A path whose file or any directory above it is such a link is `symlink` in the
+ * plan, and `apply` writes nothing while any is: a cloned repository can point a
+ * link anywhere. A link that stays inside, such as `CLAUDE.md -> AGENTS.md`, is
+ * written through.
  *
  * Two files are edited rather than replaced, and still count as a conflict when
  * they exist: `CLAUDE.md`, where only the section between the `canon:begin` and

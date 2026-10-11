@@ -91,7 +91,7 @@ file that exists and differs, and writes nothing until each one is approved by n
 
    Each line is `create`, `same`, `keep`, `conflict` or `symlink`. `keep` is a file the project
    owns once it exists (the domain map and the two index READMEs) and is never written. `symlink`
-   means the path runs through a link, and nothing is written until the user replaces it with a
+   means the path runs through a link that leads outside the project or nowhere, and nothing is written until the user replaces it with a
    real file or directory. An invalid answers file exits 2 and names every
    problem: fix the answer, not the check.
 
