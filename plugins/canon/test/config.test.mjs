@@ -52,6 +52,22 @@ describe('validate', () => {
     ],
     ['formatFile as a string', (c) => ({ ...c, formatFile: 'prettier --write' }), /formatFile/],
     ['an empty formatFile', (c) => ({ ...c, formatFile: [] }), /formatFile/],
+    ['an unknown top-level key', (c) => ({ ...c, formatfile: null }), /`formatfile` is not/],
+    [
+      'an unknown branches key',
+      (c) => ({ ...c, branches: { ...c.branches, release: 'x' } }),
+      /`branches\.release` is not/,
+    ],
+    [
+      'an unknown commands key',
+      (c) => ({ ...c, commands: { ...c.commands, build: 'make' } }),
+      /`commands\.build` is not/,
+    ],
+    [
+      'an unknown urls key',
+      (c) => ({ ...c, urls: { ...c.urls, docs: null } }),
+      /`urls\.docs` is not/,
+    ],
     [
       'a preview URL with no {branch}',
       (c) => ({ ...c, urls: { ...c.urls, preview: 'https://x' } }),

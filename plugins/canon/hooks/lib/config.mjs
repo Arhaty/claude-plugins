@@ -23,6 +23,29 @@ export const DOMAINS_PATH = '.claude/canon-domains.json';
 
 const COMMANDS = ['typecheck', 'lint', 'format', 'test'];
 const URLS = ['preview', 'staging', 'production'];
+const TOP = [
+  '$schema',
+  'version',
+  'owner',
+  'branches',
+  'packageManager',
+  'commands',
+  'formatFile',
+  'urls',
+];
+const BRANCHES = ['integration', 'production', 'prefixes'];
+
+/**
+ * A key the schema does not name, at any level, as an error per key. The schema sets
+ * `additionalProperties: false` throughout, and a typo such as `formatfile` would
+ * otherwise validate here and silently mean `null` to every reader.
+ */
+function unknownKeys(object, known, prefix) {
+  if (object === null || typeof object !== 'object' || Array.isArray(object)) return [];
+  return Object.keys(object)
+    .filter((key) => !known.includes(key))
+    .map((key) => `\`${prefix}${key}\` is not a known key`);
+}
 
 /**
  * Resolve symlinks on both sides before comparing paths. A file not yet written
@@ -68,6 +91,12 @@ export function validate(config) {
   if (config === null || typeof config !== 'object' || Array.isArray(config)) {
     return ['the file is not a JSON object'];
   }
+  errors.push(
+    ...unknownKeys(config, TOP, ''),
+    ...unknownKeys(config.branches, BRANCHES, 'branches.'),
+    ...unknownKeys(config.commands, COMMANDS, 'commands.'),
+    ...unknownKeys(config.urls, URLS, 'urls.')
+  );
   if (config.version !== 1) errors.push('`version` must be 1');
   if (!isText(config.owner)) errors.push('`owner` must be a non-empty string');
 
