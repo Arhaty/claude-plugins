@@ -62,7 +62,9 @@ It then writes:
 
 **Setup never overwrites a file without asking.** It plans first, lists every file that exists
 and would change, and writes nothing until you approve each one by name. In `CLAUDE.md` it only
-touches its own marked section. It doesn't commit.
+touches its own marked section. An existing `.claude/canon-domains.json`, `docs/canon/README.md`
+or `docs/specs/README.md` is kept as it is, never offered for replacement. It refuses to write
+through a symlink. It doesn't commit.
 
 [templates/canon.schema.json](templates/canon.schema.json) documents every field of
 `.claude/canon.json`.
@@ -133,12 +135,14 @@ be that repository's decision, made in its committed settings. Setup offers to a
 If the project already has local copies of these commands and hooks (the setup this plugin was
 extracted from kept them in `.claude/commands/` and `.claude/hooks/`):
 
-1. Run `/canon:setup`. It keeps your existing `docs/canon/`, `docs/specs/` and
-   `.claude/canon-domains.json`, and asks before changing anything that differs.
+1. Run `/canon:setup`. It keeps your existing `.claude/canon-domains.json`,
+   `docs/canon/README.md` and `docs/specs/README.md` as they are, leaves every other file in
+   `docs/canon/` and `docs/specs/` alone, and asks before changing anything else that differs.
 2. Delete the local copies the plugin replaces: `.claude/commands/{define,approve,build,ship,review,canon,staging,production,explain}.md`
-   and `.claude/hooks/{protect-branch,branch-notice,protect-push,protect-merge,require-canon,ci-watch,format-file,merge-command,push-command,writes-to-worktree}.mjs`
-   (and `ci-watch.sh`), and remove their entries from the `hooks` block of
-   `.claude/settings.json`. Otherwise every hook runs twice.
+   `.claude/hooks/{protect-branch,branch-notice,protect-push,protect-merge,require-canon,format-file,merge-command,push-command,writes-to-worktree}.mjs`,
+   `.claude/hooks/ci-watch.sh`, and the type declarations beside the helpers,
+   `.claude/hooks/{merge-command,push-command,writes-to-worktree}.d.mts`. Remove their entries
+   from the `hooks` block of `.claude/settings.json`. Otherwise every hook runs twice.
 3. Keep anything project-specific: other commands, skills, rules, and any hook the plugin doesn't
    replace.
 

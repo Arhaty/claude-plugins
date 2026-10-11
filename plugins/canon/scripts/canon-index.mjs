@@ -40,6 +40,8 @@ import { existsSync, readdirSync, readFileSync, realpathSync, writeFileSync } fr
 import { basename, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { symlinkIn } from '../hooks/lib/config.mjs';
+
 /**
  * Neither holds a project rule. `README.md`'s bolded lines govern how canon is
  * written and the template's are placeholders, so both would read as binding once
@@ -238,6 +240,12 @@ function main(argv) {
   const index = build(root);
 
   if (!check) {
+    // A link could send the write anywhere the repository's author chose.
+    const link = symlinkIn(root, '.claude/canon-index.md');
+    if (link !== null) {
+      process.stderr.write(`canon-index: ${link} is a symlink. Refusing to write through it.\n`);
+      return 1;
+    }
     writeFileSync(out, index);
     process.stdout.write(`.claude/canon-index.md: ${index.trimEnd().split('\n').length} lines\n`);
     return 0;

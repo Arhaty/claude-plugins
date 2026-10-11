@@ -34,8 +34,8 @@ file that exists and differs, and writes nothing until each one is approved by n
    If `.claude/commands/` or `.claude/hooks/` holds files with the names this plugin replaces
    (`define`, `approve`, `build`, `ship`, `review`, `canon`, `staging`, `production`, `explain`,
    `protect-branch`, `protect-push`, `protect-merge`, `require-canon`, `branch-notice`,
-   `ci-watch`, `format-file`, and the helpers `merge-command`, `push-command`,
-   `writes-to-worktree`), this is a migration. Note them for step 6 and do not touch them.
+   `ci-watch` (a `.sh`), `format-file`, and the helpers `merge-command`, `push-command`,
+   `writes-to-worktree` with their `.d.mts` declarations), this is a migration. Note them for step 6 and do not touch them.
 
 2. **Work out sensible defaults before asking anything.** Read, do not guess:
 
@@ -89,7 +89,10 @@ file that exists and differs, and writes nothing until each one is approved by n
    node "${CLAUDE_PLUGIN_ROOT}/scripts/scaffold.mjs" plan --root <project root> --answers <file> [--enable-plugin]
    ```
 
-   Each line is `create`, `same` or `conflict`. An invalid answers file exits 2 and names every
+   Each line is `create`, `same`, `keep`, `conflict` or `symlink`. `keep` is a file the project
+   owns once it exists (the domain map and the two index READMEs) and is never written. `symlink`
+   means the path runs through a link, and nothing is written until the user replaces it with a
+   real file or directory. An invalid answers file exits 2 and names every
    problem: fix the answer, not the check.
 
 5. **Ask about every conflict, by name.** For each `conflict`, say what it is and what would

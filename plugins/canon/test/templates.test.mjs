@@ -7,15 +7,17 @@
 import { spawnSync } from 'node:child_process';
 import {
   existsSync,
+  mkdirSync,
   mkdtempSync,
   readdirSync,
   readFileSync,
   rmSync,
   statSync,
+  symlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 
 import { validate } from '../hooks/lib/config.mjs';
 import { apply, fill, plan } from '../scripts/scaffold.mjs';
@@ -116,7 +118,8 @@ describe('scaffold', () => {
   it('is idempotent: a second run with the same answers changes nothing', () => {
     apply(root, config(), { enablePlugin: true });
     const steps = plan(root, config(), { enablePlugin: true });
-    expect(steps.filter((s) => s.action !== 'same').map((s) => s.path)).toEqual([]);
+    const changed = steps.filter((s) => s.action !== 'same' && s.action !== 'keep');
+    expect(changed.map((s) => s.path)).toEqual([]);
   });
 
   it('merges the plugin key into existing settings without touching the rest', () => {
@@ -131,6 +134,78 @@ describe('scaffold', () => {
       permissions: { allow: ['Read'] },
       enabledPlugins: { 'canon@arhaty': true },
     });
+  });
+
+  it('keeps an existing domain map and index READMEs rather than offering to replace them', () => {
+    const mine = {
+      '.claude/canon-domains.json': '{ "auth.md": ["src/auth/"] }\n',
+      'docs/canon/README.md': '# Our canon\n',
+      'docs/specs/README.md': '# Our specs\n',
+    };
+    for (const [path, content] of Object.entries(mine)) {
+      mkdirSync(join(root, dirname(path)), { recursive: true });
+      writeFileSync(join(root, path), content);
+    }
+    const steps = plan(root, config());
+    for (const path of Object.keys(mine)) {
+      expect(steps.find((s) => s.path === path).action, path).toBe('keep');
+    }
+    expect(apply(root, config(), { allow: Object.keys(mine) }).ok).toBe(true);
+    for (const [path, content] of Object.entries(mine)) {
+      expect(readFileSync(join(root, path), 'utf8'), path).toBe(content);
+    }
+  });
+
+  it('refuses to write through a symlink, writing nothing', () => {
+    const outside = mkdtempSync(join(tmpdir(), 'canon-outside-'));
+    symlinkSync(outside, join(root, '.claude'));
+    const steps = plan(root, config());
+    expect(steps.find((s) => s.path === '.claude/canon.json').action).toBe('symlink');
+    const result = apply(root, config());
+    expect(result.ok).toBe(false);
+    expect(result.symlinks).toEqual(['.claude']);
+    expect(readdirSync(outside)).toEqual([]);
+    expect(existsSync(join(root, 'docs'))).toBe(false);
+    rmSync(outside, { recursive: true, force: true });
+  });
+
+  it('refuses a symlinked canon-index.md in the index writer', () => {
+    apply(root, config());
+    const target = join(tmpdir(), `canon-index-target-${process.pid}.md`);
+    writeFileSync(target, 'theirs\n');
+    rmSync(join(root, '.claude/canon-index.md'));
+    symlinkSync(target, join(root, '.claude/canon-index.md'));
+    const result = spawnSync(process.execPath, [join(ROOT, 'scripts/canon-index.mjs'), root], {
+      encoding: 'utf8',
+    });
+    expect(result.status).toBe(1);
+    expect(result.stderr).toMatch(/symlink/);
+    expect(readFileSync(target, 'utf8')).toBe('theirs\n');
+    rmSync(target);
+  });
+
+  it('says what is wrong with an invalid settings.json instead of crashing', () => {
+    mkdirSync(join(root, '.claude'), { recursive: true });
+    writeFileSync(join(root, '.claude/settings.json'), '{ "permissions": ');
+    expect(() => plan(root, config(), { enablePlugin: true })).toThrow();
+    const answers = join(root, 'answers.json');
+    writeFileSync(answers, JSON.stringify(config()));
+    const result = spawnSync(
+      process.execPath,
+      [
+        join(ROOT, 'scripts/scaffold.mjs'),
+        'plan',
+        '--root',
+        root,
+        '--answers',
+        answers,
+        '--enable-plugin',
+      ],
+      { encoding: 'utf8' }
+    );
+    expect(result.status).toBe(2);
+    expect(result.stderr).toMatch(/^scaffold: \.claude\/settings\.json is not valid JSON/);
+    expect(result.stderr).not.toMatch(/at \w+ \(/);
   });
 
   it('throws on an unknown placeholder rather than shipping it', () => {

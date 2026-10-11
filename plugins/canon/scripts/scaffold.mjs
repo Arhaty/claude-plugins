@@ -15,6 +15,15 @@
  * is not named by an `--allow`, so the skill can show the conflicts, ask, and run
  * again with exactly what was approved.
  *
+ * Three files are the project's own once they exist, and are `keep` rather than
+ * `conflict`: `.claude/canon-domains.json`, `docs/canon/README.md` and
+ * `docs/specs/README.md`. The templates hold an empty map and an empty index, so
+ * approving them as a conflict would have wiped what the project had written.
+ *
+ * Nothing is written through a symlink. A path whose file or any directory above
+ * it, inside the root, is a link is `symlink` in the plan, and `apply` writes
+ * nothing while any is: a cloned repository can point a link anywhere.
+ *
  * Two files are edited rather than replaced, and still count as a conflict when
  * they exist: `CLAUDE.md`, where only the section between the `canon:begin` and
  * `canon:end` markers is written (appended when there are no markers), and
@@ -30,10 +39,10 @@ import {
   statSync,
   writeFileSync,
 } from 'node:fs';
-import { dirname, join, relative, resolve } from 'node:path';
+import { dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { CONFIG_PATH, validate } from '../hooks/lib/config.mjs';
+import { CONFIG_PATH, DOMAINS_PATH, symlinkIn, validate } from '../hooks/lib/config.mjs';
 import { build as buildIndex } from './canon-index.mjs';
 
 const PLUGIN = fileURLToPath(new URL('../', import.meta.url));
@@ -44,6 +53,9 @@ const SCHEMA_URL =
 const PLUGIN_KEY = 'canon@arhaty';
 const BEGIN = '<!-- canon:begin -->';
 const END = '<!-- canon:end -->';
+
+/** Files the project fills in after setup: kept as they are once they exist. */
+const KEEP = new Set([DOMAINS_PATH, 'docs/canon/README.md', 'docs/specs/README.md']);
 
 function* walk(dir) {
   for (const name of readdirSync(dir).sort()) {
@@ -86,7 +98,22 @@ function withSection(current, section) {
 }
 
 function withPluginEnabled(current) {
-  const settings = current === null ? {} : JSON.parse(current);
+  let settings = {};
+  if (current !== null) {
+    try {
+      settings = JSON.parse(current);
+    } catch (error) {
+      throw new Error(
+        `.claude/settings.json is not valid JSON (${error.message}). Fix it, or run without ` +
+          '--enable-plugin to leave it alone.'
+      );
+    }
+    if (settings === null || typeof settings !== 'object' || Array.isArray(settings)) {
+      throw new Error(
+        '.claude/settings.json is not a JSON object. Fix it, or run without --enable-plugin.'
+      );
+    }
+  }
   settings.enabledPlugins = { ...(settings.enabledPlugins ?? {}), [PLUGIN_KEY]: true };
   return `${JSON.stringify(settings, null, 2)}\n`;
 }
@@ -102,7 +129,7 @@ export function render(root, config, { enablePlugin = false } = {}) {
   const files = [];
 
   for (const source of walk(TEMPLATES)) {
-    const path = relative(TEMPLATES, source);
+    const path = relative(TEMPLATES, source).split(sep).join('/');
     files.push({ path, content: fill(readFileSync(source, 'utf8'), values) });
   }
 
@@ -130,27 +157,36 @@ export function render(root, config, { enablePlugin = false } = {}) {
 export function plan(root, config, options) {
   return render(root, config, options).map((file) => {
     const target = join(root, file.path);
+    const link = symlinkIn(root, file.path);
+    if (link !== null) return { ...file, action: 'symlink', link };
     if (!existsSync(target)) return { ...file, action: 'create' };
+    if (KEEP.has(file.path)) return { ...file, action: 'keep' };
     return { ...file, action: readFileSync(target, 'utf8') === file.content ? 'same' : 'conflict' };
   });
 }
 
 /**
- * Write the plan. Refuses, writing nothing, while a conflict is not in `allow`.
- * Then generates `.claude/canon-index.md` when it does not exist yet.
+ * Write the plan. Refuses, writing nothing, while a conflict is not in `allow` or
+ * any path runs through a symlink. Then generates `.claude/canon-index.md` when it
+ * does not exist yet.
  */
 export function apply(root, config, { allow = [], ...options } = {}) {
   const steps = plan(root, config, options);
+  const INDEX = '.claude/canon-index.md';
+  const links = steps.filter((s) => s.action === 'symlink').map((s) => s.link);
+  const indexLink = symlinkIn(root, INDEX);
+  if (indexLink !== null) links.push(indexLink);
+  if (links.length) return { ok: false, symlinks: [...new Set(links)], refused: [], steps };
   const refused = steps.filter((s) => s.action === 'conflict' && !allow.includes(s.path));
   if (refused.length) return { ok: false, refused: refused.map((s) => s.path), steps };
 
   for (const step of steps) {
-    if (step.action === 'same') continue;
+    if (step.action === 'same' || step.action === 'keep') continue;
     mkdirSync(dirname(join(root, step.path)), { recursive: true });
     writeFileSync(join(root, step.path), step.content);
   }
 
-  const index = join(root, '.claude', 'canon-index.md');
+  const index = join(root, INDEX);
   const indexed = !existsSync(index);
   if (indexed) writeFileSync(index, buildIndex(root));
   return { ok: true, steps, indexed };
@@ -181,7 +217,13 @@ function main(argv) {
     process.stderr.write(`scaffold: ${error.message}\n`);
     return 2;
   }
-  const root = resolve(options.root);
+  // Resolved, so a symlinked checkout (macOS `/var`) is the root rather than a link in it.
+  let root = resolve(options.root);
+  try {
+    root = realpathSync(root);
+  } catch {
+    // Not created yet: the plan creates it.
+  }
   let config;
   try {
     config = JSON.parse(readFileSync(options.answers, 'utf8'));
@@ -198,15 +240,32 @@ function main(argv) {
     return 2;
   }
 
+  let result;
+  try {
+    result =
+      options.mode === 'plan'
+        ? plan(root, config, options).map(({ path, action }) => ({ path, action }))
+        : apply(root, config, options);
+  } catch (error) {
+    process.stderr.write(`scaffold: ${error.message}\n`);
+    return 2;
+  }
+
   if (options.mode === 'plan') {
-    const steps = plan(root, config, options).map(({ path, action }) => ({ path, action }));
+    const steps = result;
     if (options.json) process.stdout.write(`${JSON.stringify(steps, null, 2)}\n`);
     else
       for (const { path, action } of steps) process.stdout.write(`${action.padEnd(8)} ${path}\n`);
     return 0;
   }
 
-  const result = apply(root, config, options);
+  if (result.symlinks?.length) {
+    process.stderr.write(
+      'scaffold: nothing written. These are symlinks, and a write through one lands wherever it\n' +
+        `points. Replace each with a real file or directory first:\n${result.symlinks.map((p) => `  ${p}`).join('\n')}\n`
+    );
+    return 1;
+  }
   if (!result.ok) {
     process.stderr.write(
       `scaffold: nothing written. These exist and differ; pass --allow <path> for each one the user\n` +
@@ -214,7 +273,7 @@ function main(argv) {
     );
     return 1;
   }
-  const label = { same: 'unchanged', create: 'created', conflict: 'updated' };
+  const label = { same: 'unchanged', keep: 'kept', create: 'created', conflict: 'updated' };
   for (const { path, action } of result.steps) {
     process.stdout.write(`${label[action].padEnd(9)} ${path}\n`);
   }

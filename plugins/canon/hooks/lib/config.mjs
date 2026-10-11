@@ -15,8 +15,8 @@
  */
 
 import { execFileSync } from 'node:child_process';
-import { existsSync, readFileSync, realpathSync } from 'node:fs';
-import { basename, dirname, join, resolve } from 'node:path';
+import { existsSync, lstatSync, readFileSync, realpathSync } from 'node:fs';
+import { basename, dirname, join, resolve, sep } from 'node:path';
 
 export const CONFIG_PATH = '.claude/canon.json';
 export const DOMAINS_PATH = '.claude/canon-domains.json';
@@ -60,6 +60,25 @@ export function canonical(path) {
     const parent = dirname(full);
     return parent === full ? full : join(canonical(parent), basename(full));
   }
+}
+
+/**
+ * The first part of `path`, relative to `root`, that exists and is a symlink, or
+ * `null`. A write to a path under one lands wherever the link points, which a
+ * cloned repository can aim outside itself: `.claude -> ~/.ssh` would turn a
+ * scaffold into a write to the user's keys. The writers refuse instead.
+ */
+export function symlinkIn(root, path) {
+  let at = root;
+  for (const part of path.split(/[\\/]+/).filter(Boolean)) {
+    at = join(at, part);
+    try {
+      if (lstatSync(at).isSymbolicLink()) return at.slice(root.length + sep.length);
+    } catch {
+      return null;
+    }
+  }
+  return null;
 }
 
 /**
