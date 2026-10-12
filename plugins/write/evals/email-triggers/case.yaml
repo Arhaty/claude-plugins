@@ -1,0 +1,24 @@
+schema_version: '1.1'
+name: email-triggers
+description: >-
+  A short email someone else will read runs the write skill, and the draft has no dashes, no
+  closing pleasantry and no invented facts.
+tags: [write, trigger, behaviour]
+execution:
+  prompt: >-
+    Draft an email to my landlord asking to move the rent due date from the 1st to the 5th of each
+    month, starting in March, because my salary now lands on the 3rd.
+  max_turns: 8
+  allowed_tools: [Read, Glob, Grep, Skill, Bash, Write]
+graders:
+  - type: tool_used
+    tool: Skill
+    input_match: '"skill"\s*:\s*"(?:write:)?write"'
+  - type: llm
+    weight: 3
+    focus: last_message
+    criteria: >-
+      PASS if the email asks for the 5th from March in its first two sentences, gives the salary
+      date as the reason, has no em or en dashes, no closing pleasantry such as "don't hesitate" or
+      "looking forward to hearing from you", and invents no name, amount or address the prompt did
+      not give (a placeholder for the landlord's name is fine). FAIL otherwise.

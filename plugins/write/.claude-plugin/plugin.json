@@ -1,0 +1,13 @@
+{
+  "name": "write",
+  "version": "0.0.0",
+  "description": "Drafts and edits text for other readers in the project's voice, strips AI writing tells, and checks a draft for them.",
+  "author": {
+    "name": "Arhaty",
+    "url": "https://github.com/arhaty"
+  },
+  "homepage": "https://github.com/arhaty/claude-plugins/tree/main/plugins/write",
+  "repository": "https://github.com/arhaty/claude-plugins",
+  "license": "MIT",
+  "keywords": ["writing", "style-guide", "tone-of-voice", "editing", "copy"]
+}

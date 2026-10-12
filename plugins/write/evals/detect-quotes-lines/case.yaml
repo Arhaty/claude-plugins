@@ -1,0 +1,26 @@
+schema_version: '1.1'
+name: detect-quotes-lines
+description: >-
+  Asked whether a draft reads as AI, the skill quotes the offending lines, names each pattern, and
+  does not rewrite the draft.
+tags: [write, trigger, detect]
+execution:
+  prompt: |
+    Is this slop? Don't fix it, just tell me.
+
+    We're thrilled to announce our new dashboard — it's not just faster, it's smarter. Whether
+    you're a founder or an analyst, it serves as your single source of truth. Let that sink in.
+  max_turns: 8
+  allowed_tools: [Read, Glob, Grep, Skill, Bash, Write]
+graders:
+  - type: tool_used
+    tool: Skill
+    input_match: '"skill"\s*:\s*"(?:write:)?write"'
+  - type: llm
+    weight: 3
+    focus: last_message
+    criteria: >-
+      PASS if the reply quotes at least four of: "thrilled to announce", the em dash, "not just
+      faster, it's smarter", "Whether you're a founder or an analyst", "serves as", "Let that sink
+      in", and names a pattern for each, and does not offer a rewritten version of the paragraph.
+      FAIL if it rewrites the draft or only gives a general verdict.
