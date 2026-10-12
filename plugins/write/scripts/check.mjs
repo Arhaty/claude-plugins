@@ -14,7 +14,7 @@
  * `#n` is the pattern's number in `skills/write/references/patterns.md`.
  *
  * Code is not prose: fenced blocks, inline code and front matter are skipped. So is
- * quoted text, in a blockquote or between straight double quotes, because the skill
+ * quoted text, in a blockquote or between double quotes (straight or curly), because the skill
  * leaves a pattern alone inside a quotation or a sentence that discusses the phrase.
  * Chatbot debris is the exception and is looked for everywhere outside code.
  */
@@ -44,7 +44,7 @@ const HARD = [
       `\\bhonestly\\b|\\bto be (honest|frank)\\b|\\blet me be (honest|clear)\\b|` +
         `\\bhere${APOS}s the thing\\b|\\blet${APOS}s be real\\b|` +
         // Only as an opener: "what the thing is" is an ordinary clause.
-        `(?<=^|[.!?:]\\s+)(?:but |and |so )?the (thing|truth) is\\b`,
+        `(?<=^(?:[ \\t]*(?:[-*+]|\\d+\\.|#{1,6})[ \\t]+)?|[.!?:]\\s+)(?:but |and |so )?the (thing|truth) is\\b`,
       'gi'
     ),
   ],
@@ -99,7 +99,7 @@ const HARD = [
   [
     'mechanical transition',
     26,
-    /(?<=^|[.!?]\s+)(Additionally|Moreover|Furthermore|In conclusion|With that in mind|That said),/g,
+    /(?<=^(?:[ \t]*(?:[-*+]|\d+\.|#{1,6})[ \t]+)?|[.!?]\s+)(Additionally|Moreover|Furthermore|In conclusion|With that in mind|That said),/g,
   ],
   [
     'read-this-way line',
@@ -120,7 +120,7 @@ const HARD = [
   [
     'false agency',
     21,
-    /\bthe data (tells|shows|says)\b|\bthe market rewards\b|\b(decision|answer|pattern) emerged?\b/gi,
+    /\bthe data (tells|shows|says)\b|\bthe market rewards\b|\b(decision|answer|pattern) emerge[sd]?\b/gi,
   ],
 ];
 
@@ -178,10 +178,11 @@ const STRUCTURE =
   /^\s*(#|[-*+] |\d+\. |\||>)|^\s*(hi|hello|dear|hey|thanks|thank you|cheers|best)\b/i;
 
 const escape = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-const VOCAB_RES = VOCAB.map((word) => [
-  word,
-  new RegExp(`(?<![\\w-])${escape(word)}(?![\\w-])`, 'gi'),
-]);
+const whole = (text, suffix = '') =>
+  new RegExp(`(?<![\\w-])${escape(text)}${suffix}(?![\\w-])`, 'gi');
+const VOCAB_RES = VOCAB.map((word) => [word, whole(word)]);
+// A phrase's last word may be inflected: "deep dives", "circled back" is not, "circle backs" is.
+const PHRASE_RES = PHRASES.map((phrase) => [phrase, whole(phrase, '(?:s|es|ed|ing)?')]);
 
 /**
  * The lines of `text` that hold prose, numbered from 1 as in the file. Fenced code
@@ -221,7 +222,7 @@ export function proseLines(text) {
  * The prose in blocks: a paragraph, list item, heading or table row, with its
  * wrapped lines joined by a space so a pattern or a sentence that crosses a line
  * break is still one piece of text. `lineAt(i)` maps an offset back to its line.
- * Blockquote lines and text between straight double quotes are blanked, keeping
+ * Blockquote lines and text between double quotes, straight or curly, are blanked, keeping
  * offsets, because the skill leaves quoted text alone.
  */
 function blocks(lines) {
@@ -234,17 +235,22 @@ function blocks(lines) {
     }
     const structure = STRUCTURE.test(line.raw);
     const standalone = current && /^\s*(#|\|)/.test(current.lines[0].raw);
-    if (!current || line.n !== current.lines.at(-1).n + 1 || structure || standalone) {
-      current = { lines: [], starts: [], text: '', structure };
+    // A line straight after a blockquote line with text is a lazy continuation of the
+    // quote; after an empty `>` line it is a new paragraph.
+    const lazyEnds = current?.quote && /^\s*>\s*$/.test(current.lines.at(-1).raw);
+    if (!current || line.n !== current.lines.at(-1).n + 1 || structure || standalone || lazyEnds) {
+      current = { lines: [], starts: [], text: '', structure, quote: /^\s*>/.test(line.raw) };
       out.push(current);
     }
     if (current.text) current.text += ' ';
     current.starts.push(current.text.length);
     current.lines.push(line);
-    current.text += /^\s*>/.test(line.raw) ? ' '.repeat(line.text.length) : line.text;
+    current.text += current.quote ? ' '.repeat(line.text.length) : line.text;
   }
   for (const block of out) {
-    block.text = block.text.replace(/"[^"]*"/g, (m) => ' '.repeat(m.length));
+    block.text = block.text.replace(/"[^"]*"|\u201c[^\u201c\u201d]*\u201d/g, (m) =>
+      ' '.repeat(m.length)
+    );
     block.lineAt = (index) => {
       let i = block.starts.length - 1;
       while (i > 0 && block.starts[i] > index) i--;
@@ -297,10 +303,8 @@ export function check(text) {
       }
     }
     const low = prose.toLowerCase().replace(/\u2019/g, "'");
-    for (const phrase of PHRASES) {
-      for (let i = low.indexOf(phrase); i !== -1; i = low.indexOf(phrase, i + 1)) {
-        found.push([i, 'WORD', 'phrase', null, phrase]);
-      }
+    for (const [phrase, re] of PHRASE_RES) {
+      for (const m of low.matchAll(re)) found.push([m.index, 'WORD', 'phrase', null, phrase]);
     }
     if (!block.structure) {
       for (const s of sentencesAt(prose)) {

@@ -3,7 +3,8 @@
  * Writes a project's `write` files, for `/write:setup`.
  *
  *   node scaffold.mjs plan  --root <dir> --answers <file> [--preset <name>] [--json]
- *   node scaffold.mjs apply --root <dir> --answers <file> [--preset <name>] [--allow <path>]...
+ *   node scaffold.mjs apply --root <dir> --answers <file> [--preset <name>]
+ *                          [--allow <path>]... [--skip <path>]...
  *
  * `--answers` is a JSON file holding the `.claude/write.json` to write:
  *
@@ -17,23 +18,27 @@
  * **Nothing that exists is overwritten without asking.** `plan` lists every file
  * with what would happen to it: `create`, `same` (already identical), `keep` (the
  * samples file, which is the project's own once it exists) or `conflict` (exists
- * and differs). `apply` refuses, writing nothing at all, while any conflict is not
- * named by an `--allow`.
+ * and differs). Each conflict must be named by `--allow` (replace it) or `--skip`
+ * (leave it as it is); `apply` refuses, writing nothing at all, while any is named
+ * by neither, or by both.
  *
- * Nothing is written through a symlink that leads outside the project or nowhere.
- * Such a path is `symlink` in the plan and `apply` writes nothing while any is.
+ * Nothing is written through a symlink that leads outside the project or nowhere,
+ * or where a directory or a file is in the way. Such a path is `symlink` or
+ * `blocked` in the plan, and `apply` writes nothing while any is.
  */
 
 import {
-  existsSync,
   lstatSync,
   mkdirSync,
   readFileSync,
   readdirSync,
   realpathSync,
+  renameSync,
+  rmSync,
+  statSync,
   writeFileSync,
 } from 'node:fs';
-import { dirname, join, resolve, sep } from 'node:path';
+import { basename, dirname, join, posix, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const PLUGIN = fileURLToPath(new URL('../', import.meta.url));
@@ -49,15 +54,39 @@ export const PRESETS = readdirSync(join(TEMPLATES, 'presets'))
 
 const KEYS = ['version', 'language', 'guide', 'samples'];
 
+/** `./docs/a.md` is `docs/a.md`: the spelling a write lands on. */
+export const normalize = (path) => posix.normalize(path);
+
+/**
+ * Do two project paths name the same file? Compared without case, because the
+ * default macOS filesystem ignores it and `.claude/Write.json` is the config.
+ */
+const sameFile = (a, b) => normalize(a).toLowerCase() === normalize(b).toLowerCase();
+
+/** Is `a` a directory above `b`, so that writing one makes the other impossible? */
+const contains = (a, b) =>
+  normalize(b)
+    .toLowerCase()
+    .startsWith(`${normalize(a).toLowerCase()}/`);
+
 /** A project-relative path that stays inside the project, or why it is not. */
 function pathProblem(key, value) {
   if (typeof value !== 'string' || value.trim() === '') return `${key} must be a non-empty string`;
   if (value.startsWith('/') || value.startsWith('~'))
     return `${key} must be relative to the project root`;
   if (/^[a-z][a-z0-9+.-]*:/i.test(value)) return `${key} must be a project path`;
-  if (/[\\\0]/.test(value)) return `${key} must use forward slashes and no control characters`;
-  if (value.split('/').some((part) => part === '..')) return `${key} must stay inside the project`;
-  if (value.replace(/^\.\//, '') === CONFIG_PATH) return `${key} must not be ${CONFIG_PATH}`;
+  if (/[\\\x00-\x1f\x7f\x85\u2028\u2029]/.test(value)) {
+    return `${key} must use forward slashes and no control characters`;
+  }
+  const parts = value.replace(/^\.\//, '').split('/');
+  if (parts.includes('..')) return `${key} must stay inside the project`;
+  // Only a leading `./` may be spelled out, so `docs/.`, `docs/` and `a//b` are refused
+  // and the schema can say the same thing as this check.
+  if (parts.some((part) => part === '' || part === '.')) {
+    return `${key} must name a file, with no empty or "." part`;
+  }
+  if (sameFile(value, CONFIG_PATH)) return `${key} must not be ${CONFIG_PATH}`;
+  if (contains(value, CONFIG_PATH)) return `${key} must not be a directory holding ${CONFIG_PATH}`;
   return null;
 }
 
@@ -84,13 +113,6 @@ export function validate(config) {
     const problem = pathProblem('samples', config.samples);
     if (problem) errors.push(`${problem}, or null`);
   }
-  if (
-    typeof config.guide === 'string' &&
-    typeof config.samples === 'string' &&
-    config.guide === config.samples
-  ) {
-    errors.push('guide and samples must be different files');
-  }
   return errors;
 }
 
@@ -103,37 +125,45 @@ export function fill(text, values) {
 }
 
 /**
- * The first part of `path`, relative to `root`, that is a symlink a write must not
- * follow, or `null`. A link that resolves inside the project is fine; a dangling
- * one, or one that leaves `realpath(root)`, is refused, because a cloned repository
- * can aim a link anywhere.
+ * What a write to `path`, relative to `root`, would meet, in one walk over its
+ * parts:
+ *
+ *   { kind: 'absent' }            nothing there yet
+ *   { kind: 'file' }              a file, to compare or replace
+ *   { kind: 'symlink', at }       a link a write must not follow
+ *   { kind: 'blocked', at, why }  a directory where the file goes, or a file where a
+ *                                 directory must be
+ *
+ * A link that resolves inside the project is followed: `docs -> handbook` is fine.
+ * A dangling one, or one that leaves `realpath(root)`, is `symlink`, because a
+ * cloned repository can aim a link anywhere. That is decided before anything is
+ * said about what the link points at.
  */
-export function symlinkIn(root, path) {
-  let base;
-  try {
-    base = realpathSync(root);
-  } catch {
-    return null;
-  }
+export function inspect(root, path) {
+  const base = realpathSync(root);
   const inside = (real) => real === base || real.startsWith(base.endsWith(sep) ? base : base + sep);
+  const parts = path.split('/').filter(Boolean);
   let at = root;
-  for (const part of path.split('/').filter(Boolean)) {
+  for (const [i, part] of parts.entries()) {
     at = join(at, part);
-    let link;
-    try {
-      link = lstatSync(at).isSymbolicLink();
-    } catch {
-      return null;
+    const name = parts.slice(0, i + 1).join('/');
+    let stat = lstatSync(at, { throwIfNoEntry: false });
+    if (!stat) return { kind: 'absent' };
+    if (stat.isSymbolicLink()) {
+      let real;
+      try {
+        real = realpathSync(at);
+      } catch {
+        return { kind: 'symlink', at: name };
+      }
+      if (!inside(real)) return { kind: 'symlink', at: name };
+      stat = statSync(real);
     }
-    if (!link) continue;
-    const name = at.slice(root.length + sep.length);
-    try {
-      if (!inside(realpathSync(at))) return name;
-    } catch {
-      return name;
-    }
+    const last = i === parts.length - 1;
+    if (!last && !stat.isDirectory()) return { kind: 'blocked', at: name, why: 'is a file' };
+    if (last && stat.isDirectory()) return { kind: 'blocked', at: name, why: 'is a directory' };
   }
-  return null;
+  return { kind: 'file' };
 }
 
 /**
@@ -155,11 +185,14 @@ export function render(config, { preset = null } = {}) {
       throw new Error('a preset is written to the guide path, so guide must be a project path');
     }
     const text = readFileSync(join(TEMPLATES, 'presets', `${preset}.md`), 'utf8');
-    files.push({ path: config.guide, content: fill(text, { language: config.language }) });
+    files.push({
+      path: normalize(config.guide),
+      content: fill(text, { language: config.language }),
+    });
   }
   if (config.samples !== null) {
     files.push({
-      path: config.samples,
+      path: normalize(config.samples),
       content: readFileSync(join(TEMPLATES, 'samples.md'), 'utf8'),
       keep: true,
     });
@@ -167,38 +200,113 @@ export function render(config, { preset = null } = {}) {
   return files;
 }
 
-/** `render`, with what would happen to each file. */
+/**
+ * The absolute path a write to `path` lands on: every link that exists along it
+ * followed, the parts not created yet appended. Two paths that resolve to the same
+ * place are one file however they are spelled.
+ */
+function resolved(root, path) {
+  let at = realpathSync(root);
+  const parts = path.split('/').filter(Boolean);
+  for (const [i, part] of parts.entries()) {
+    try {
+      at = realpathSync(join(at, part));
+    } catch {
+      return join(at, ...parts.slice(i));
+    }
+  }
+  return at;
+}
+
+/** Compared the way the default macOS filesystem compares names: without case or form. */
+const fold = (path) => path.normalize('NFC').toLowerCase();
+
+/**
+ * `render`, with what would happen to each file: `create`, `same`, `keep`,
+ * `conflict`, `symlink` (with `link`) or `blocked` (with `link` and `why`).
+ *
+ * Throws when two of the files are one file, or one would sit inside the other:
+ * the second write would fail, or land on the first. Paths are compared by where
+ * they resolve, through links inside the project, and without case or Unicode
+ * form, as on macOS. This is checked on the paths about to be written, so it holds
+ * whatever `validate` let through.
+ */
 export function plan(root, config, options) {
-  return render(config, options).map(({ keep, ...file }) => {
-    const target = join(root, file.path);
-    const link = symlinkIn(root, file.path);
-    if (link !== null) return { ...file, action: 'symlink', link };
-    if (!existsSync(target)) return { ...file, action: 'create' };
+  const files = render(config, options).map((file) => ({
+    ...file,
+    real: resolved(root, file.path),
+  }));
+  for (const [i, a] of files.entries()) {
+    for (const b of files.slice(i + 1)) {
+      const [x, y] = [fold(a.real), fold(b.real)];
+      if (x === y) throw new Error(`${a.path} and ${b.path} are the same file`);
+      const [outer, inner] = y.startsWith(x + sep) ? [a, b] : [b, a];
+      if (fold(inner.real).startsWith(fold(outer.real) + sep)) {
+        throw new Error(`${inner.path} would be inside ${outer.path}, which is also written`);
+      }
+    }
+  }
+  return files.map(({ keep, ...file }) => {
+    const found = inspect(root, file.path);
+    if (found.kind === 'symlink') return { ...file, action: 'symlink', link: found.at };
+    if (found.kind === 'blocked') {
+      return { ...file, action: 'blocked', link: found.at, why: found.why };
+    }
+    if (found.kind === 'absent') return { ...file, action: 'create' };
     if (keep) return { ...file, action: 'keep' };
-    return { ...file, action: readFileSync(target, 'utf8') === file.content ? 'same' : 'conflict' };
+    const current = readFileSync(join(root, file.path), 'utf8');
+    return { ...file, action: current === file.content ? 'same' : 'conflict' };
   });
 }
 
-/** Write the plan. Refuses, writing nothing, on an unapproved conflict or any symlink. */
-export function apply(root, config, { allow = [], ...options } = {}) {
+/**
+ * Write the plan. Refuses, writing nothing, on any symlink or on a conflict that
+ * is neither allowed nor skipped, or is both. A skipped path is never written, even
+ * if it stopped being a conflict since the user was asked.
+ *
+ * Every file is first written beside its target under a temporary name; only when
+ * all of them are staged is each renamed into place. A failure while staging (a
+ * directory that is not writable, a full disk) removes what was staged and the
+ * directories made for it, and rethrows, so the project is left as it was.
+ */
+export function apply(root, config, { allow = [], skip = [], ...options } = {}) {
+  allow = allow.map(normalize);
+  skip = skip.map(normalize);
   const steps = plan(root, config, options);
+  const none = { symlinks: [], blocked: [], both: [], refused: [] };
   const links = steps.filter((s) => s.action === 'symlink').map((s) => s.link);
-  if (links.length) return { ok: false, symlinks: [...new Set(links)], refused: [], steps };
-  const refused = steps.filter((s) => s.action === 'conflict' && !allow.includes(s.path));
-  if (refused.length)
-    return { ok: false, symlinks: [], refused: refused.map((s) => s.path), steps };
+  if (links.length) return { ...none, ok: false, symlinks: [...new Set(links)], steps };
+  const blocked = steps.filter((s) => s.action === 'blocked').map((s) => `${s.link} ${s.why}`);
+  if (blocked.length) return { ...none, ok: false, blocked: [...new Set(blocked)], steps };
+  const conflicts = steps.filter((s) => s.action === 'conflict').map((s) => s.path);
+  const both = conflicts.filter((p) => allow.includes(p) && skip.includes(p));
+  const refused = conflicts.filter((p) => !allow.includes(p) && !skip.includes(p));
+  if (both.length || refused.length) return { ...none, ok: false, both, refused, steps };
 
-  for (const step of steps) {
-    if (step.action !== 'create' && step.action !== 'conflict') continue;
-    mkdirSync(dirname(join(root, step.path)), { recursive: true });
-    writeFileSync(join(root, step.path), step.content);
+  for (const step of steps) if (skip.includes(step.path)) step.action = 'skipped';
+  const writes = steps.filter((s) => s.action === 'create' || s.action === 'conflict');
+  const made = [];
+  const staged = [];
+  try {
+    for (const { real, content } of writes) {
+      const created = mkdirSync(dirname(real), { recursive: true });
+      if (created) made.push(created);
+      const temp = join(dirname(real), `.${basename(real)}.${process.pid}.tmp`);
+      writeFileSync(temp, content, { flag: 'wx' });
+      staged.push([temp, real]);
+    }
+  } catch (error) {
+    for (const [temp] of staged) rmSync(temp, { force: true });
+    for (const dir of made.reverse()) rmSync(dir, { recursive: true, force: true });
+    throw error;
   }
-  return { ok: true, symlinks: [], refused: [], steps };
+  for (const [temp, real] of staged) renameSync(temp, real);
+  return { ...none, ok: true, steps };
 }
 
 function parse(argv) {
   const [mode, ...rest] = argv;
-  const options = { mode, allow: [], preset: null, json: false };
+  const options = { mode, allow: [], skip: [], preset: null, json: false };
   for (let i = 0; i < rest.length; i++) {
     const arg = rest[i];
     const value = () => {
@@ -209,6 +317,7 @@ function parse(argv) {
     else if (arg === '--answers') options.answers = value();
     else if (arg === '--preset') options.preset = value();
     else if (arg === '--allow') options.allow.push(value());
+    else if (arg === '--skip') options.skip.push(value());
     else if (arg === '--json') options.json = true;
     else throw new Error(`unknown argument ${arg}`);
   }
@@ -274,14 +383,34 @@ function main(argv) {
     );
     return 1;
   }
-  if (!result.ok) {
+  const list = (paths) => paths.map((p) => `  ${p}`).join('\n');
+  if (result.blocked.length) {
     process.stderr.write(
-      'scaffold: nothing written. These exist and differ; pass --allow <path> for each one the user\n' +
-        `approved:\n${result.refused.map((p) => `  ${p}`).join('\n')}\n`
+      `scaffold: nothing written. These paths are in the way of a write:\n${list(result.blocked)}\n`
     );
     return 1;
   }
-  const label = { same: 'unchanged', keep: 'kept', create: 'created', conflict: 'updated' };
+  if (result.both.length) {
+    process.stderr.write(
+      'scaffold: nothing written. These were passed to both --allow and --skip; name each once,\n' +
+        `as the user decided:\n${list(result.both)}\n`
+    );
+    return 1;
+  }
+  if (!result.ok) {
+    process.stderr.write(
+      'scaffold: nothing written. These exist and differ; pass --allow <path> for each one the user\n' +
+        `approved and --skip <path> for each one they declined:\n${list(result.refused)}\n`
+    );
+    return 1;
+  }
+  const label = {
+    same: 'unchanged',
+    keep: 'kept',
+    create: 'created',
+    conflict: 'updated',
+    skipped: 'skipped',
+  };
   for (const { path, action } of result.steps) {
     process.stdout.write(`${label[action].padEnd(9)} ${path}\n`);
   }

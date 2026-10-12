@@ -262,3 +262,66 @@ describe('wrapped lines', () => {
     assert.deepEqual(hard('State what the thing is and stop.'), []);
   });
 });
+
+describe('quotations', () => {
+  it('skips text in curly double quotes', () => {
+    assert.deepEqual(hard('We tried and \u201chonestly\u201d it worked.'), []);
+  });
+
+  it('blanks no more than one quotation when a curly quote is left open', () => {
+    const flags = hard('He said \u201chonestly ok. Then \u201cfine\u201d honestly.');
+    assert.equal(flags.filter((f) => f.name === 'directness opener').length, 2);
+  });
+
+  it('treats a lazy continuation of a blockquote as part of the quote', () => {
+    assert.deepEqual(hard('> A quote here\nAdditionally, we ship.'), []);
+  });
+
+  it('ends the quote at an empty ">" line', () => {
+    assert.deepEqual(names(hard('> quote\n>\nAdditionally, we ship.')), ['mechanical transition']);
+  });
+
+  it('does not take the end of a blanked quotation for the start of a sentence', () => {
+    assert.deepEqual(hard('"We tried" Additionally, we ship.'), []);
+  });
+});
+
+describe('phrases and inflected forms', () => {
+  it('matches phrases as whole words only', () => {
+    const words = check('Clean into the room. That scale of work was big. A number offset.')
+      .filter((f) => f.name === 'phrase')
+      .map((f) => f.match);
+    assert.deepEqual(words, []);
+    assert.ok(check('We lean into it at scale.').some((f) => f.match === 'lean into'));
+  });
+
+  it('flags a plain -s ending on the last word of a phrase', () => {
+    for (const [text, phrase] of [
+      ['We ran three deep dives last week.', 'deep dive'],
+      ['Two circle backs later, it shipped.', 'circle back'],
+    ]) {
+      assert.ok(
+        check(text).some((f) => f.match === phrase),
+        text
+      );
+    }
+  });
+
+  it('flags "emerges" as false agency', () => {
+    assert.ok(names(hard('A pattern emerges here.')).includes('false agency'));
+  });
+});
+
+describe('sentence openers', () => {
+  for (const text of [
+    '- Additionally, we ship weekly.',
+    '1. Moreover, it is cheap.',
+    '- The truth is it broke.',
+    '## The thing is, it broke',
+    'Additionally, we ship.',
+  ]) {
+    it(`flags an opener at the start of a paragraph, list item or heading: ${text}`, () => {
+      assert.equal(hard(text).length, 1, names(hard(text)).join());
+    });
+  }
+});

@@ -65,21 +65,24 @@ file that exists and differs, and writes nothing until each one is approved by n
    ```
 
    Pass `--preset` only when the user chose a new guide from a preset. Each line is `create`,
-   `same`, `keep`, `conflict` or `symlink`. `keep` is a samples file that already exists, which
-   is never written. `symlink` means the path runs through a link that leads outside the project
-   or nowhere, and nothing is written until the user replaces it. An invalid answers file exits 2
+   `same`, `keep`, `conflict`, `symlink` or `blocked`. `keep` is a samples file that already
+   exists, which is never written. `symlink` means the path runs through a link that leads
+   outside the project or nowhere; `blocked` means a directory sits where the file goes, or a
+   file where a directory must be. Nothing is written until the user clears either. An invalid answers file exits 2
    and names every problem: fix the answer, not the check.
 
 4. **Ask about every conflict, by name.** For each `conflict`, say what it is and what would
    change: an existing guide would be replaced by the preset, an existing `.claude/write.json` by
-   the new answers. Show a diff when it helps. Then apply with exactly the approved paths:
+   the new answers. Show a diff when it helps. Then apply, naming every conflict once: `--allow`
+   for each the user approved, `--skip` for each they declined, with the paths as the plan
+   printed them:
 
    ```bash
-   node "${CLAUDE_PLUGIN_ROOT}/scripts/scaffold.mjs" apply --root <project root> --answers <file> [--preset <name>] --allow <path> ...
+   node "${CLAUDE_PLUGIN_ROOT}/scripts/scaffold.mjs" apply --root <project root> --answers <file> [--preset <name>] --allow <path> ... --skip <path> ...
    ```
 
-   A conflict the user declines stays as it is. If that leaves the setup inconsistent (a config
-   pointing at a guide that is not the preset they picked), say so.
+   A skipped conflict stays as it is and the rest is written. If that leaves the setup
+   inconsistent (a config pointing at a guide that is not the preset they picked), say so.
 
 5. **Report** in a few lines: the files created, updated and left alone; that nothing is
    committed; and the next steps: edit the guide until it sounds like the project (it overrides

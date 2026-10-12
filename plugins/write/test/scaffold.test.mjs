@@ -8,7 +8,9 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import {
+  chmodSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
@@ -58,8 +60,18 @@ describe('validate', () => {
     ['a file: guide', config({ guide: 'file:///etc/passwd' })],
     ['a backslash path', config({ samples: 'docs\\samples.md' })],
     ['a samples URL', config({ samples: 'https://example.com/samples' })],
-    ['guide and samples the same', config({ samples: CONFIG.guide })],
     ['the config as the guide', config({ guide: CONFIG_PATH })],
+    ['the config spelled another way', config({ guide: '././.claude//write.json' })],
+    ['the config in another case', config({ guide: '.claude/Write.json' })],
+    ['a newline in a path', config({ samples: 'docs/samples\n.md' })],
+    ['a tab in a path', config({ guide: 'docs/\tguide.md' })],
+    ['a directory', config({ guide: 'docs/' })],
+    ['the project root', config({ samples: './' })],
+    ['a path ending in "."', config({ guide: 'docs/.' })],
+    ['a "." part in the middle', config({ guide: 'docs/./a.md' })],
+    ['an empty part', config({ guide: 'docs//a.md' })],
+    ['a directory holding the config', config({ guide: '.claude' })],
+    ['whitespace only', config({ samples: '   ' })],
   ];
   for (const [label, value] of refused) {
     it(`refuses ${label}`, () => assert.notDeepEqual(validate(value), []));
@@ -91,6 +103,51 @@ describe('templates', () => {
       () => render(config({ guide: 'https://example.com/g' }), { preset: 'plain' }),
       /project path/
     );
+  });
+
+  it('agrees with validate on every path rule the schema can express', () => {
+    const schema = JSON.parse(readFileSync(join(ROOT, 'templates/write.schema.json'), 'utf8'));
+    const re = new RegExp(schema.properties.samples.oneOf[1].pattern, 'u');
+    const paths = [
+      'docs/a.md',
+      './STYLE.md',
+      'a',
+      '.github/style.md',
+      'docs/a..md',
+      '..md',
+      '',
+      '   ',
+      '/a',
+      '~/a',
+      'file:a',
+      'https://x/y',
+      'docs\\a',
+      'a\nb',
+      'a\tb',
+      'docs/',
+      'docs/.',
+      'docs/./a',
+      'a//b',
+      './',
+      '.',
+      '..',
+      '../a',
+      'a/../b',
+      '.claude/write.json',
+      './.claude/Write.JSON',
+      '.claude',
+      '.Claude',
+      '.claude/other.json',
+      '\u2028a.md',
+      'a\u2029b.md',
+      'a\u0085b.md',
+      '\u00a0',
+      'café.md',
+    ];
+    for (const path of paths) {
+      const valid = validate(config({ guide: null, samples: path })).length === 0;
+      assert.equal(re.test(path), valid, JSON.stringify(path));
+    }
   });
 
   it('points the config at the published schema', () => {
@@ -167,6 +224,169 @@ describe('scaffold', () => {
     assert.equal(read(root, CONFIG.samples), '## Email\n\nSent text.\n');
   });
 
+  it('writes the approved conflicts and leaves the skipped ones', () => {
+    mkdirSync(join(root, 'docs'));
+    mkdirSync(join(root, '.claude'));
+    writeFileSync(join(root, CONFIG.guide), 'Our own guide.\n');
+    writeFileSync(join(root, CONFIG_PATH), '{}\n');
+    const result = apply(root, config(), {
+      preset: 'plain',
+      allow: [CONFIG_PATH],
+      skip: [CONFIG.guide],
+    });
+    assert.equal(result.ok, true);
+    assert.equal(read(root, CONFIG.guide), 'Our own guide.\n');
+    assert.equal(JSON.parse(read(root, CONFIG_PATH)).guide, CONFIG.guide);
+    assert.equal(result.steps.find((s) => s.path === CONFIG.guide).action, 'skipped');
+  });
+
+  it('matches --allow and --skip spelled as in the answers', () => {
+    mkdirSync(join(root, 'docs'));
+    writeFileSync(join(root, CONFIG.guide), 'Ours.\n');
+    const answers = config({ guide: './docs/tone-of-voice.md' });
+    assert.equal(
+      apply(root, answers, { preset: 'plain', skip: ['./docs/tone-of-voice.md'] }).ok,
+      true
+    );
+    assert.equal(read(root, CONFIG.guide), 'Ours.\n');
+    assert.equal(
+      apply(root, answers, { preset: 'plain', allow: ['./docs/tone-of-voice.md'] }).ok,
+      true
+    );
+    assert.match(read(root, CONFIG.guide), /^# Tone of voice/);
+  });
+
+  it('never writes a skipped path, even once it is no longer a conflict', () => {
+    const result = apply(root, config({ samples: null }), {
+      preset: 'plain',
+      skip: [CONFIG.guide],
+    });
+    assert.equal(result.ok, true);
+    assert.equal(existsSync(join(root, CONFIG.guide)), false);
+  });
+
+  const collisions = [
+    ['guide and samples the same file', { samples: CONFIG.guide }],
+    ['the same file spelled two ways', { guide: './docs/a.md', samples: 'docs/a.md' }],
+    ['the same file in two cases', { guide: 'docs/A.md', samples: 'docs/a.md' }],
+    ['samples inside the guide', { guide: 'docs/a.md', samples: 'docs/a.md/s.md' }],
+    ['the guide inside samples', { guide: 'docs/S.md/g.md', samples: 'docs/s.md' }],
+    ['samples inside the config', { samples: '.claude/write.json/s.md' }],
+    ['the guide inside the config, in another case', { guide: '.claude/Write.json/g.md' }],
+  ];
+  for (const [label, overrides] of collisions) {
+    it(`refuses, writing nothing, ${label}`, () => {
+      assert.throws(() => apply(root, config(overrides), { preset: 'plain' }), /same file|inside/);
+      assert.deepEqual(readdirSync(root), []);
+    });
+  }
+
+  it('refuses two paths that are one file through a link inside the project', () => {
+    mkdirSync(join(root, '.claude'));
+    symlinkSync('.claude', join(root, 'cfg'));
+    assert.throws(
+      () => apply(root, config({ guide: 'cfg/write.json', samples: null }), { preset: 'plain' }),
+      /same file/
+    );
+    assert.deepEqual(readdirSync(join(root, '.claude')), []);
+  });
+
+  it('refuses a guide that links to the config, so a skipped config stays skipped', () => {
+    mkdirSync(join(root, '.claude'));
+    writeFileSync(join(root, CONFIG_PATH), '{"old":true}\n');
+    symlinkSync('.claude/write.json', join(root, 'g.md'));
+    assert.throws(
+      () =>
+        apply(root, config({ guide: 'g.md', samples: null }), {
+          preset: 'plain',
+          allow: ['g.md'],
+          skip: [CONFIG_PATH],
+        }),
+      /same file/
+    );
+    assert.equal(read(root, CONFIG_PATH), '{"old":true}\n');
+  });
+
+  it('refuses two names that differ only in Unicode form', () => {
+    const nfc = 'café.md';
+    const nfd = 'cafe\u0301.md';
+    assert.throws(
+      () => plan(root, config({ guide: nfc, samples: nfd }), { preset: 'plain' }),
+      /same file/
+    );
+  });
+
+  it('writes through a link inside the project to the file it names', () => {
+    mkdirSync(join(root, 'handbook'));
+    writeFileSync(join(root, 'handbook/voice.md'), 'old\n');
+    symlinkSync('handbook/voice.md', join(root, 'VOICE.md'));
+    const result = apply(root, config({ guide: 'VOICE.md', samples: null }), {
+      preset: 'plain',
+      allow: ['VOICE.md'],
+    });
+    assert.equal(result.ok, true);
+    assert.equal(lstatSync(join(root, 'VOICE.md')).isSymbolicLink(), true);
+    assert.match(read(root, 'handbook/voice.md'), /^# Tone of voice/);
+  });
+
+  it(
+    'leaves the project as it was when a write fails partway',
+    { skip: process.getuid?.() === 0 && 'root ignores directory permissions' },
+    () => {
+      mkdirSync(join(root, 'docs'));
+      chmodSync(join(root, 'docs'), 0o555);
+      try {
+        assert.throws(() => apply(root, config(), { preset: 'plain' }), /EACCES/);
+        assert.deepEqual(readdirSync(root).sort(), ['docs']);
+        assert.deepEqual(readdirSync(join(root, 'docs')), []);
+      } finally {
+        chmodSync(join(root, 'docs'), 0o755);
+      }
+    }
+  );
+
+  it('reports a directory where the file goes as blocked, writing nothing', () => {
+    mkdirSync(join(root, 'docs/tone-of-voice.md'), { recursive: true });
+    const result = apply(root, config(), { preset: 'plain' });
+    assert.equal(result.ok, false);
+    assert.deepEqual(result.blocked, ['docs/tone-of-voice.md is a directory']);
+    assert.equal(existsSync(join(root, CONFIG_PATH)), false);
+  });
+
+  it('reports a file where a directory must be as blocked, writing nothing', () => {
+    writeFileSync(join(root, 'docs'), 'a file\n');
+    const result = apply(root, config(), { preset: 'plain' });
+    assert.deepEqual(result.blocked, ['docs is a file']);
+    assert.equal(existsSync(join(root, CONFIG_PATH)), false);
+  });
+
+  it('reports a link to a file outside the project as a symlink, not as blocked', () => {
+    const outside = mkdtempSync(join(tmpdir(), 'write-outside-'));
+    try {
+      writeFileSync(join(outside, 'f'), 'x\n');
+      symlinkSync(join(outside, 'f'), join(root, 'docs'));
+      const result = apply(root, config(), { preset: 'plain' });
+      assert.deepEqual(result.symlinks, ['docs']);
+      assert.deepEqual(result.blocked, []);
+    } finally {
+      rmSync(outside, { recursive: true, force: true });
+    }
+  });
+
+  it('refuses a conflict that is both allowed and skipped', () => {
+    mkdirSync(join(root, '.claude'));
+    writeFileSync(join(root, CONFIG_PATH), '{}\n');
+    const result = apply(root, config(), { allow: [CONFIG_PATH], skip: [CONFIG_PATH] });
+    assert.deepEqual(result.both, [CONFIG_PATH]);
+    assert.deepEqual(result.refused, []);
+    assert.equal(read(root, CONFIG_PATH), '{}\n');
+  });
+
+  it('plans and writes a guide at its normalized path', () => {
+    const steps = plan(root, config({ guide: './docs/guide.md' }), { preset: 'plain' });
+    assert.equal(steps[1].path, 'docs/guide.md');
+  });
+
   it('refuses to replace an existing config without an allow', () => {
     mkdirSync(join(root, '.claude'));
     writeFileSync(join(root, CONFIG_PATH), '{}\n');
@@ -231,6 +451,57 @@ describe('command line', () => {
     const result = run('apply', '--root', root, '--answers', answers, '--preset', 'plain');
     assert.equal(result.status, 1);
     assert.match(result.stderr, /docs\/tone-of-voice\.md/);
+  });
+
+  it('applies with --skip and reports the skipped file', () => {
+    mkdirSync(join(root, 'docs'));
+    writeFileSync(join(root, CONFIG.guide), 'Ours.\n');
+    const result = run(
+      'apply',
+      '--root',
+      root,
+      '--answers',
+      answers,
+      '--preset',
+      'plain',
+      '--skip',
+      CONFIG.guide
+    );
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /^skipped +docs\/tone-of-voice\.md$/m);
+    assert.equal(read(root, CONFIG.guide), 'Ours.\n');
+  });
+
+  it('says so when a conflict is passed to both --allow and --skip', () => {
+    mkdirSync(join(root, '.claude'));
+    writeFileSync(join(root, CONFIG_PATH), '{}\n');
+    const result = run(
+      'apply',
+      '--root',
+      root,
+      '--answers',
+      answers,
+      '--allow',
+      CONFIG_PATH,
+      '--skip',
+      CONFIG_PATH
+    );
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /both --allow and --skip/);
+  });
+
+  it('exits 1 and names what is in the way', () => {
+    writeFileSync(join(root, 'docs'), 'a file\n');
+    const result = run('apply', '--root', root, '--answers', answers, '--preset', 'plain');
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /in the way[\s\S]*docs is a file/);
+  });
+
+  it('exits 2 when two paths collide', () => {
+    writeFileSync(answers, JSON.stringify({ ...CONFIG, samples: '.claude/write.json/s.md' }));
+    const result = run('apply', '--root', root, '--answers', answers);
+    assert.equal(result.status, 2);
+    assert.deepEqual(readdirSync(root), []);
   });
 
   it('exits 2 on invalid answers and names every problem', () => {

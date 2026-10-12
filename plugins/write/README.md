@@ -78,4 +78,6 @@ text in double quotes are skipped.
 - **The pattern list and the checker are English only.** In another language the skill keeps its
   method (cut what is there for effect, two passes, a score) and relies on the guide.
 - **The checker matches text, not meaning.** It flags "rather than" whether or not the contrast is
-  invented, and misses a tell phrased in words it doesn't list.
+  invented, and misses a tell phrased in words it doesn't list. It reads a listed phrase with a
+  plain ending ("deep dives") but not every inflection ("deep diving", "doubled down"), and it
+  reads Markdown loosely, not to the CommonMark spec.
