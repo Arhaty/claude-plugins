@@ -1,3 +1,4 @@
 CHANGELOG.md
 pnpm-lock.yaml
 .release-please-manifest.json
+plugins/*/.claude-plugin/plugin.json
