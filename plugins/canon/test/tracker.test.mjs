@@ -370,7 +370,9 @@ describe('the API key', () => {
 
   it('never runs a command the owner has not approved, or approved as something else', () => {
     expect(() => key()).toThrow(/not approved/);
-    trust(project, tracker.apiKeyCommand);
+    // The same argv approved as the formatter, written out rather than read from the
+    // key command, which is not something the trust store ever hashes.
+    trust(project, ['secret-tool', 'lookup', 'linear']);
     expect(() => key()).toThrow(/not approved/);
     trustKeyCommand(project, [...tracker.apiKeyCommand, '--changed']);
     expect(() => key()).toThrow(/not approved/);
