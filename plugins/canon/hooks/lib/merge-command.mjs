@@ -1322,7 +1322,9 @@ export function prFiles(pr, { cwd, exec } = {}) {
         // past the hook's timeout, which lets the merge through unchecked.
         `repos/${owner}/${repo}/pulls/${pr.number}/files?per_page=100`,
         '--jq',
-        '.[].filename',
+        // A renamed file under its old path too: moving a file out of a governed
+        // directory changes that directory.
+        '.[] | .filename, (.previous_filename // empty)',
       ],
       { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: timeout() }
     );

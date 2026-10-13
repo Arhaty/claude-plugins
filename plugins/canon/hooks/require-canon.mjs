@@ -285,7 +285,16 @@ try {
     //
     // `head` is compared as a ref rather than as `HEAD`, so a pull request opened for
     // another branch is judged by that branch's contents.
-    const diff = git(dir, 'diff', '--name-only', `origin/${baseBranch}...${head ?? 'HEAD'}`);
+    //
+    // `--no-renames`, so a file moved out of a governed path lists its old path too, as
+    // `prFiles` does for a pull request GitHub describes.
+    const diff = git(
+      dir,
+      'diff',
+      '--name-only',
+      '--no-renames',
+      `origin/${baseBranch}...${head ?? 'HEAD'}`
+    );
     if (diff === null) return null;
 
     return refusal(diff.split('\n').filter(Boolean), `Refusing ${verb}: \`${branch}\``);

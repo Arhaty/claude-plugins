@@ -359,6 +359,31 @@ describe('require-canon on a gh command', () => {
     }
   });
 
+  it('counts a file renamed out of a governed path under its old path', () => {
+    const repo = scratchRepo();
+    const c = ['-c', 'user.name=t', '-c', 'user.email=t@t'];
+    try {
+      repo.git('checkout', '-q', 'staging');
+      mkdirSync(join(repo.dir, 'src/lib'), { recursive: true });
+      writeFileSync(join(repo.dir, 'src/lib/content.ts'), 'export const a = 1;\n'.repeat(20));
+      repo.git('add', 'src/lib/content.ts');
+      repo.git(...c, 'commit', '-q', '-m', 'governed');
+      repo.git('remote', 'add', 'origin', repo.dir);
+      repo.git('fetch', '-q', 'origin');
+      repo.git('checkout', '-q', '-b', 'feat/move', 'origin/staging');
+      mkdirSync(join(repo.dir, 'elsewhere'));
+      repo.git('mv', 'src/lib/content.ts', 'elsewhere/content.ts');
+      repo.git(...c, 'commit', '-q', '-m', 'move');
+      const { status } = run('require-canon.mjs', 'gh pr create --fill', 'exit 1', {
+        cwd: repo.dir,
+        project: repo.dir,
+      });
+      expect(status).toBe(2);
+    } finally {
+      rmSync(repo.dir, { recursive: true, force: true });
+    }
+  });
+
   it('reads the map from the project, and refuses with a reason when it is missing', () => {
     const project = makeProject({ domains: { $comment: [], 'other.md': ['lib/'] } });
     const result = (gh) => run('require-canon.mjs', 'gh pr merge 57', gh, { project }).status;

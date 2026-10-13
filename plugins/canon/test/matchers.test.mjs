@@ -677,7 +677,7 @@ describe('prDetails and prFiles', () => {
       '--paginate',
       'repos/{owner}/{repo}/pulls/5/files?per_page=100',
       '--jq',
-      '.[].filename',
+      '.[] | .filename, (.previous_filename // empty)',
     ]);
     prFiles({ number: 5, url: 'https://github.com/o/r/pull/5' }, { exec });
     expect(calls[1]?.[3]).toBe('repos/o/r/pulls/5/files?per_page=100');
