@@ -434,6 +434,27 @@ describe('protect-push', () => {
     expect(push('git push')).toBe(2);
   }, 30_000);
 
+  it('refuses a push of HEAD when HEAD names no branch', () => {
+    repo.git('checkout', '-q', '--detach');
+    expect(push('git push origin HEAD')).toBe(2);
+    expect(push('git push')).toBe(2);
+    // A named branch needs no read of HEAD, detached or not.
+    expect(push('git push origin feature')).toBe(0);
+  });
+
+  it('refuses inside the hook timeout when git hangs', () => {
+    const started = Date.now();
+    const { status, stderr } = run('protect-push.mjs', 'git push -u origin HEAD', 'exit 1', {
+      cwd: repo.dir,
+      project: repo.dir,
+      git: 'exec sleep 30',
+    });
+    expect(status).toBe(2);
+    expect(stderr).toMatch(/did not answer in time/);
+    // The hook's own timeout is 15 seconds; past it, Claude Code lets the push through.
+    expect(Date.now() - started).toBeLessThan(14_000);
+  }, 30_000);
+
   it('refuses a brace expansion, which bash turns into a push to main', () => {
     expect(push('git push origin {main,feature}')).toBe(2);
     expect(push('git push origin HEAD:{main,x}')).toBe(2);
