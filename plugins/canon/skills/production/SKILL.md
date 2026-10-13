@@ -19,6 +19,10 @@ Run `node "${CLAUDE_PLUGIN_ROOT}/scripts/config.mjs"`. If it fails, stop and pas
 Below, `<owner>`, `<integration>` and `<production>` mean its `owner`, `branches.integration` and
 `branches.production`; `urls.staging` and `urls.production` are quoted when set.
 
+**If it has a `tracker` block**, read `${CLAUDE_PLUGIN_ROOT}/references/tracker.md` now. This
+command **never sets an issue's status**: merging the release moves every issue it closes, through
+the tracker's GitHub integration, and that merge reads only this pull request's body.
+
 ## What ships
 
 **Everything currently on `<integration>`**, not just the change the owner was working on. That is
@@ -53,6 +57,9 @@ with the pull request opened anyway:
   done | grep -E 'approved|in-progress'
   ```
 
+- **With a tracker, an issue in the release whose role is not `staging`** (`issue <ID>` for each
+  identifier the `Fixes` block carries): its earlier merge did not move it, so this one may not
+  either. List each with its status.
 - **Nobody has said they looked at the integration build.** Give `urls.staging` if set. Do not
   block on the answer.
 
@@ -71,6 +78,22 @@ One line per merged pull request, saying what changed for a user rather than the
 A rename into `docs/specs/archive/` is a spec that shipped: list those by number, title and
 status. Warnings at the top. Write the body to a file in a temp directory.
 
+**With a tracker, the body ends with a `Fixes` block**: a `## Fixes` heading, then one
+`Fixes <ID>` line per issue in the release and nothing else on the line. An issue crosses two pull
+requests and each merge reads only its own body: the feature pull request's `Fixes` moved it to
+`staging`, and only this block moves it to `production`. An identifier named in prose moves
+nothing. Find the identifiers in the merge subjects, where the branch names carry them, and read
+the body of any merged pull request whose branch carries none:
+
+```bash
+git log --first-parent --merges --format=%s origin/<production>..origin/<integration> \
+  | grep -oiE '\b<team>-[0-9]+\b' | tr '[:lower:]' '[:upper:]' | sort -u
+```
+
+`<team>` is `tracker.team`. Compare the count with the merges, as a prompt to look rather than
+an assertion: a merge with no identifier (a dependency bump, a hotfix) is found only in its own
+body.
+
 **2. Open or update the release pull request.** No checkout needed: `--head` does the work.
 
 ```bash
@@ -78,7 +101,9 @@ gh pr list --base <production> --head <integration> --state open
 ```
 
 If one is open, **replace its description with the fresh manifest** (`gh pr edit <number>
---body-file <file>`): a stale manifest is read as the list of what is going live. Otherwise:
+--body-file <file>`): a stale manifest is read as the list of what is going live. With a tracker,
+**rebuild the `Fixes` block from the log every time**, never carry the old one forward: later
+merges bring later issues, and a body that drops the block moves nothing on merge. Otherwise:
 
 ```bash
 gh pr create --base <production> --head <integration> --title "release: <date>" --body-file <file>
@@ -108,6 +133,8 @@ the route is a new branch from `<integration>`, `/canon:staging`, and the releas
 - Warnings first.
 - The manifest of what ships, and the specs it carries.
 - The pull request URL, and that **it is ready but not merged**.
+- With a tracker, every identifier the `Fixes` block carries, listed, so an issue that does not
+  move is visible against this message.
 - `urls.staging`, to open before merging if nobody has.
 - That `<owner>` merges it in GitHub, and that production updates on merge.
 

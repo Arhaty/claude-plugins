@@ -21,6 +21,10 @@ Run `node "${CLAUDE_PLUGIN_ROOT}/scripts/config.mjs"`. If it fails, stop and pas
 Below, `<owner>`, `<integration>` and `<production>` mean its `owner`, `branches.integration` and
 `branches.production`.
 
+**If it has a `tracker` block**, read `${CLAUDE_PLUGIN_ROOT}/references/tracker.md` now. Approval
+is then the issue's status, not the spec line: the line still moves to `approved`, as a mirror,
+and the issue moves to `approved` after the push. `<ID>` below is the spec's `**Issue:**` line.
+
 ## Refuse to approve if
 
 Check all of these before committing anything, and stop at the first that fails. Say what is
@@ -42,6 +46,10 @@ wrong and what would fix it.
 - **The status is not `draft`.** `approved` means it is already approved: change nothing.
   `in-progress` or later is past this command. A missing status line wants a `/canon:define`
   pass.
+- **With a tracker: the spec has no `**Issue:**` line, the branch name does not contain the
+  identifier in lowercase, or the issue's role is not `spec`.** Read it with `issue <ID>`.
+  `approved` is already approved: change nothing. `ready` means `/canon:define` never ran on it;
+  `building` or later is past this command.
 - **`## Still open` holds anything but `None.`** Say what is open.
 - **`## Decisions` is missing**, or **`## Reuse check` is empty.** `N/A` with a reason is an
   answer; a blank section is not.
@@ -92,20 +100,26 @@ origin/<integration> HEAD`, which tests freshness rather than the base.
 ## Steps
 
 1. **Read the spec**, and anything the owner said about it in this conversation since it was
-   written. A correction they made overrides the file: that is a `/canon:define` round, not an
-   approval.
+   written, and with a tracker the issue's comments. A correction they made overrides the file:
+   that is a `/canon:define` round, not an approval.
 2. **Set the status to `approved`** by editing the `**Status:**` line and nothing else.
-3. **Commit the spec as its own commit**, `docs: approve spec NNN`, body `Spec: NNN`, following
-   the project's commit conventions. A `docs/canon/` edit `/canon:define` wrote at the owner's
+3. **Commit the spec as its own commit**, `docs: approve spec NNN`, body `Spec: NNN` (and
+   `Part of <ID>` with a tracker), following the project's commit conventions. A `docs/canon/` edit `/canon:define` wrote at the owner's
    request gets its own second commit.
 4. **Push**: `git push -u origin HEAD`. Never a bare `git push`. No pull request:
    `/canon:build` opens the draft one.
-5. **Report** the spec number, the commit shas, the pushed branch, and that `/canon:build NNN`
-   (or `/canon:ship NNN`) is next.
+5. **With a tracker, set the issue to `approved`**: `set-state <ID> approved`. After the push and
+   never before: a failed push leaves the issue in `spec`, where a second `/canon:approve` picks it
+   up, while `approved` with nothing on the remote sends `/canon:build` looking for a branch that
+   is not there.
+6. **Report** the spec number, the commit shas, the pushed branch, and that `/canon:build NNN`
+   (or `/canon:ship NNN`) is next. With a tracker, name the issue and use its identifier in place
+   of the number.
 
 ## Hard limits
 
-- **One status move: `draft` to `approved`.**
+- **One status move: `draft` to `approved`**, and with a tracker the issue from `spec` to
+  `approved`. Post nothing to the issue.
 - **Never open a pull request, merge or force-push.**
 - **Never write the spec, and never edit it beyond the status line.**
 - **There is no unattended form of this.** `/canon:ship` checks for `approved` and never sets it.

@@ -85,6 +85,8 @@ gets an index row and a map entry in the same change.
 - **A spec number**: the code written for that spec, against it. The branch that adds the spec
   when it is checked out; otherwise the branch named for the slug; for a merged spec, the commits
   carrying `Spec: NNN`. If none resolves, say so and stop.
+- **An issue identifier** (`ABC-123`), when the config has a `tracker`: the spec whose
+  `**Issue:**` line names it, reviewed as a spec number would be.
 - **A spec number and a range** (`031 abc123..HEAD`): a later review round. Only the commits in
   the range are reviewed; earlier code is not re-litigated.
 
