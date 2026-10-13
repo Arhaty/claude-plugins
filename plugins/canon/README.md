@@ -46,21 +46,24 @@ enforce the git rules around it.
   optional
 - a per-file formatter, and whether you approve running it
 - whether to enable canon in the project's `.claude/settings.json`
+- whether to use an issue tracker: the team key, where the API key comes from, and which of the
+  team's statuses each step of the loop moves an issue to. See
+  [Configuring Linear](#configuring-linear).
 
 It then writes:
 
-| File                                              | What it is                                                                  |
-| ------------------------------------------------- | --------------------------------------------------------------------------- |
-| `.claude/canon.json`                              | The answers. Every hook and skill reads it; nothing is hardcoded.           |
-| `docs/canon/README.md`, `docs/canon/_TEMPLATE.md` | The canon index and the format each canon file follows.                     |
-| `docs/specs/README.md`, `docs/specs/_TEMPLATE.md` | The spec lifecycle and template.                                            |
-| `docs/specs/archive/`                             | Where shipped specs go.                                                     |
-| `CLAUDE.md`                                       | A workflow section between `<!-- canon:begin -->` and `<!-- canon:end -->`. |
-| `.claude/canon-domains.json`                      | Maps repository paths to the canon file that governs them. Starts empty.    |
-| `~/.claude/canon/trusted.json`                    | Outside the project, only if you approved a formatter: see below.           |
-| `.claude/canon-index.md`                          | Every canon claim on one line, generated, for scoped reviews.               |
-| `.claude/rules/principles.md`                     | Starter engineering principles.                                             |
-| `.claude/settings.json`                           | Only if you said yes: `enabledPlugins["canon@arhaty"]: true`, merged in.    |
+| File                                              | What it is                                                                   |
+| ------------------------------------------------- | ---------------------------------------------------------------------------- |
+| `.claude/canon.json`                              | The answers. Every hook and skill reads it; nothing is hardcoded.            |
+| `docs/canon/README.md`, `docs/canon/_TEMPLATE.md` | The canon index and the format each canon file follows.                      |
+| `docs/specs/README.md`, `docs/specs/_TEMPLATE.md` | The spec lifecycle and template.                                             |
+| `docs/specs/archive/`                             | Where shipped specs go.                                                      |
+| `CLAUDE.md`                                       | A workflow section between `<!-- canon:begin -->` and `<!-- canon:end -->`.  |
+| `.claude/canon-domains.json`                      | Maps repository paths to the canon file that governs them. Starts empty.     |
+| `~/.claude/canon/trusted.json`                    | Outside the project, only if you approved a formatter or an API key command. |
+| `.claude/canon-index.md`                          | Every canon claim on one line, generated, for scoped reviews.                |
+| `.claude/rules/principles.md`                     | Starter engineering principles.                                              |
+| `.claude/settings.json`                           | Only if you said yes: `enabledPlugins["canon@arhaty"]: true`, merged in.     |
 
 **Setup never overwrites a file without asking.** It plans first, lists every file that exists
 and would change, and writes nothing until you approve each one by name. In `CLAUDE.md` it only
@@ -87,6 +90,10 @@ through a symlink that leads outside the project or nowhere. It doesn't commit.
 | `/canon:explain [subject]` | Explains the work in flight in three or four short sections.                                        |
 
 `/canon:review` checks project rules. Run `/code-review` beside it for correctness bugs.
+
+With a tracker configured, `/canon:define`, `/canon:build` and `/canon:ship` take an issue ID such
+as `ABC-123` where they would take an idea or a spec number. See
+[Configuring Linear](#configuring-linear).
 
 ## Walkthrough
 
@@ -135,6 +142,97 @@ through a pull, a branch switch or an edit, the hook stays off until you re-run 
 approve the new one. Worktrees of one clone share its approval; another clone of the same project
 needs its own. Set `formatFile` to `null` to turn the hook off.
 
+## Configuring Linear
+
+canon can use Linear as the record and the gate instead of the spec file. Leave the `tracker`
+block out of `.claude/canon.json` and nothing below applies.
+
+With a tracker, each command reads the issue's status and moves it, and the spec's `**Status:**`
+line mirrors it. Status names differ per team, so `.claude/canon.json` maps canon's roles to
+yours, and `/canon:setup` offers your team's real names:
+
+| Role         | Moved there by                                    | canon refuses                                     |
+| ------------ | ------------------------------------------------- | ------------------------------------------------- |
+| `ready`      | you                                               | `/canon:define` on a new spec in any other status |
+| `spec`       | `/canon:define`, when it starts                   | `/canon:approve` in any other status              |
+| `approved`   | `/canon:approve`, after it pushes the spec        | `/canon:build` in any other status but `blocked`  |
+| `building`   | `/canon:build`, when it starts or resumes         |                                                   |
+| `blocked`    | `/canon:build` or `/canon:ship`, waiting on you   |                                                   |
+| `staging`    | Linear's GitHub integration, on the merge         |                                                   |
+| `production` | Linear's GitHub integration, on the release merge |                                                   |
+
+```json
+"tracker": {
+  "provider": "linear",
+  "team": "ABC",
+  "statuses": {
+    "ready": "Todo",
+    "spec": "In Spec",
+    "approved": "Approved",
+    "building": "In Progress",
+    "blocked": "Blocked",
+    "staging": "In Staging",
+    "production": "Done"
+  },
+  "labelPrefix": "domain-",
+  "apiKeyCommand": null
+}
+```
+
+- **Branches** are `<prefix>/abc-123-<slug>`: the identifier in the name is what links the branch
+  in Linear. Specs keep their number and carry an `**Issue:** ABC-123` line.
+- **Labels.** `/canon:define` adds the `domain-*` label for each canon file the spec's `## Where`
+  routes to through `.claude/canon-domains.json` (`auth.md` is `domain-auth`). It never creates a
+  label; a missing one is reported.
+- **Blocked** means Claude is waiting on you, and nothing else. At a stop condition, `/canon:build`
+  and `/canon:ship` post the question as a comment starting `canon: blocked`, set the status, and
+  ask in the session too. Answer in the session and the run carries on. Answer on the issue, in a
+  comment below the question, and re-run the command: it reads the answer and moves the issue back
+  to building.
+- **The client** is `scripts/tracker.mjs`, over Linear's GraphQL API with a personal API key. Not
+  the Linear MCP server, whose OAuth needs a browser that a cloud session doesn't have.
+
+### The API key
+
+`scripts/tracker.mjs` takes the first of:
+
+1. `LINEAR_API_KEY` in the environment.
+2. `LINEAR_API_KEY=` in `.env.local` at the project root. Only that key is read. Keep the file
+   ignored by git; setup checks.
+3. `tracker.apiKeyCommand`, a command that prints the key, such as
+   `["op", "read", "op://Vault/Item/field"]`. It runs with no shell, and only after you approve
+   that exact command in `/canon:setup`, recorded outside the repository like the formatter.
+
+The key is never printed, and an API error reports its HTTP status, not the response body.
+
+### Linear's GitHub integration
+
+canon never sets `staging` or `production`. The GitHub integration does, from the merges, so it
+has to be configured once per team, in Linear's team settings under the Git workflow
+automations:
+
+- **Default rules: "No action"** for every event, including the merge. Otherwise opening a draft
+  pull request, or a merge into a feature branch, moves an issue that canon is still building.
+- **A rule for the integration branch** (`staging`, say): on merge, move to your `staging`
+  status.
+- **A rule for the production branch** (`main`, say): on merge, move to your `production` status.
+
+The rules act on the closing word in the pull request body:
+
+- **`Fixes ABC-123`** moves the issue when the pull request merges. `/canon:build` writes it into
+  the feature pull request's body from the moment it opens, and `/canon:staging` checks it is there
+  before merging.
+- **`Part of ABC-123`** (or `ref`, `related to`, `contributes to`, `towards`) links without
+  moving. Commit bodies use it. In a pull request body it stops the move, so `/canon:staging`
+  rewrites it.
+- **The release pull request carries its own `Fixes` line per issue.** Each merge reads only its
+  own pull request's body, and the feature pull request's line was spent on the merge into
+  staging. `/canon:production` rebuilds the block from the merge log every time it writes the
+  body.
+
+A merge event doesn't replay: an issue the merge didn't move stays where it is, and the fix is the
+rule or the body, next time. canon reports it and leaves the status alone.
+
 ## Migrating an existing project
 
 If the project already has local copies of these commands and hooks (the setup this plugin was
@@ -181,8 +279,9 @@ That stops the skills and hooks. Then delete what setup wrote that only the plug
 - `.claude/canon-domains.json`
 - the section between `<!-- canon:begin -->` and `<!-- canon:end -->` in `CLAUDE.md`
 - the `canon@arhaty` key under `enabledPlugins` in `.claude/settings.json`, if setup added it
-- this repository's entry in `~/.claude/canon/trusted.json`, if you approved a formatter. It is
-  keyed by the repository's git directory; delete the file if canon is not used anywhere else.
+- this repository's entry in `~/.claude/canon/trusted.json`, if you approved a formatter or an
+  API key command. It is keyed by the repository's git directory; delete the file if canon is not
+  used anywhere else.
 
 Keep `docs/canon/` and `docs/specs/`. They are the project's own documentation: the canon records
 how the code works today and the specs record what was built and why, and both read fine without
