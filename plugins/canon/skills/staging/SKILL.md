@@ -121,7 +121,9 @@ request in draft when the canon hook refused the ready mark.
 gh pr checks <number> --watch --fail-fast -i 5
 ```
 
-**An empty rollup is not a pass.** Confirm a run on the head SHA succeeded:
+**Only a success on the head SHA is a pass.** An empty rollup, a missing run and a run that
+ended `skipped` or `neutral` are not: none of them shows the code passed. Confirm a run on the
+head SHA succeeded:
 
 ```bash
 sha=$(gh pr view <number> --json headRefOid -q .headRefOid)
