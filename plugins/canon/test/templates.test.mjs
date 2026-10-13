@@ -308,7 +308,7 @@ describe('scaffold', () => {
       const result = trustCli('--command', 'apiKeyCommand');
       expect(result.status, result.stderr).toBe(0);
       const stored = JSON.parse(readFileSync(join(home, '.claude/canon/trusted.json'), 'utf8'));
-      expect(stored[trustKey(root)].apiKeyCommand.argv).toEqual(argv);
+      expect(stored[trustKey(root)].apiKeyCommand).toEqual(argv);
       expect(stored[trustKey(root)].formatFile).toBeUndefined();
 
       // The formatter still needs a whole valid config, and an unknown kind is refused.

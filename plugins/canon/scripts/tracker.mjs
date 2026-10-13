@@ -35,7 +35,7 @@ import {
   CONFIG_PATH,
   PROVIDERS,
   ROLES,
-  isTrusted,
+  isKeyCommandTrusted,
   loadConfig,
   projectRoot,
   validate,
@@ -102,7 +102,7 @@ export function resolveKey({ root, tracker, variable, env = process.env, run = r
 
   const command = tracker?.apiKeyCommand;
   if (Array.isArray(command)) {
-    if (!isTrusted(root, command, 'apiKeyCommand')) {
+    if (!isKeyCommandTrusted(root, command)) {
       throw new TrackerError(
         `tracker.apiKeyCommand ${JSON.stringify(command)} is not approved for this repository, ` +
           'so it was not run. Run /canon:setup to approve it, or set ' +

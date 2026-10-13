@@ -299,7 +299,8 @@ export function configProblem(state, hook) {
 }
 
 /**
- * Where the owner's approvals of each project's commands are kept: in their home
+ * Where the owner's approvals of each project's commands are kept, `formatFile` and
+ * `tracker.apiKeyCommand`, each approved on its own: in their home
  * directory, outside every repository. A record inside the repository proves
  * nothing, because whoever commits the command can commit the approval beside it.
  *
@@ -307,14 +308,6 @@ export function configProblem(state, hook) {
  * settings can set for the session and so point at a file the repository holds.
  */
 export const trustFile = () => join(userInfo().homedir, '.claude', 'canon', 'trusted.json');
-
-/**
- * The commands a project names that run only once approved: `formatFile`, which the
- * PostToolUse hook runs on every edited file, and `tracker.apiKeyCommand`, which
- * `scripts/tracker.mjs` runs to read the tracker's API key. Each is approved on its
- * own: approving one says nothing about the other.
- */
-export const TRUSTED_COMMANDS = ['formatFile', 'apiKeyCommand'];
 
 /** The sha256 of an argv list, which is what an approval records. */
 export function commandDigest(argv) {
@@ -352,43 +345,56 @@ export function trustKey(root) {
   return canonical(root);
 }
 
-/**
- * The digest recorded for `kind` in one repository's entry. A `formatFile` approval
- * sits at the top of the entry, `{ sha256, formatFile }`, which is the shape every
- * approval had before there was a second kind; any other kind is a nested
- * `{ sha256, argv }` under its own name.
- */
-function recorded(entry, kind) {
-  const digest = kind === 'formatFile' ? entry?.sha256 : entry?.[kind]?.sha256;
-  return typeof digest === 'string' ? digest : null;
+/** This repository's entry in the trust file, as an object, empty when there is none. */
+function entryFor(trusted, key) {
+  const entry = trusted[key];
+  return entry !== null && typeof entry === 'object' && !Array.isArray(entry) ? entry : {};
 }
 
-/**
- * Has the owner approved exactly this command, as `kind`, for this repository? Keyed
- * by `trustKey` and the command's digest, so a changed command, or the same command
- * in another clone, is not approved until setup asks again.
- */
-export function isTrusted(root, argv, kind = 'formatFile') {
-  if (!TRUSTED_COMMANDS.includes(kind)) return false;
-  return recorded(readTrust()[trustKey(root)], kind) === commandDigest(argv);
-}
-
-/**
- * Record the owner's approval of `argv` as `kind` for `root`, replacing any earlier
- * approval of that kind and keeping the other kinds.
- */
-export function trust(root, argv, kind = 'formatFile') {
-  if (!TRUSTED_COMMANDS.includes(kind)) throw new Error(`cannot trust a command as ${kind}`);
+function writeTrust(trusted) {
   const file = trustFile();
-  const trusted = readTrust();
-  const key = trustKey(root);
-  const entry = trusted[key] !== null && typeof trusted[key] === 'object' ? trusted[key] : {};
-  trusted[key] =
-    kind === 'formatFile'
-      ? { ...entry, sha256: commandDigest(argv), formatFile: argv }
-      : { ...entry, [kind]: { sha256: commandDigest(argv), argv } };
   mkdirSync(dirname(file), { recursive: true, mode: 0o700 });
   writeFileSync(file, `${JSON.stringify(trusted, null, 2)}\n`, { mode: 0o600 });
+}
+
+/**
+ * Has the owner approved exactly this `formatFile` for this repository? Keyed by
+ * `trustKey` and the command's digest, so a changed command, or the same command
+ * in another clone, is not approved until setup asks again.
+ */
+export function isTrusted(root, argv) {
+  const digest = entryFor(readTrust(), trustKey(root)).sha256;
+  return typeof digest === 'string' && digest === commandDigest(argv);
+}
+
+/**
+ * Record the owner's approval of `argv` as `formatFile` for `root`, replacing any
+ * earlier one and keeping the key command's.
+ */
+export function trust(root, argv) {
+  const trusted = readTrust();
+  const key = trustKey(root);
+  trusted[key] = { ...entryFor(trusted, key), sha256: commandDigest(argv), formatFile: argv };
+  writeTrust(trusted);
+}
+
+/**
+ * Has the owner approved exactly this `tracker.apiKeyCommand` for this repository?
+ * Approved on its own: approving the formatter says nothing about it, or the other
+ * way round. The argv list itself is recorded and compared, as `apiKeyCommand` in
+ * the repository's entry; a changed command is not approved until setup asks again.
+ */
+export function isKeyCommandTrusted(root, argv) {
+  const recorded = entryFor(readTrust(), trustKey(root)).apiKeyCommand;
+  return Array.isArray(recorded) && JSON.stringify(recorded) === JSON.stringify(argv);
+}
+
+/** Record the owner's approval of `argv` as `tracker.apiKeyCommand` for `root`. */
+export function trustKeyCommand(root, argv) {
+  const trusted = readTrust();
+  const key = trustKey(root);
+  trusted[key] = { ...entryFor(trusted, key), apiKeyCommand: argv };
+  writeTrust(trusted);
 }
 
 /** Read and parse a hook's stdin payload. `null` when it is not JSON. */

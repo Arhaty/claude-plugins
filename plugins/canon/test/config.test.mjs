@@ -5,9 +5,11 @@ import { join } from 'node:path';
 
 import {
   commandDigest,
+  isKeyCommandTrusted,
   isTrusted,
   loadConfig,
   trust,
+  trustKeyCommand,
   trustFile,
   trustKey,
   validate,
@@ -196,7 +198,7 @@ describe('the trust store', () => {
     }
   });
 
-  it('keeps each kind of command apart, and reads an entry written before kinds', () => {
+  it('keeps the formatter and the key command apart, and reads an older entry', () => {
     const home = mkdtempSync(join(tmpdir(), 'canon-home-'));
     const restore = fakeHome(home);
     const project = makeProject();
@@ -204,7 +206,7 @@ describe('the trust store', () => {
       const format = ['pnpm', 'exec', 'prettier', '--write'];
       const key = ['op', 'read', 'op://Vault/Item/field'];
 
-      // The shape every approval had before there was a second kind.
+      // The shape every approval had before the key command existed.
       mkdirSync(join(home, '.claude/canon'), { recursive: true });
       writeFileSync(
         trustFile(),
@@ -213,20 +215,18 @@ describe('the trust store', () => {
         })
       );
       expect(isTrusted(project, format)).toBe(true);
-      expect(isTrusted(project, format, 'apiKeyCommand')).toBe(false);
+      expect(isKeyCommandTrusted(project, format)).toBe(false);
 
-      trust(project, key, 'apiKeyCommand');
-      expect(isTrusted(project, key, 'apiKeyCommand')).toBe(true);
-      // Approving one kind neither approves the same argv as the other kind nor drops it.
+      trustKeyCommand(project, key);
+      expect(isKeyCommandTrusted(project, key)).toBe(true);
+      expect(isKeyCommandTrusted(project, [...key, '--changed'])).toBe(false);
+      // Approving one neither approves the same argv as the other nor drops it.
       expect(isTrusted(project, key)).toBe(false);
       expect(isTrusted(project, format)).toBe(true);
 
       trust(project, ['prettier', '--write']);
-      expect(isTrusted(project, key, 'apiKeyCommand')).toBe(true);
+      expect(isKeyCommandTrusted(project, key)).toBe(true);
       expect(isTrusted(project, format)).toBe(false);
-
-      expect(isTrusted(project, key, 'somethingElse')).toBe(false);
-      expect(() => trust(project, key, 'somethingElse')).toThrow();
     } finally {
       restore();
       rmSync(project, { recursive: true, force: true });

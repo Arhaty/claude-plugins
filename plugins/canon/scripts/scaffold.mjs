@@ -50,7 +50,14 @@ import {
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { CONFIG_PATH, DOMAINS_PATH, symlinkIn, trust, validate } from '../hooks/lib/config.mjs';
+import {
+  CONFIG_PATH,
+  DOMAINS_PATH,
+  symlinkIn,
+  trust,
+  trustKeyCommand,
+  validate,
+} from '../hooks/lib/config.mjs';
 import { build as buildIndex } from './canon-index.mjs';
 
 const PLUGIN = fileURLToPath(new URL('../', import.meta.url));
@@ -287,7 +294,7 @@ function main(argv) {
       process.stderr.write('scaffold: tracker.apiKeyCommand must be a list of argv strings.\n');
       return 2;
     }
-    trust(root, argv, 'apiKeyCommand');
+    trustKeyCommand(root, argv);
     process.stdout.write(`trusted   apiKeyCommand ${JSON.stringify(argv)} for ${root}\n`);
     return 0;
   }
