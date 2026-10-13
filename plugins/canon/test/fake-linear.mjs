@@ -25,7 +25,10 @@ export function linearState(overrides = {}) {
       { id: 'l3', name: 'domain-auth', team: 'XYZ', parent: null },
       { id: 'g1', name: 'surface-app', team: 'ABC', parent: 'group' },
       { id: 'g2', name: 'surface-site', team: 'ABC', parent: 'group' },
+      { id: 'p1', name: 'domain-search', team: 'PAR', parent: null },
     ],
+    // ABC is a sub-team of PAR, and inherits its labels.
+    parents: { ABC: 'PAR' },
     issues: {
       'ABC-1': {
         id: 'uuid-1',
@@ -113,6 +116,15 @@ export function fakeLinear(state, { onChange = () => {} } = {}) {
         });
         data = { commentCreate: { success: true } };
         break;
+      case 'Ancestors': {
+        const chain = (key) => {
+          const parent = state.parents?.[key];
+          return parent ? { key: parent, parent: chain(parent) } : null;
+        };
+        if (state.ancestorsFail) return json(200, { errors: [{ message: 'Cannot query field' }] });
+        data = { teams: { nodes: [{ parent: chain(variables.team) }] } };
+        break;
+      }
       case 'States':
         data = { workflowStates: { nodes: state.states[variables.team] ?? [] } };
         break;
@@ -132,7 +144,7 @@ export function fakeLinear(state, { onChange = () => {} } = {}) {
               .map((candidate) => ({
                 id: candidate.id,
                 name: candidate.name,
-                parent: candidate.parent ? { id: candidate.parent } : null,
+                parent: candidate.parent ? { id: candidate.parent, name: 'Surface' } : null,
                 team: candidate.team ? { key: candidate.team } : null,
               })),
           },

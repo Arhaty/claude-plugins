@@ -180,27 +180,61 @@ export function createClient({ apiKey, team, fetch: fetchImpl = fetch, timeoutMs
   }
 
   /**
-   * Label names resolved to labels this team can use: its own, or the workspace's.
-   * A name that resolves to nothing is reported, never created: the label set is a
-   * routing contract with `docs/canon/`, and a typo would stay in the workspace.
+   * The team's parent teams, nearest first, whose labels a sub-team inherits. A
+   * workspace without sub-teams, or an API that refuses the field, answers none.
+   */
+  let ancestry;
+  async function ancestors() {
+    ancestry ??= request(
+      `query Ancestors($team: String!) {
+        teams(filter: { key: { eq: $team } }, first: 1) {
+          nodes { parent { key parent { key parent { key } } } }
+        }
+      }`,
+      { team }
+    ).then(
+      (data) => {
+        const keys = [];
+        for (let at = data.teams?.nodes?.[0]?.parent; at; at = at.parent) keys.push(at.key);
+        return keys;
+      },
+      () => []
+    );
+    return ancestry;
+  }
+
+  /**
+   * Label names resolved to labels this team can use: its own, a parent team's, or
+   * the workspace's, preferred in that order when two share a name. A name that
+   * resolves to nothing is reported, never created: the label set is a routing
+   * contract with `docs/canon/`, and a typo would stay in the workspace.
    */
   async function resolveLabels(names) {
     if (names.length === 0) return { found: new Map(), missing: [] };
-    const data = await request(
-      `query Labels($names: [String!]!) {
-        issueLabels(filter: { name: { in: $names } }, first: 100) {
-          nodes { id name parent { id } team { key } }
-        }
-      }`,
-      { names }
-    );
+    const [data, parents] = await Promise.all([
+      request(
+        `query Labels($names: [String!]!) {
+          issueLabels(filter: { name: { in: $names } }, first: 100) {
+            nodes { id name parent { id name } team { key } }
+          }
+        }`,
+        { names }
+      ),
+      ancestors(),
+    ]);
+    const owners = [team, ...parents];
+    const rank = (key) => (key === null ? owners.length : owners.indexOf(key));
     const found = new Map();
     for (const label of data.issueLabels?.nodes ?? []) {
-      const key = label.team?.key ?? null;
-      if (key !== null && key !== team) continue;
-      // The team's own label wins over a workspace label of the same name.
-      if (found.has(label.name) && key === null) continue;
-      found.set(label.name, { id: label.id, parentId: label.parent?.id ?? null });
+      const at = rank(label.team?.key ?? null);
+      if (at === -1) continue;
+      if (found.has(label.name) && found.get(label.name).rank <= at) continue;
+      found.set(label.name, {
+        id: label.id,
+        parentId: label.parent?.id ?? null,
+        group: label.parent?.name ?? null,
+        rank: at,
+      });
     }
     return { found, missing: names.filter((name) => !found.has(name)) };
   }
@@ -213,6 +247,19 @@ export function createClient({ apiKey, team, fetch: fetchImpl = fetch, timeoutMs
   async function label(identifier, add, remove) {
     const node = await raw(identifier);
     const [added, removed] = await Promise.all([resolveLabels(add), resolveLabels(remove)]);
+    // A single-select group takes one member: two of them in one call is a mistake to
+    // name, not a write for Linear to refuse.
+    const byGroup = new Map();
+    for (const [name, found] of added.found) {
+      if (found.parentId === null) continue;
+      const other = byGroup.get(found.parentId);
+      if (other) {
+        throw new LinearError(
+          `${other} and ${name} are both in the label group ${found.group ?? found.parentId}, which takes one`
+        );
+      }
+      byGroup.set(found.parentId, name);
+    }
     const claimed = new Set(
       [...added.found.values()].map((found) => found.parentId).filter((id) => id !== null)
     );
