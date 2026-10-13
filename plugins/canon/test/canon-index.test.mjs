@@ -52,6 +52,22 @@ describe('extract', () => {
     expect(extract('x.md', source)).toEqual(['x.md: **A claim.** Why.']);
   });
 
+  it('reads a fence that never closes as text, so the rules below it survive', () => {
+    const source = '**One.** Rule.\n\n    ```bash\n\n**Two.** Rule.\n\n- **Three.** Rule.\n';
+    expect(extract('x.md', source)).toEqual([
+      'x.md: **One.** Rule.',
+      'x.md: **Two.** Rule.',
+      'x.md: **Three.** Rule.',
+    ]);
+  });
+
+  it('joins a claim across a line that opens with an inline code span', () => {
+    const source = '**Never call the API directly;\n```fetch()``` is wrapped.** Why.\n';
+    expect(extract('x.md', source)).toEqual([
+      'x.md: **Never call the API directly; ```fetch()``` is wrapped.** Why.',
+    ]);
+  });
+
   it('reads claims again after a fence closes', () => {
     const source = '**Before.**\n```js\nconst a = 1;\n```\n**After.**\n';
     expect(extract('x.md', source)).toEqual(['x.md: **Before.**', 'x.md: **After.**']);

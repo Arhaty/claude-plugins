@@ -67,7 +67,7 @@ const CLAIM_OPENS = /^[ \t]*(?:[-*] )?\*\*/;
 const THEMATIC_BREAK = /^\s*(?:\*\s*){3,}$/;
 
 /** What ends a paragraph: a blank line, a heading, a new list item, a table, or a code fence. */
-const ENDS_CLAIM = /^\s*$|^#|^[ \t]*[-*] |^\||^\s*(?:```|~~~)/;
+const ENDS_CLAIM = /^\s*$|^#|^[ \t]*[-*] |^\|/;
 
 /**
  * A code fence line: its run of backticks or tildes, and what follows. A fence closes
@@ -93,18 +93,20 @@ export function domainFiles(canon) {
  * A claim opens with `**` at the start of a line and closes with the next `**`, which
  * is often on a later line, so the claim is joined whole rather than cut mid-sentence.
  */
-export function extract(name, source) {
+export function extract(name, source, unclosed = new Set()) {
   const lines = source.split('\n');
   const out = [];
   let fence = null;
+  let opened = -1;
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i] ?? '';
 
     // An example inside a code fence is illustration, never a rule or a row of reference data.
-    const marker = FENCE.exec(line);
+    const marker = unclosed.has(i) ? null : FENCE.exec(line);
     if (fence === null && marker) {
       fence = marker[1];
+      opened = i;
       continue;
     }
     if (fence !== null) {
@@ -132,13 +134,18 @@ export function extract(name, source) {
     while (
       !/\*\*.+\*\*/.test(claim) &&
       i + 1 < lines.length &&
-      !ENDS_CLAIM.test(lines[i + 1] ?? '')
+      !ENDS_CLAIM.test(lines[i + 1] ?? '') &&
+      !FENCE.test(lines[i + 1] ?? '')
     ) {
       claim = `${claim} ${(lines[++i] ?? '').trim()}`;
     }
     out.push(`${name}: ${claim}`);
   }
 
+  // A fence that never closes is a stray line, not a block: read the file again with
+  // it as text. Hiding every rule below it would leave the review checking nothing
+  // there while the run stays green.
+  if (fence !== null) return extract(name, source, new Set([...unclosed, opened]));
   return out;
 }
 
