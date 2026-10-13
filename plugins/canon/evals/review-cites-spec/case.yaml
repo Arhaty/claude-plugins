@@ -14,10 +14,12 @@ execution:
 context:
   scaffold_script: scaffold.sh
 graders:
-  - type: tool_used
+  - name: review-runs
+    type: tool_used
     tool: Skill
     input_match: '"skill"\s*:\s*"(?:canon:)?review"'
-  - type: llm
+  - name: cites-spec-and-canon
+    type: llm
     weight: 3
     focus: last_message
     criteria: >-

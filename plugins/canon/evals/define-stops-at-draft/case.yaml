@@ -12,22 +12,26 @@ execution:
 context:
   scaffold_script: scaffold.sh
 graders:
-  - type: file_exists
+  - name: spec-written
+    type: file_exists
     path: docs/specs/[0-9][0-9][0-9]-*.md
-  - type: tool_used
+  - name: no-commit-or-push
+    type: tool_used
     tool: Bash
     input_match: 'git\b[^"]*\b(?:commit|push)\b'
     min: 0
     max: 0
     arm: both
-  - type: llm
+  - name: status-stays-draft
+    type: llm
     weight: 2
     focus: trace
     criteria: >-
       PASS if the run wrote a new spec under docs/specs/ whose status line is `**Status:** draft`,
       and never set the status to approved, in-progress or shipped. FAIL if any spec was written
       with another status, or the run claims the spec is approved.
-  - type: llm
+  - name: stops-for-owner
+    type: llm
     weight: 2
     focus: last_message
     criteria: >-
