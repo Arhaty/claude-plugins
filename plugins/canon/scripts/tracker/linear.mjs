@@ -246,7 +246,7 @@ export function createClient({ apiKey, team, fetch: fetchImpl = fetch, timeoutMs
    */
   async function label(identifier, add, remove) {
     const node = await raw(identifier);
-    const [added, removed] = await Promise.all([resolveLabels(add), resolveLabels(remove)]);
+    const added = await resolveLabels(add);
     // A single-select group takes one member: two of them in one call is a mistake to
     // name, not a write for Linear to refuse.
     const byGroup = new Map();
@@ -269,7 +269,11 @@ export function createClient({ apiKey, team, fetch: fetchImpl = fetch, timeoutMs
         .map((current) => current.id)
     );
     for (const { id } of added.found.values()) next.add(id);
-    for (const { id } of removed.found.values()) next.delete(id);
+    // Removal goes by the names on the issue, whichever team's label each one is: the
+    // label a name resolves to for adding may not be the one the issue carries.
+    const current = node.labels?.nodes ?? [];
+    for (const label of current) if (remove.includes(label.name)) next.delete(label.id);
+    const notOn = remove.filter((name) => !current.some((label) => label.name === name));
 
     const data = await request(
       `mutation Label($id: String!, $labelIds: [String!]!) {
@@ -282,7 +286,7 @@ export function createClient({ apiKey, team, fetch: fetchImpl = fetch, timeoutMs
     }
     return {
       labels: shape(data.issueUpdate.issue).labels,
-      missing: [...added.missing, ...removed.missing],
+      missing: [...added.missing, ...notOn],
     };
   }
 

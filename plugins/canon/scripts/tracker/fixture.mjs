@@ -47,10 +47,8 @@ export function createClient({ root, team }) {
 
   /** The data and the issue, refused unless it exists and belongs to the team. */
   const find = (identifier) => {
-    const id = parseIdentifier(identifier).identifier;
-    if (parseIdentifier(id).team !== team) {
-      throw new FixtureError(`${id} belongs to team ${parseIdentifier(id).team}, not ${team}`);
-    }
+    const { team: owner, identifier: id } = parseIdentifier(identifier);
+    if (owner !== team) throw new FixtureError(`${id} belongs to team ${owner}, not ${team}`);
     const data = load();
     const issue = data.issues?.[id];
     if (!issue) throw new FixtureError(`No issue ${id}`);
@@ -85,11 +83,11 @@ export function createClient({ root, team }) {
 
     async comment(identifier, body) {
       const { data, issue } = find(identifier);
-      const last = issue.comments
-        .map((c) => c.createdAt ?? '')
-        .sort()
-        .at(-1);
-      const next = new Date(Math.max(Date.now(), last ? Date.parse(last) + 1000 : 0));
+      // One second after the newest comment that has a readable date, or now if later.
+      const times = issue.comments
+        .map((c) => Date.parse(c.createdAt ?? ''))
+        .filter(Number.isFinite);
+      const next = new Date(Math.max(Date.now(), ...times.map((t) => t + 1000)));
       issue.comments.push({
         id: `c${issue.comments.length + 1}`,
         body,

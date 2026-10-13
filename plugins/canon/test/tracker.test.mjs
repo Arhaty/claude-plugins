@@ -110,6 +110,18 @@ describe('the Linear provider', () => {
     expect(state.issues['ABC-1'].labels).toEqual(['l1']);
   });
 
+  it('removes a label by the name on the issue, whichever team it belongs to', async () => {
+    // The issue carries the workspace's domain-billing; the team has none, and XYZ's
+    // domain-auth on the issue is not the team's own.
+    state.issues['ABC-1'].labels = ['l2', 'l3'];
+    expect(
+      await client.label('ABC-1', [], ['domain-billing', 'domain-auth', 'domain-none'])
+    ).toEqual({
+      labels: [],
+      missing: ['domain-none'],
+    });
+  });
+
   it('names two members of one single-select group rather than sending both', async () => {
     await rejects(
       () => client.label('ABC-1', ['surface-app', 'surface-site'], []),
@@ -250,6 +262,18 @@ describe('tracker.mjs', () => {
     ]) {
       expect(await run(['set-state', 'ABC-1', role])).toEqual({ ok: true, role, state: name });
       expect(state.issues['ABC-1'].state).toBe(name);
+    }
+  });
+
+  it('reports a usage error before looking for a key', async () => {
+    for (const argv of [
+      ['issue'],
+      ['set-state', 'ABC-1'],
+      ['label', 'ABC-1'],
+      ['issue', '--bogus', 'ABC-1'],
+    ]) {
+      const error = await rejects(() => run(argv, { env: {} }), /needs|does not take/);
+      expect(error.code, argv.join(' ')).toBe(2);
     }
   });
 
@@ -445,22 +469,37 @@ describe('the API key', () => {
     expect(calls).toEqual([]);
   });
 
-  it('refuses a key command that runs a file the repository holds', () => {
+  it('refuses a key command that names the repository, and runs the rest from home', () => {
     mkdirSync(join(project, 'scripts'));
     writeFileSync(join(project, 'scripts/key.sh'), 'echo key\n');
-    for (const command of [['./scripts/key.sh'], ['bash', 'scripts/key.sh']]) {
+    symlinkSync(join(project, 'scripts/key.sh'), join(home, 'key-link'));
+    for (const command of [
+      ['./scripts/key.sh'],
+      ['bash', join(project, 'scripts/key.sh')],
+      ['sh', '-c', `${project}/scripts/key.sh | tr -d x`],
+      ['node', `--require=${project}/k.js`, '-e', ''],
+      [join(home, 'key-link')],
+    ]) {
       trustKeyCommand(project, command);
-      expect(() => key({}, { ...TRACKER, apiKeyCommand: command })).toThrow(
-        /a file in this repository/
-      );
+      expect(
+        () => key({}, { ...TRACKER, apiKeyCommand: command }),
+        JSON.stringify(command)
+      ).toThrow(/so it was not run/);
     }
-    // A program found on PATH is not a repository file, whatever the repository holds.
-    writeFileSync(join(project, 'op'), '');
-    trustKeyCommand(project, ['op', 'read', 'op://Vault/Item/field']);
-    expect(key({}, { ...TRACKER, apiKeyCommand: ['op', 'read', 'op://Vault/Item/field'] })).toBe(
-      'from-command'
-    );
-    expect(calls).toEqual([['op', 'read', 'op://Vault/Item/field']]);
+    expect(calls).toEqual([]);
+    // A relative argument is the home directory's business: the command runs there.
+    const relative = ['bash', 'scripts/key.sh'];
+    trustKeyCommand(project, relative);
+    expect(key({}, { ...TRACKER, apiKeyCommand: relative })).toBe('from-command');
+  });
+
+  it('ignores a .env.local the repository commits', () => {
+    spawnSync('git', ['init', '-q'], { cwd: project });
+    writeFileSync(join(project, '.env.local'), 'LINEAR_API_KEY=someone-elses\n');
+    spawnSync('git', ['add', '-f', '.env.local'], { cwd: project });
+    expect(() => key({}, TRACKER)).toThrow(/committed to the repository, so it was not read/);
+    trustKeyCommand(project, tracker.apiKeyCommand);
+    expect(key()).toBe('from-command');
   });
 
   it('says where it looked when there is no key anywhere', () => {
@@ -521,6 +560,14 @@ describe('the fixture tracker', () => {
       missing: ['domain-typo'],
     });
     expect(fixture().issues['ABC-7'].comments[0].body).toBe('canon: blocked\n\nWhich limit?');
+  });
+
+  it('posts after a comment whose date it cannot read', async () => {
+    const data = fixture();
+    data.issues['ABC-7'].comments = [{ body: 'old', createdAt: 'yesterday' }];
+    writeFileSync(join(project, '.claude/tracker-fixture.json'), JSON.stringify(data));
+    await run(['comment', 'ABC-7'], { stdin: 'new' });
+    expect(fixture().issues['ABC-7'].comments.length).toBe(2);
   });
 
   it('refuses a missing issue, another team, and a symlinked file', async () => {
