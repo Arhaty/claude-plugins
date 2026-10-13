@@ -63,9 +63,15 @@ command -v gh >/dev/null 2>&1 || exit 0
 # in the project directory watched a commit nobody pushed.
 cd "${cwd:-${CLAUDE_PROJECT_DIR:-.}}" 2>/dev/null || exit 0
 top=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0
-# A canon project: the checkout the command ran in, or the session's project, when a worktree
-# was cut from a branch that predates the config.
-[ -f "$top/.claude/canon.json" ] || [ -f "${CLAUDE_PROJECT_DIR:-/nonexistent}/.claude/canon.json" ] ||
+# A canon project: the checkout the command ran in has the config, or it is a worktree of the
+# session's project, which does (a worktree cut from a branch that predates the config). A push
+# from any other repository is not this project's CI.
+common=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)
+project_common=$(git -C "${CLAUDE_PROJECT_DIR:-/nonexistent}" rev-parse --path-format=absolute \
+  --git-common-dir 2>/dev/null)
+[ -f "$top/.claude/canon.json" ] ||
+  { [ -n "$common" ] && [ "$common" = "$project_common" ] &&
+    [ -f "$CLAUDE_PROJECT_DIR/.claude/canon.json" ]; } ||
   exit 0
 
 # What the push sent, from the line git printed: `git push origin other-branch` sends a commit

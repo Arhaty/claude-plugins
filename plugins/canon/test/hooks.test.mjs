@@ -1165,19 +1165,31 @@ describe('ci-watch.sh', () => {
     expect(result.calls).toBe('');
   });
 
-  it('runs in a worktree whose checkout predates the config', () => {
-    const plain = scratchRepo();
+  it('runs in a worktree whose checkout predates the config, and nowhere else', () => {
+    const tree = join(repo.dir, '.wt');
+    repo.git('worktree', 'add', '-q', '--detach', tree, 'HEAD');
+    const unrelated = scratchRepo();
     try {
-      rmSync(join(plain.dir, '.claude/canon.json'));
-      const result = watch({
-        command: 'git push -u origin HEAD',
-        cwd: plain.dir,
-        project: repo.dir,
+      // The worktree's checkout has no config; the project's does.
+      rmSync(join(tree, '.claude/canon.json'), { force: true });
+      const inTree = watch({
+        command: 'git push origin HEAD:feat/x',
+        cwd: tree,
         conclusion: 'failure',
       });
-      expect(result.status).toBe(2);
+      expect(inTree.status).toBe(2);
+      // Another repository with no config is not this project's CI.
+      rmSync(join(unrelated.dir, '.claude/canon.json'));
+      const elsewhere = watch({
+        command: 'git push -u origin HEAD',
+        cwd: unrelated.dir,
+        conclusion: 'failure',
+      });
+      expect(elsewhere.status).toBe(0);
+      expect(elsewhere.calls).toBe('');
     } finally {
-      rmSync(plain.dir, { recursive: true, force: true });
+      repo.git('worktree', 'remove', '--force', tree);
+      rmSync(unrelated.dir, { recursive: true, force: true });
     }
   });
 
