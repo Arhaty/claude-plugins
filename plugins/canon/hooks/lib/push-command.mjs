@@ -99,16 +99,23 @@ function commandConfig(env) {
   return config;
 }
 
-/** One `git push`, or `null` when the invocation is some other git command. */
-function readPush({ argv, env, appended }) {
-  let dir = null;
+/**
+ * One `git push`, or `null` when the invocation is some other git command. `dir`
+ * starts where `invocations` says the command runs, after any `cd`, and `-C` moves
+ * it on from there; `dirKnown` is false when a `cd` before it cannot be followed.
+ */
+function readPush({ argv, env, appended, dir: from = null, dirKnown = true }) {
+  let dir = from;
   const config = commandConfig(env);
 
   let i = 1;
   while (i < argv.length && argv[i].startsWith('-')) {
     const [name] = argv[i].split('=');
     if (GIT_VALUES.has(name) && !argv[i].includes('=')) {
-      if (name === '-C') dir = dir === null ? argv[i + 1] : `${dir}/${argv[i + 1]}`;
+      if (name === '-C') {
+        const to = argv[i + 1] ?? '';
+        dir = dir === null || to.startsWith('/') ? to : `${dir}/${to}`;
+      }
       if (name === '-c') {
         const [key, ...value] = (argv[i + 1] ?? '').split('=');
         config[key.toLowerCase()] = value.join('=');
@@ -180,7 +187,7 @@ function readPush({ argv, env, appended }) {
   const bare = refspecs.length === 0 && !everyBranch && !tagsOnly;
   if (bare && config['push.default'] === 'matching') everyBranch = true;
 
-  return { dir, config, remote, targets, bare, everyBranch, force, unresolved };
+  return { dir, dirKnown, config, remote, targets, bare, everyBranch, force, unresolved };
 }
 
 /**

@@ -352,6 +352,15 @@ describe('require-canon on a gh command', () => {
       expect(createIn(tree)).toBe(2);
       expect(createIn(repo.dir, tree)).toBe(0);
       expect(createIn(other.dir)).toBe(0);
+      expect(createIn('-- .wt')).toBe(2);
+
+      // A cd that never moves the shell `gh` runs in is not a way past the gate.
+      const fromTree = (command) =>
+        run('require-canon.mjs', command, 'exit 1', { cwd: tree, project: repo.dir }).status;
+      expect(fromTree(`(cd ${other.dir}) && gh pr create --fill`)).toBe(2);
+      expect(fromTree(`bash -c "cd ${other.dir}" && gh pr create --fill`)).toBe(2);
+      expect(fromTree(`cd ${other.dir} || gh pr create --fill`)).toBe(2);
+      expect(fromTree('cd ./no-such-dir; gh pr create --fill')).toBe(2);
     } finally {
       repo.git('worktree', 'remove', '--force', tree);
       rmSync(repo.dir, { recursive: true, force: true });
@@ -496,6 +505,22 @@ describe('protect-push', () => {
     expect(push('git push')).toBe(2);
     // A named branch needs no read of HEAD, detached or not.
     expect(push('git push origin feature')).toBe(0);
+  });
+
+  it('reads HEAD and the upstream in the checkout a cd moved to', () => {
+    const tree = join(repo.dir, '.wt');
+    repo.git('worktree', 'add', '-q', tree, 'staging');
+    try {
+      // The session is on a feature branch; the push runs in a checkout of staging.
+      expect(push(`cd ${tree} && git push origin HEAD`)).toBe(2);
+      expect(push('cd .wt && git push')).toBe(2);
+      expect(push(`(cd ${tree}) && git push origin HEAD`)).toBe(0);
+      // A cd that may not have happened leaves nothing to read HEAD from.
+      expect(push(`cd ${tree} || true; git push origin HEAD`)).toBe(2);
+      expect(push(`cd ${tree} || true; git push origin feature`)).toBe(0);
+    } finally {
+      repo.git('worktree', 'remove', '--force', tree);
+    }
   });
 
   it('refuses inside the hook timeout when git hangs', () => {

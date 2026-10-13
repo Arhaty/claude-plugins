@@ -1006,9 +1006,34 @@ describe('prCalls', () => {
     expect(dir('cd a; cd b && gh pr create')).toEqual(['a/b']);
     expect(dir('cd a && cd /abs && gh pr create')).toEqual(['/abs']);
     expect(dir('cd -P a && gh pr create')).toEqual(['a']);
+    expect(dir('cd -- sub && gh pr create')).toEqual(['sub']);
+    expect(dir('git fetch && cd x && gh pr create')).toEqual(['x']);
+    // A nested shell, a subshell or eval moves the commands that run inside it.
+    expect(dir('bash -c "cd /x && gh pr create"')).toEqual(['/x']);
+    expect(dir('(cd /x && gh pr create)')).toEqual(['/x']);
+    expect(dir('eval cd /x; gh pr create')).toEqual(['/x']);
     // A cd this cannot follow goes back to the call's own directory.
-    for (const cd of ['cd', 'cd -', 'cd ~/x', 'cd $DIR', 'cd a && cd']) {
+    for (const cd of ['cd', 'cd -', 'cd ~/x', 'cd $DIR', 'cd a && cd', 'popd', 'pushd +1']) {
       expect(dir(`${cd} && gh pr create`), cd).toEqual([null]);
+    }
+  });
+
+  it('ignores a cd that does not move the shell the call runs in', () => {
+    const dir = (command) => prCalls(command, ['create']).map((call) => call.dir);
+    for (const command of [
+      // Each of these changes a directory the call never runs in.
+      '(cd ../other) && gh pr create',
+      'bash -c "cd /x" && gh pr create',
+      'out=$(cd /x; pwd); gh pr create',
+      '`cd /x`; gh pr create',
+      'cd /x | cat; gh pr create',
+      'cd /x & gh pr create',
+      // These may or may not have moved it.
+      'cd /x || gh pr create',
+      'cd x || exit; gh pr create',
+      'test -d x && cd x; gh pr create',
+    ]) {
+      expect(dir(command), command).toEqual([null]);
     }
   });
 });

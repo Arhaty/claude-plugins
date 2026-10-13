@@ -316,7 +316,22 @@ const REDIRECT = /^(?:\d+|&)?(?:>>?|<|>&|<&|>\|)(.*)$/;
  * which the shell runs: `out="$(gh pr merge 5)"` merges.
  */
 function simpleCommands(command) {
-  const fresh = () => ({ words: [], stdin: [], substitutions: [], pipedFrom: null });
+  // `scope` is the chain of subshells the command sits in, outermost first: `(`,
+  // `$(` and a backtick each open one, and a `cd` inside one ends with it. `before`
+  // and `after` are the operators on either side, `&&`, `||`, `;`, `|` or `&`, with
+  // a newline read as `;` and the start or end of the text as `null`.
+  let scopes = [];
+  let opened = 0;
+  let joined = null;
+  const fresh = () => ({
+    words: [],
+    stdin: [],
+    substitutions: [],
+    pipedFrom: null,
+    scope: scopes,
+    before: joined,
+    after: null,
+  });
   const commands = [fresh()];
   const heredocs = [];
   let word = null;
@@ -330,15 +345,40 @@ function simpleCommands(command) {
     if (word) pending = null;
     word = null;
   };
-  const endCommand = (pipe = false) => {
+  const endCommand = (operator = ';', pipe = false) => {
     endWord();
-    if (commands.at(-1).words.length === 0) return;
     const previous = commands.at(-1);
+    if (previous.words.length === 0) {
+      // Nothing to end: the operator still joins what comes next, and a command
+      // not yet started belongs to the scope it will start in.
+      previous.scope = scopes;
+      if (operator !== null) {
+        joined = operator;
+        previous.before = operator;
+      }
+      return;
+    }
+    previous.after = operator;
+    joined = operator;
     commands.push(fresh());
     // `echo ... | bash` runs what the left side prints, so the right side keeps
     // a reference to the left.
     if (pipe) commands.at(-1).pipedFrom = previous;
   };
+  const open = () => {
+    endCommand(null);
+    scopes = [...scopes, ++opened];
+    joined = null;
+    commands.at(-1).scope = scopes;
+    commands.at(-1).before = null;
+  };
+  const close = () => {
+    endCommand(null);
+    scopes = scopes.slice(0, -1);
+    commands.at(-1).scope = scopes;
+  };
+  // A backtick both opens and closes, so which one it is depends on whether one is open.
+  const backticks = [];
 
   /** Read every body queued on this line, starting after the newline at `i`. */
   const readBodies = (i) => {
@@ -446,24 +486,38 @@ function simpleCommands(command) {
     } else if (c === '\n') {
       endWord();
       if (heredocs.length > 0) i = readBodies(i);
-      endCommand();
+      endCommand(';');
     } else if (SEPARATORS.has(c)) {
       // The ampersand in `2>&1` or `&>file` is part of a redirection, not a
       // separator. Splitting there would make `/dev/null` a command.
       if (c === '&' && ('<>'.includes(command[i - 1]) || command[i + 1] === '>')) {
         start(true).text += c;
-      } else if (c === '|' && command[i + 1] === '|') {
-        endCommand();
+      } else if (c === '(') {
+        open();
+      } else if (c === ')') {
+        close();
+      } else if (c === '`') {
+        if (backticks.at(-1) === scopes.length) {
+          backticks.pop();
+          close();
+        } else {
+          open();
+          backticks.push(scopes.length);
+        }
+      } else if ((c === '|' || c === '&') && command[i + 1] === c) {
+        endCommand(c + c);
         i++;
+      } else if (c === '|') {
+        endCommand('|', true);
+        if (command[i + 1] === '&') i++;
       } else {
-        endCommand(c === '|');
-        if (c === '|' && command[i + 1] === '&') i++;
+        endCommand(c);
       }
     } else {
       start(true).text += c;
     }
   }
-  endCommand();
+  endCommand(null);
 
   // In place rather than mapped, so each `pipedFrom` still points at a command
   // in the returned list.
@@ -591,14 +645,18 @@ const SHELL_VALUES = new Set(['-o', '+o', '-O', '+O', '--rcfile', '--init-file']
 const MAX_DEPTH = 4;
 
 /**
- * Every command the string runs, each as `{ argv, env }`: `argv[0]` is the bare
- * program name with any path dropped, and `env` holds the inline assignments that
- * preceded it, `GH_REPO=x gh ...` included.
+ * Every command the string runs, each as `{ argv, env, appended, dir, dirKnown }`:
+ * `argv[0]` is the bare program name with any path dropped, and `env` holds the
+ * inline assignments that preceded it, `GH_REPO=x gh ...` included.
  *
  * `inherited` carries those assignments into a command line a wrapper runs, so
  * `GH_REPO=x bash -c "gh pr merge 5"` still names the other repository.
+ *
+ * `dir` is where the command runs, relative to the call's own directory, or `null`
+ * for that directory itself, and `dirKnown` says whether that can be known from the
+ * text. `where` is the state the text starts in. See `followCd` for what moves it.
  */
-export function invocations(command, depth = 0, inherited = {}) {
+export function invocations(command, depth = 0, inherited = {}, where = HERE, out = null) {
   if (typeof command !== 'string' || depth > MAX_DEPTH) return [];
 
   // `export GH_REPO=x; gh pr merge 5` sets it for every command after it. A bare
@@ -606,10 +664,33 @@ export function invocations(command, depth = 0, inherited = {}) {
   // a merge as aimed elsewhere fails closed, which is the safe direction.
   const shared = { ...inherited };
   const found = [];
-  for (const { words, stdin, substitutions, pipedFrom } of simpleCommands(command)) {
+
+  // The directory in each subshell, keyed by its place in the nesting. A subshell
+  // starts where its parent was when it opened, and nothing in it reaches the parent.
+  const states = new Map([['', { ...where, conditional: false }]]);
+  const stateOf = (scope) => {
+    const key = scope.join('.');
+    if (!states.has(key)) states.set(key, { ...stateOf(scope.slice(0, -1)), conditional: false });
+    return states.get(key);
+  };
+
+  for (const one of simpleCommands(command)) {
+    const { words, stdin, substitutions, pipedFrom } = one;
+    const state = stateOf(one.scope);
+
+    // A `cd` behind `&&` holds only while the chain does: once a `;` or `||` ends
+    // it, an earlier link may have failed and left the directory where it was.
+    if (state.conditional && one.before !== '&&') {
+      state.known = false;
+      state.conditional = false;
+    }
+    const here = { dir: state.dir, known: state.known };
+
     // A substitution runs with what was exported before it, so
     // `export GH_REPO=x; out="$(gh pr merge 5)"` still names the other repository.
-    for (const inner of substitutions) found.push(...invocations(inner, depth + 1, shared));
+    for (const inner of substitutions) {
+      found.push(...invocations(inner, depth + 1, shared, here));
+    }
 
     const declaration = ['export', 'declare', 'typeset', 'readonly'].includes(words[0]);
     if (declaration || words.every((word) => ASSIGNMENT.test(word))) {
@@ -624,11 +705,75 @@ export function invocations(command, depth = 0, inherited = {}) {
       for (const name of words.slice(1)) delete shared[name];
       continue;
     }
+
+    // A pipeline's commands and a backgrounded one run in subshells of their own.
+    const ownShell = pipedFrom !== null || one.after === '|' || one.after === '&';
+    if (!ownShell) followCd(words, one, state);
+
     const piped = printed(pipedFrom);
-    found.push(...unwrap(words, piped === null ? stdin : [...stdin, piped], depth, shared));
+    const evaluated = {};
+    const ran = unwrap(
+      words,
+      piped === null ? stdin : [...stdin, piped],
+      depth,
+      shared,
+      here,
+      evaluated
+    );
+    found.push(...ran);
+    // `eval` runs in this shell, so a `cd` inside it moves this shell.
+    if (evaluated.state && !ownShell) {
+      state.dir = evaluated.state.dir;
+      state.known = evaluated.state.known;
+    }
   }
 
+  if (out) out.state = { dir: states.get('').dir, known: states.get('').known };
   return found;
+}
+
+/** The state a command line starts in: the call's own directory, known. */
+const HERE = Object.freeze({ dir: null, known: true });
+
+/** The builtins that change the directory. */
+const CHANGES_DIR = new Set(['cd', 'pushd', 'popd']);
+
+/**
+ * Move `state` for a `cd`, `pushd` or `popd`, if `words` is one.
+ *
+ * Followed only where the shell would keep it. A target this cannot read (none,
+ * `-`, `~`, an expansion, or anything `popd` returns to) makes the directory
+ * unknown. So does a `cd` with `||` after it, which may have failed and let the
+ * next command run where it was. A `cd` behind `&&` or `||` is conditional: it
+ * holds until its chain ends, which `invocations` watches.
+ */
+function followCd(words, one, state) {
+  let at = 0;
+  while (ASSIGNMENT.test(words[at] ?? '')) at++;
+  while (words[at] === 'builtin' || words[at] === 'command') at++;
+  const name = words[at];
+  if (!CHANGES_DIR.has(name)) return;
+
+  const args = words.slice(at + 1);
+  let to;
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === '--') {
+      to = args[i + 1];
+      break;
+    }
+    if (/^-[LPe@]+$/.test(args[i])) continue;
+    to = args[i];
+    break;
+  }
+  const readable = name !== 'popd' && to !== undefined && to !== '-' && !/^[+-]\d|^~|[$`]/.test(to);
+
+  if (!readable) {
+    state.known = false;
+  } else {
+    state.dir = state.dir === null || isAbsolute(to) ? to : join(state.dir, to);
+  }
+  if (one.after === '||') state.known = false;
+  if (one.before === '&&' || one.before === '||') state.conditional = true;
 }
 
 /**
@@ -645,7 +790,7 @@ function printed(command) {
   return null;
 }
 
-function unwrap(words, stdin, depth, inherited) {
+function unwrap(words, stdin, depth, inherited, where = HERE, evaluated = {}) {
   const env = { ...inherited };
   const argv = [...words];
   // `xargs` appends words read from its input, so what it runs is not all here.
@@ -685,7 +830,7 @@ function unwrap(words, stdin, depth, inherited) {
         if (split) {
           argv.shift();
           const line = split[1] || argv.shift() || '';
-          return invocations([line, ...argv].join(' '), depth + 1, env);
+          return invocations([line, ...argv].join(' '), depth + 1, env, where);
         }
         if (wrapperValues.has(argv.shift())) argv.shift();
       }
@@ -707,16 +852,20 @@ function unwrap(words, stdin, depth, inherited) {
           break;
         }
       }
-      if (command && script !== undefined) return invocations(script, depth + 1, env);
+      if (command && script !== undefined) return invocations(script, depth + 1, env, where);
       // `bash <<EOF`, `sh -s <<EOF` and `bash <<< "..."` run their input.
       if ((fromStdin || script === undefined) && stdin.length > 0) {
-        return invocations(stdin.join('\n'), depth + 1, env);
+        return invocations(stdin.join('\n'), depth + 1, env, where);
       }
     }
 
-    if (name === 'eval') return invocations(argv.slice(1).join(' '), depth + 1, env);
+    if (name === 'eval') {
+      return invocations(argv.slice(1).join(' '), depth + 1, env, where, evaluated);
+    }
 
-    return [{ argv: [name, ...argv.slice(1)], env, appended }];
+    return [
+      { argv: [name, ...argv.slice(1)], env, appended, dir: where.dir, dirKnown: where.known },
+    ];
   }
 }
 
@@ -801,22 +950,15 @@ const PR_VALUES = {
  * the skeleton cannot give: `-B main` and `--base "main"` as well as `--base main`,
  * a real selector, and a bypass set on the command itself.
  *
- * `dir` is where a `cd` earlier in the call left it, relative to the call's working
- * directory, or `null` for that directory itself. `cd x && gh pr create` opens the
- * pull request for the repository in `x`, and judging the hook's own checkout instead
- * reads the wrong branch. A `cd` this cannot follow (`cd`, `cd -`, `~`, an expansion)
- * goes back to `null`: a best guess, on a hook that fails open anyway.
+ * `dir` is where the call runs, relative to the call's working directory, as
+ * `invocations` follows it: `cd x && gh pr create` opens the pull request for the
+ * repository in `x`. `null` is the call's own directory, which is also what an
+ * unknown directory reads as here: judging the session's own checkout is the
+ * conservative answer for the canon gate.
  */
 export function prCalls(command, subcommands) {
   const found = [];
-  let dir = null;
-  for (const { argv, env, appended } of invocations(command)) {
-    if (argv[0] === 'cd') {
-      const to = argv.slice(1).find((arg) => !/^-[LPe@]+$/.test(arg));
-      const readable = to !== undefined && to !== '-' && !/^~|[$`]/.test(to);
-      dir = !readable ? null : dir === null || isAbsolute(to) ? to : join(dir, to);
-      continue;
-    }
+  for (const { argv, env, appended, dir, dirKnown } of invocations(command)) {
     if (argv[0] !== 'gh' || argv[1] !== 'pr') continue;
     // `-R` is a group flag and can come first: `gh pr -R o/r merge 5`.
     const rest = argv.slice(2);
@@ -826,7 +968,15 @@ export function prCalls(command, subcommands) {
     if (!subcommands.includes(subcommand)) continue;
     const args = [...rest.slice(0, at), ...rest.slice(at + 1)];
     const { positionals, flags, pairs } = parseArgs(args, PR_VALUES[subcommand] ?? new Set());
-    found.push({ subcommand, positionals, flags, pairs, env, appended, dir });
+    found.push({
+      subcommand,
+      positionals,
+      flags,
+      pairs,
+      env,
+      appended,
+      dir: dirKnown ? dir : null,
+    });
   }
   return found;
 }

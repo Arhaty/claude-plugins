@@ -177,6 +177,14 @@ try {
       key.toLowerCase() in one.config
         ? [one.config[key.toLowerCase()]]
         : git(dir, 'config', '--get-all', key).split('\n').filter(Boolean);
+    // After a `cd` this cannot follow, nothing here knows which checkout's `HEAD`
+    // or upstream the push reads.
+    if (!one.dirKnown && (one.bare || one.targets.includes('HEAD'))) {
+      fail(
+        push.targets.join('`, `') || 'an unknown branch',
+        'a `cd` before it that this hook cannot follow, so it cannot read `HEAD` or the upstream. Name the branch literally'
+      );
+    }
     const current = git(dir, 'symbolic-ref', '--short', '-q', 'HEAD');
 
     // `HEAD` and a bare push both mean the checked-out branch. When there is none to

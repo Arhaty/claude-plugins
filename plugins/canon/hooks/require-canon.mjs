@@ -171,7 +171,10 @@ try {
 
     // `cd elsewhere && gh pr create` acts on the repository in `elsewhere`, which may be
     // a different branch of this project or another repository altogether.
-    const dir = call.dir === null ? DIR : resolve(DIR, call.dir);
+    // A directory that does not exist is a `cd` that failed, and the call runs where
+    // it was. Judging a missing directory would read no branch and let it through.
+    const moved = call.dir === null ? DIR : resolve(DIR, call.dir);
+    const dir = existsSync(moved) ? moved : DIR;
     if (elsewhere(dir)) continue;
     const current = git(dir, 'rev-parse', '--abbrev-ref', 'HEAD')?.trim() ?? null;
     const protectedBranch = current === integration || current === production;
