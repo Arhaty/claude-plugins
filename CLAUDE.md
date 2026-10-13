@@ -47,5 +47,7 @@ Commits carry no Co-authored-by trailer and use the GitHub noreply author email
 
 1. Create `plugins/<name>/` with `.claude-plugin/plugin.json`, README, CHANGELOG and `test/`.
 2. Add it to `.claude-plugin/marketplace.json`.
-3. Add it to `release-please-config.json` and `.release-please-manifest.json`.
+3. Add it to `release-please-config.json` with `"initial-version": "0.1.0"`, and to
+   `.release-please-manifest.json` at `0.0.0`. Without `initial-version` the first release is
+   1.0.0: with no tag yet, release-please skips `bump-minor-pre-major`.
 4. Add a row to the catalogue table in the root [README.md](README.md).

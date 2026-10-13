@@ -21,6 +21,7 @@
     "plugins/write": {
       "component": "write",
       "package-name": "write",
+      "initial-version": "0.1.0",
       "changelog-path": "CHANGELOG.md",
       "extra-files": [
         {
