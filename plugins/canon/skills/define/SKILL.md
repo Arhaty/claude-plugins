@@ -37,8 +37,11 @@ for a new spec is a stop: ask for the issue.
 1. **Read the issue and its comments** with `issue` and `comments`. The title and description are
    the brief; a comment from the owner refines it.
 2. **Check the role before anything else.**
-   - **New spec: the role must be `ready`.** `spec` already has a spec waiting to be read, so it
-     wants `/canon:approve` or a revision round on that spec; `approved` wants `/canon:build`;
+   - **New spec: the role must be `ready`**, or `spec` with no spec for it anywhere: no branch
+     `*/<id>-*` on the remote or here, and no spec file naming `<ID>`. That is a define that
+     stopped before writing one; carry on from it as a new spec, on its branch if it cut one.
+     `spec` with a spec already has one waiting to be read, so it wants `/canon:approve` or a
+     revision round on that spec; `approved` wants `/canon:build`;
      `building` or `blocked` is being built; `staging` or `production` is merged. Say which and
      stop.
    - **Revision round: the role must be `spec` or `approved`.** `approved` goes back to `spec`,
