@@ -51,6 +51,13 @@ file that exists and differs, and writes nothing until each one is approved by n
    - **Branches**: `staging` and `main` if both exist; `develop` and `main`, or `dev` and `main`,
      likewise. Otherwise suggest `staging` and the repository's default branch.
    - **Owner**: `git config user.name`.
+   - **CI workflow to dispatch**: an existing `ci` block, unchanged. Otherwise a file in
+     `.github/workflows/` whose `on:` has `workflow_dispatch` and runs on no later commit of a
+     feature branch: no `push` whose `branches`, `branches-ignore` or `paths` filters let a
+     feature branch through, and no `pull_request` or `pull_request_target` whose `types` include
+     `synchronize`. Either with no `types` includes `synchronize`, so that workflow already runs
+     on every push. Its `workflow_dispatch` input that names the base branch (often
+     `base`) is the base input; none is `null`. No such workflow means no `ci` block.
 
 3. **Ask, in one `AskUserQuestion` call where the tool allows, with the defaults as the first,
    recommended option.** Every value below ends up in `.claude/canon.json`:
@@ -71,11 +78,16 @@ file that exists and differs, and writes nothing until each one is approved by n
      repository that the command reads can change later without asking again.
    - **Whether to enable canon in the project's own `.claude/settings.json`.** That turns canon on
      for everyone who clones the project and has the plugin installed.
+   - **Whether `/canon:staging` should start CI** when nothing has run on the head commit, and
+     with which workflow and base input. Only for CI that skips commits pushed after the pull
+     request leaves draft; the workflow must declare `workflow_dispatch`. No means no `ci` block,
+     and `/canon:staging` only waits.
    - **Whether to use an issue tracker** as the record and the gate. Linear is the only one
      supported. Without one, the spec's `**Status:**` line is the gate and the config gets no
      `tracker` block; skip the tracker questions below.
 
-   If an existing config has a `tracker` block, its values are the defaults below too.
+   If an existing config has a `tracker` or `ci` block, its values are the defaults too, ahead of
+   anything detected.
 
    **The tracker, when the owner wants one.** Read `${CLAUDE_PLUGIN_ROOT}/references/tracker.md`
    first for what each role means.
@@ -122,11 +134,12 @@ file that exists and differs, and writes nothing until each one is approved by n
      "commands": { "typecheck": "<cmd or null>", "lint": "<cmd or null>", "format": "<cmd or null>", "test": "<cmd or null>" },
      "formatFile": ["<argv>", "..."] or null,
      "urls": { "preview": "<pattern or null>", "staging": "<url or null>", "production": "<url or null>" },
-     "tracker": { "provider": "linear", "team": "<KEY>", "statuses": { "ready": "<status>", "...": "..." }, "labelPrefix": "domain-", "apiKeyCommand": ["<argv>"] or null }
+     "tracker": { "provider": "linear", "team": "<KEY>", "statuses": { "ready": "<status>", "...": "..." }, "labelPrefix": "domain-", "apiKeyCommand": ["<argv>"] or null },
+     "ci": { "workflow": "<file>.yml", "baseInput": "<input or null>" }
    }
    ```
 
-   Leave `tracker` out entirely when the owner wants none.
+   Leave `tracker` out entirely when the owner wants none, and `ci` likewise.
 
    Write it outside the project (your scratchpad or `$TMPDIR`), then:
 
