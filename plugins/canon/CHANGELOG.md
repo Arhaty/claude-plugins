@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.0](https://github.com/Arhaty/claude-plugins/compare/canon-v0.2.0...canon-v0.3.0) (2026-10-13)
+
+
+### Features
+
+* dispatch ci from /canon:staging when the head commit has no run ([#20](https://github.com/Arhaty/claude-plugins/issues/20)) ([d669d59](https://github.com/Arhaty/claude-plugins/commit/d669d59e14da4bf155ff59e8648e4be6f218a86c))
+
 ## [0.2.0](https://github.com/Arhaty/claude-plugins/compare/canon-v0.1.0...canon-v0.2.0) (2026-10-13)
 
 
