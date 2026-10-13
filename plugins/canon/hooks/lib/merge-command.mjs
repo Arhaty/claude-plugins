@@ -654,7 +654,8 @@ const MAX_DEPTH = 4;
  *
  * `dir` is where the command runs, relative to the call's own directory, or `null`
  * for that directory itself, and `dirKnown` says whether that can be known from the
- * text. `where` is the state the text starts in. See `followCd` for what moves it.
+ * text. `where` is the state the text starts in. See `followCd` for the one shape of
+ * `cd` that moves it; every other one makes it unknown.
  */
 export function invocations(command, depth = 0, inherited = {}, where = HERE, out = null) {
   if (typeof command !== 'string' || depth > MAX_DEPTH) return [];
@@ -667,23 +668,27 @@ export function invocations(command, depth = 0, inherited = {}, where = HERE, ou
 
   // The directory in each subshell, keyed by its place in the nesting. A subshell
   // starts where its parent was when it opened, and nothing in it reaches the parent.
-  const states = new Map([['', { ...where, conditional: false }]]);
+  const states = new Map([['', { ...where }]]);
   const stateOf = (scope) => {
     const key = scope.join('.');
-    if (!states.has(key)) states.set(key, { ...stateOf(scope.slice(0, -1)), conditional: false });
+    if (!states.has(key)) states.set(key, { ...stateOf(scope.slice(0, -1)) });
     return states.get(key);
   };
 
-  for (const one of simpleCommands(command)) {
+  const commands = simpleCommands(command);
+  // The operator that ends each command's `&&`/`||` list: `a && b &` backgrounds both.
+  const listEnd = commands.map((_, i) => {
+    let j = i;
+    while (j < commands.length - 1 && ['&&', '||'].includes(commands[j].after)) j++;
+    return commands[j].after;
+  });
+  // Inside `if`, a loop or `case`, nothing says whether a command runs.
+  let compound = 0;
+
+  for (const [index, one] of commands.entries()) {
     const { words, stdin, substitutions, pipedFrom } = one;
     const state = stateOf(one.scope);
-
-    // A `cd` behind `&&` holds only while the chain does: once a `;` or `||` ends
-    // it, an earlier link may have failed and left the directory where it was.
-    if (state.conditional && one.before !== '&&') {
-      state.known = false;
-      state.conditional = false;
-    }
+    if (OPENS_COMPOUND.has(words[0])) compound++;
     const here = { dir: state.dir, known: state.known };
 
     // A substitution runs with what was exported before it, so
@@ -706,9 +711,17 @@ export function invocations(command, depth = 0, inherited = {}, where = HERE, ou
       continue;
     }
 
-    // A pipeline's commands and a backgrounded one run in subshells of their own.
-    const ownShell = pipedFrom !== null || one.after === '|' || one.after === '&';
-    if (!ownShell) followCd(words, one, state);
+    const plain =
+      depth === 0 &&
+      one.scope.length === 0 &&
+      compound === 0 &&
+      pipedFrom === null &&
+      [null, ';'].includes(one.before) &&
+      [null, ';', '&&'].includes(one.after) &&
+      listEnd[index] !== '&';
+    followCd(words, state, plain);
+    if (CLOSES_COMPOUND.has(words[0])) compound = Math.max(0, compound - 1);
+    const ownShell = pipedFrom !== null || one.after === '|' || listEnd[index] === '&';
 
     const piped = printed(pipedFrom);
     const evaluated = {};
@@ -738,21 +751,35 @@ const HERE = Object.freeze({ dir: null, known: true });
 /** The builtins that change the directory. */
 const CHANGES_DIR = new Set(['cd', 'pushd', 'popd']);
 
+/** The keywords that open and close a command that may or may not run its body. */
+const OPENS_COMPOUND = new Set(['if', 'while', 'until', 'for', 'select', 'case']);
+const CLOSES_COMPOUND = new Set(['fi', 'done', 'esac']);
+
+/** What can stand in front of a `cd` in one simple command. */
+const BEFORE_CD = new Set(['{', '!', 'if', 'then', 'elif', 'else', 'while', 'until', 'do']);
+
 /**
  * Move `state` for a `cd`, `pushd` or `popd`, if `words` is one.
  *
- * Followed only where the shell would keep it. A target this cannot read (none,
- * `-`, `~`, an expansion, or anything `popd` returns to) makes the directory
- * unknown. So does a `cd` with `||` after it, which may have failed and let the
- * next command run where it was. A `cd` behind `&&` or `||` is conditional: it
- * holds until its chain ends, which `invocations` watches.
+ * **Followed in one shape only**, `plain`: `cd <dir>` as the whole command, at the
+ * top level of the call, outside every subshell, nested shell and `if`, loop or
+ * `case`, not in a pipeline or a background list, with nothing conditional before
+ * it, and with `;`, `&&` or the end after it. Every other `cd`, and one whose target
+ * cannot be read (none, `-`, `~`, an expansion, `popd`), makes the directory
+ * unknown. Modelling where bash keeps a directory is a list of cases with no end;
+ * this keeps the one people write and fails closed on the rest.
  */
-function followCd(words, one, state) {
+function followCd(words, state, plain) {
   let at = 0;
+  while (BEFORE_CD.has(words[at])) at++;
   while (ASSIGNMENT.test(words[at] ?? '')) at++;
   while (words[at] === 'builtin' || words[at] === 'command') at++;
   const name = words[at];
   if (!CHANGES_DIR.has(name)) return;
+  if (!plain || at !== 0 || name === 'popd') {
+    state.known = false;
+    return;
+  }
 
   const args = words.slice(at + 1);
   let to;
@@ -772,8 +799,6 @@ function followCd(words, one, state) {
   } else {
     state.dir = state.dir === null || isAbsolute(to) ? to : join(state.dir, to);
   }
-  if (one.after === '||') state.known = false;
-  if (one.before === '&&' || one.before === '||') state.conditional = true;
 }
 
 /**

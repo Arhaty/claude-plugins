@@ -13,6 +13,7 @@ import {
   commandSkeleton,
   mergeTargets,
   mergesIn,
+  invocations,
   prCalls,
   prDetails,
   prFiles,
@@ -1004,15 +1005,10 @@ describe('prCalls', () => {
     expect(dir('gh pr create --fill')).toEqual([null]);
     expect(dir('cd ../other && gh pr create --fill')).toEqual(['../other']);
     expect(dir('cd a; cd b && gh pr create')).toEqual(['a/b']);
-    expect(dir('cd a && cd /abs && gh pr create')).toEqual(['/abs']);
+    expect(dir('cd a; cd /abs && gh pr create')).toEqual(['/abs']);
     expect(dir('cd -P a && gh pr create')).toEqual(['a']);
     expect(dir('cd -- sub && gh pr create')).toEqual(['sub']);
-    expect(dir('git fetch && cd x && gh pr create')).toEqual(['x']);
-    // A nested shell, a subshell or eval moves the commands that run inside it.
-    expect(dir('bash -c "cd /x && gh pr create"')).toEqual(['/x']);
-    expect(dir('(cd /x && gh pr create)')).toEqual(['/x']);
-    expect(dir('eval cd /x; gh pr create')).toEqual(['/x']);
-    // A cd this cannot follow goes back to the call's own directory.
+    // A cd this does not follow goes back to the call's own directory.
     for (const cd of ['cd', 'cd -', 'cd ~/x', 'cd $DIR', 'cd a && cd', 'popd', 'pushd +1']) {
       expect(dir(`${cd} && gh pr create`), cd).toEqual([null]);
     }
@@ -1032,8 +1028,37 @@ describe('prCalls', () => {
       'cd /x || gh pr create',
       'cd x || exit; gh pr create',
       'test -d x && cd x; gh pr create',
+      'git fetch && cd x && gh pr create',
+      'if cd x; then gh pr create; fi',
+      'case a in a) cd x;; esac; gh pr create',
+      'cd x && true & gh pr create',
+      // Only the plain shape is followed, so these read as unknown too.
+      '{ cd x; gh pr create; }',
+      'bash -c "cd /x && gh pr create"',
+      '(cd /x && gh pr create)',
+      'eval cd /x; gh pr create',
     ]) {
       expect(dir(command), command).toEqual([null]);
+    }
+  });
+
+  it('marks the directory unknown after any cd it does not follow', () => {
+    const known = (command) =>
+      invocations(command)
+        .filter(({ argv }) => argv[0] === 'git')
+        .map(({ dir, dirKnown }) => (dirKnown ? dir : '?'));
+    expect(known('cd x && git push')).toEqual(['x']);
+    expect(known('(cd x) && git push')).toEqual([null]);
+    for (const command of [
+      '{ cd x; git push; }',
+      'if cd x; then git push; fi',
+      'case a in a) cd x;; esac; git push',
+      '(cd y; case a in a) cd x;; esac; git push)',
+      'cd x && true & git push',
+      'cd x || git push',
+      'eval cd /x; git push',
+    ]) {
+      expect(known(command), command).toEqual(['?']);
     }
   });
 });

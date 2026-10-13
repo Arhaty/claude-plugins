@@ -518,6 +518,12 @@ describe('protect-push', () => {
       // A cd that may not have happened leaves nothing to read HEAD from.
       expect(push(`cd ${tree} || true; git push origin HEAD`)).toBe(2);
       expect(push(`cd ${tree} || true; git push origin feature`)).toBe(0);
+      // Every other shape of cd fails closed rather than being modelled.
+      expect(push(`{ cd ${tree}; git push; }`)).toBe(2);
+      expect(push(`if cd ${tree}; then git push; fi`)).toBe(2);
+      expect(push(`case a in a) cd ${tree};; esac; git push`)).toBe(2);
+      expect(push(`cd ${tree} && true & git push`)).toBe(2);
+      expect(push(`{ cd ${tree}; git push origin feature; }`)).toBe(0);
     } finally {
       repo.git('worktree', 'remove', '--force', tree);
     }
