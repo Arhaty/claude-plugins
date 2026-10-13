@@ -975,7 +975,11 @@ describe('ci-watch.sh', () => {
         cwd,
       }),
       encoding: 'utf8',
-      env: { ...process.env, PATH: `${bin}:${process.env.PATH ?? ''}`, CLAUDE_PROJECT_DIR: project },
+      env: {
+        ...process.env,
+        PATH: `${bin}:${process.env.PATH ?? ''}`,
+        CLAUDE_PROJECT_DIR: project,
+      },
     });
     const calls = existsSync(log) ? readFileSync(log, 'utf8') : '';
     return { status: result.status, stderr: result.stderr, calls };
@@ -1005,7 +1009,17 @@ describe('ci-watch.sh', () => {
   });
 
   it('watches the commit the push sent, not HEAD', () => {
-    repo.git('-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '--allow-empty', '-m', 'y');
+    repo.git(
+      '-c',
+      'user.name=t',
+      '-c',
+      'user.email=t@t',
+      'commit',
+      '-q',
+      '--allow-empty',
+      '-m',
+      'y'
+    );
     const sent = sha('HEAD~1');
     const { calls } = watch({
       command: 'git push origin older:feature',
@@ -1027,7 +1041,17 @@ describe('ci-watch.sh', () => {
   it('reads the commit in the directory the command ran in', () => {
     const other = scratchRepo();
     try {
-      other.git('-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '--allow-empty', '-m', 'z');
+      other.git(
+        '-c',
+        'user.name=t',
+        '-c',
+        'user.email=t@t',
+        'commit',
+        '-q',
+        '--allow-empty',
+        '-m',
+        'z'
+      );
       const head = spawnSync('git', ['-C', other.dir, 'rev-parse', 'HEAD'], {
         encoding: 'utf8',
       }).stdout.trim();

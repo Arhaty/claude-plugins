@@ -69,9 +69,8 @@ const block = (message) => {
 if (process.env.ALLOW_UNDECIDED_MERGE === '1') allow();
 
 try {
-  const { mergesIn, prCalls, prDetails, prFiles, remaining } = await import(
-    './lib/merge-command.mjs'
-  );
+  const { mergesIn, prCalls, prDetails, prFiles, remaining } =
+    await import('./lib/merge-command.mjs');
   const { DOMAINS_PATH, canonical, configProblem, loadConfig, projectRoot, readPayload } =
     await import('./lib/config.mjs');
 
