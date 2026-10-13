@@ -15,7 +15,8 @@ execution:
   max_turns: 4
   allowed_tools: [Read, Glob, Grep, Skill]
 graders:
-  - type: tool_used
+  - name: review-not-run
+    type: tool_used
     tool: Skill
     input_match: '"skill"\s*:\s*"(?:canon:)?review"'
     min: 0

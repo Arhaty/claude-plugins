@@ -10,10 +10,12 @@ execution:
 context:
   scaffold_script: scaffold.sh
 graders:
-  - type: tool_used
+  - name: review-runs
+    type: tool_used
     tool: Skill
     input_match: '"skill"\s*:\s*"(?:canon:)?review"'
-  - type: llm
+  - name: checks-canon-paths
+    type: llm
     focus: last_message
     criteria: >-
       PASS if the reply says src/auth/limit.ts allows 10 failed attempts where docs/canon/auth.md
