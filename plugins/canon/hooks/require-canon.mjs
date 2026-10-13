@@ -69,7 +69,8 @@ const block = (message) => {
 if (process.env.ALLOW_UNDECIDED_MERGE === '1') allow();
 
 try {
-  const { mergesIn, prCalls, prDetails, prFiles } = await import('./lib/merge-command.mjs');
+  const { mergesIn, prCalls, prDetails, prFiles, remaining } =
+    await import('./lib/merge-command.mjs');
   const { DOMAINS_PATH, canonical, configProblem, loadConfig, projectRoot, readPayload } =
     await import('./lib/config.mjs');
 
@@ -115,6 +116,7 @@ try {
           {
             encoding: 'utf8',
             stdio: ['ignore', 'pipe', 'ignore'],
+            timeout: remaining(),
           }
         ).trim()
       );
@@ -122,15 +124,18 @@ try {
       return null;
     }
   };
-  const here = commonDir(DIR);
   const project = commonDir(ROOT);
-  if (here !== null && project !== null && here !== project) allow();
+  const elsewhere = (dir) => {
+    const there = commonDir(dir);
+    return there !== null && project !== null && there !== project;
+  };
 
   // A merge through an MCP server's tool carries no command, so it is judged on the pull
   // request it names rather than on a local diff: the files GitHub lists for it. Without
   // this branch the tool's `settings.json` entry ran the hook and the hook found nothing
   // to read. Unreadable fails open, as below; `protect-merge.mjs` refuses it anyway.
   if (isMcpMerge) {
+    if (elsewhere(DIR)) allow();
     const [merge] = mergesIn(payload);
     const refused = merge?.selector == null ? null : fromPullRequest(merge.selector, 'the merge');
     if (refused) block(refused);
@@ -144,59 +149,83 @@ try {
   if (calls.length === 0) allow();
 
   // A git failure is an unreadable diff, not a crash: it fails open, per the header.
-  const git = (...args) => {
+  const git = (dir, ...args) => {
     try {
-      return execFileSync('git', ['-C', DIR, ...args], {
+      return execFileSync('git', ['-C', dir, ...args], {
         encoding: 'utf8',
         stdio: ['ignore', 'pipe', 'ignore'],
+        timeout: remaining(),
       });
     } catch {
       return null;
     }
   };
 
-  const current = git('rev-parse', '--abbrev-ref', 'HEAD')?.trim() ?? null;
-  const protectedBranch = current === integration || current === production;
+  /** The repository and base pairs already fetched in this call. */
+  const fetched = new Set();
 
   for (const call of calls) {
     // The assignment on this `gh` command, not one anywhere in the text: a `--body` that
     // quotes the bypass is an argument, and `invocations` never reads it as an assignment.
     if (call.env.ALLOW_UNDECIDED_MERGE === '1') continue;
 
+    // After a `cd` in the same call, nothing says which repository or branch the call
+    // acts on, and judging the session's own checkout instead can wave it through: a
+    // session on the integration branch is never judged by diff. Refused, with the fix.
+    if (!call.dirKnown) block(movedRefusal(call));
+    const dir = DIR;
+    // Run from another repository's checkout, the call is about that repository.
+    if (elsewhere(dir)) continue;
+    const current = git(dir, 'rev-parse', '--abbrev-ref', 'HEAD')?.trim() ?? null;
+    const protectedBranch = current === integration || current === production;
+
     const verb = `\`gh pr ${call.subcommand}\``;
     const [selector] = call.positionals;
     const refused =
       call.subcommand !== 'create' && (selector !== undefined || protectedBranch)
-        ? fromCall(call, verb)
-        : fromDiff(call, verb);
+        ? fromCall(call, verb, dir)
+        : fromDiff(call, verb, dir, current);
     if (refused) block(refused);
   }
 
   allow();
+
+  /** The refusal for a `gh pr` call that follows a `cd` in the same command. */
+  function movedRefusal(call) {
+    return (
+      `Refusing \`gh pr ${call.subcommand}\`: it follows a \`cd\` in the same command, so this ` +
+      'hook cannot tell which repository or branch it acts on, or whether that change needs ' +
+      'a canon update.\n\n' +
+      'Run the `cd` on its own first, then the `gh` command in its own call: the shell keeps ' +
+      'its directory between calls, and the hook then judges the right checkout.\n\n' +
+      'If no rule changed, say so in one line and re-run with ALLOW_UNDECIDED_MERGE=1 on the ' +
+      '`gh` command.'
+    );
+  }
 
   /**
    * A `gh pr merge` or `gh pr ready` judged on the pull request it acts on. Aimed at
    * another repository, or fed its selector by `xargs`, it cannot be read by number
    * here, and fails open like any other unreadable pull request.
    */
-  function fromCall(call, verb) {
+  function fromCall(call, verb, dir) {
     if (call.flags.has('--repo') || call.flags.has('-R')) return null;
     if (call.env.GH_REPO !== undefined || call.appended) return null;
-    return fromPullRequest(call.positionals.slice(0, 1), `Refusing ${verb}`);
+    return fromPullRequest(call.positionals.slice(0, 1), `Refusing ${verb}`, dir);
   }
 
   /** Reads the pull request `selector` names and judges the files GitHub lists for it. */
-  function fromPullRequest(selector, action) {
-    const details = prDetails(selector, { cwd: DIR });
+  function fromPullRequest(selector, action, dir = DIR) {
+    const details = prDetails(selector, { cwd: dir });
     // A release pull request: see `fromDiff`.
     if (!details.ok || details.pr.baseRefName === production) return null;
-    const files = prFiles(details.pr, { cwd: DIR });
+    const files = prFiles(details.pr, { cwd: dir });
     if (!files.ok) return null;
     return refusal(files.paths, `${action}: pull request #${details.pr.number}`);
   }
 
   /** A `gh pr` subcommand judged on the branch diff from git. */
-  function fromDiff(call, verb) {
+  function fromDiff(call, verb, dir, current) {
     /**
      * `--base` and `--head` as the command actually gave them, in any spelling gh
      * takes: `-B`, `--base=main`, `--base "main"`.
@@ -242,22 +271,28 @@ try {
      * **Bounded, because this runs in front of a tool call.** An unbounded fetch in a
      * PreToolUse hook is a hook that can hang: a slow network, a credential prompt or an
      * unreachable remote would stall every `gh pr create` for as long as git is willing
-     * to wait, with nothing on screen explaining why. Ten seconds is longer than this
-     * fetch takes and shorter than anyone's patience.
+     * to wait, with nothing on screen explaining why. It gets what is left of the shared
+     * deadline less three seconds kept for the reads after it, never more than ten, and
+     * a command that opens two pull requests against one base fetches it once.
      *
      * Failing is fine and silent. The old tracking ref stays in place and the check runs
      * against it, which is exactly the behaviour this had before the fetch existed.
      */
-    try {
-      execFileSync('git', ['-C', DIR, 'fetch', '--quiet', 'origin', baseBranch], {
-        stdio: 'ignore',
-        timeout: 10_000,
-        // No terminal prompt for credentials: a hook must never wait on input nobody can
-        // see it asking for.
-        env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
-      });
-    } catch {
-      // Stale ref, and the diff below is computed against it.
+    const budget = Math.min(10_000, remaining() - 3_000);
+    const key = `${dir}\0${baseBranch}`;
+    if (!fetched.has(key) && budget > 0) {
+      fetched.add(key);
+      try {
+        execFileSync('git', ['-C', dir, 'fetch', '--quiet', 'origin', baseBranch], {
+          stdio: 'ignore',
+          timeout: budget,
+          // No terminal prompt for credentials: a hook must never wait on input nobody can
+          // see it asking for.
+          env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
+        });
+      } catch {
+        // Stale ref, and the diff below is computed against it.
+      }
     }
 
     // Three dots: what this branch changed, ignoring what landed on the base since it
@@ -265,7 +300,16 @@ try {
     //
     // `head` is compared as a ref rather than as `HEAD`, so a pull request opened for
     // another branch is judged by that branch's contents.
-    const diff = git('diff', '--name-only', `origin/${baseBranch}...${head ?? 'HEAD'}`);
+    //
+    // `--no-renames`, so a file moved out of a governed path lists its old path too, as
+    // `prFiles` does for a pull request GitHub describes.
+    const diff = git(
+      dir,
+      'diff',
+      '--name-only',
+      '--no-renames',
+      `origin/${baseBranch}...${head ?? 'HEAD'}`
+    );
     if (diff === null) return null;
 
     return refusal(diff.split('\n').filter(Boolean), `Refusing ${verb}: \`${branch}\``);

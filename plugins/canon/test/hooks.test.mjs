@@ -271,6 +271,26 @@ describe('require-canon on a gh command', () => {
     expect(check('gh pr merge --merge', governed, 'staging')).toBe(2);
   });
 
+  it('judges every call in one command inside the hook timeout when the fetch hangs', () => {
+    // Clean against the integration branch, governed against `dev`, so the calls before
+    // the last one pass and each would fetch again.
+    const hung =
+      'case "$*" in *fetch*) exec sleep 30;; *rev-parse*) echo feature;; ' +
+      '*origin/dev...*) echo src/lib/content.ts;; *) exit 0;; esac';
+    const started = Date.now();
+    const status = runHook(
+      'require-canon.mjs',
+      'gh pr create --fill && gh pr ready && gh pr create -B dev --fill',
+      'exit 1',
+      undefined,
+      hung
+    );
+    expect(status).toBe(2);
+    // One fetch per base, all inside the shared 15-second deadline. The hook gets 20;
+    // past that, Claude Code lets the call through.
+    expect(Date.now() - started).toBeLessThan(17_000);
+  }, 60_000);
+
   it('fails open on a merge aimed at another repository', () => {
     const migrations = pr('staging', ['supabase/migrations/0005_x.sql']);
     expect(runHook('require-canon.mjs', 'gh pr merge 5 --repo o/r', migrations)).toBe(0);
@@ -321,10 +341,57 @@ describe('require-canon on a gh command', () => {
       // The same change in another repository is refused there, and not from this project.
       expect(create(other.dir, other.dir)).toBe(2);
       expect(create(other.dir)).toBe(0);
+
+      // After a cd in the same command, nothing says which checkout `gh` acts on: refused,
+      // even from the integration branch, which is never judged by diff.
+      const after = (command, cwd = repo.dir) =>
+        run('require-canon.mjs', command, 'exit 1', { cwd, project: repo.dir });
+      for (const command of [
+        `cd ${tree} && gh pr create --fill`,
+        `cd ${other.dir} && gh pr create --fill`,
+        `(cd ${other.dir}) && gh pr create --fill`,
+        `bash -c "cd ${other.dir}" && gh pr create --fill`,
+        `cd ${other.dir} || gh pr create --fill`,
+        `false &&\ncd ${other.dir}\ngh pr create --fill`,
+        `(case a in a) ;; esac; cd ${other.dir}); gh pr create --fill`,
+      ]) {
+        const result = after(command);
+        expect(result.status, command).toBe(2);
+        expect(result.stderr, command).toMatch(/follows a `cd` in the same command/);
+      }
+      expect(after(`cd ${tree} && ALLOW_UNDECIDED_MERGE=1 gh pr create --fill`).status).toBe(0);
+      // A `cd` after the call does not touch it.
+      expect(after(`gh pr create --fill; cd ${other.dir}`, tree).status).toBe(2);
+      expect(after(`gh pr view; cd ${other.dir}`, tree).status).toBe(0);
     } finally {
       repo.git('worktree', 'remove', '--force', tree);
       rmSync(repo.dir, { recursive: true, force: true });
       rmSync(other.dir, { recursive: true, force: true });
+    }
+  });
+
+  it('counts a file renamed out of a governed path under its old path', () => {
+    const repo = scratchRepo();
+    const c = ['-c', 'user.name=t', '-c', 'user.email=t@t'];
+    try {
+      repo.git('checkout', '-q', 'staging');
+      mkdirSync(join(repo.dir, 'src/lib'), { recursive: true });
+      writeFileSync(join(repo.dir, 'src/lib/content.ts'), 'export const a = 1;\n'.repeat(20));
+      repo.git('add', 'src/lib/content.ts');
+      repo.git(...c, 'commit', '-q', '-m', 'governed');
+      repo.git('remote', 'add', 'origin', repo.dir);
+      repo.git('fetch', '-q', 'origin');
+      repo.git('checkout', '-q', '-b', 'feat/move', 'origin/staging');
+      mkdirSync(join(repo.dir, 'elsewhere'));
+      repo.git('mv', 'src/lib/content.ts', 'elsewhere/content.ts');
+      repo.git(...c, 'commit', '-q', '-m', 'move');
+      const { status } = run('require-canon.mjs', 'gh pr create --fill', 'exit 1', {
+        cwd: repo.dir,
+        project: repo.dir,
+      });
+      expect(status).toBe(2);
+    } finally {
+      rmSync(repo.dir, { recursive: true, force: true });
     }
   });
 
@@ -432,6 +499,53 @@ describe('protect-push', () => {
     // A configured push refspec replaces the branch and its upstream.
     repo.git('config', 'remote.origin.push', 'HEAD:refs/heads/main');
     expect(push('git push')).toBe(2);
+  }, 30_000);
+
+  it('refuses a push of HEAD when HEAD names no branch', () => {
+    repo.git('checkout', '-q', '--detach');
+    expect(push('git push origin HEAD')).toBe(2);
+    expect(push('git push')).toBe(2);
+    // A named branch needs no read of HEAD, detached or not.
+    expect(push('git push origin feature')).toBe(0);
+  });
+
+  it('refuses a push that reads HEAD after a cd, unless -C names the checkout', () => {
+    const tree = join(repo.dir, '.wt');
+    repo.git('worktree', 'add', '-q', tree, 'staging');
+    try {
+      for (const command of [
+        `cd ${tree} && git push origin HEAD`,
+        'cd .wt && git push',
+        `(cd ${tree}) && git push origin HEAD`,
+        `{ cd ${tree}; git push; }`,
+        `if cd ${tree}; then git push; fi`,
+        `case a in a) cd ${tree};; esac; git push`,
+        `false &&\ncd ${tree}\ngit push origin HEAD`,
+      ]) {
+        expect(push(command), command).toBe(2);
+      }
+      // A named branch needs no checkout's HEAD.
+      expect(push(`cd ${tree} && git push origin feature`)).toBe(0);
+      // An absolute -C names the checkout outright: staging's HEAD is refused, the
+      // session's own feature branch is not.
+      expect(push(`cd /tmp; git -C ${tree} push origin HEAD`)).toBe(2);
+      expect(push(`cd /tmp; git -C ${repo.dir} push origin HEAD`)).toBe(0);
+    } finally {
+      repo.git('worktree', 'remove', '--force', tree);
+    }
+  });
+
+  it('refuses inside the hook timeout when git hangs', () => {
+    const started = Date.now();
+    const { status, stderr } = run('protect-push.mjs', 'git push -u origin HEAD', 'exit 1', {
+      cwd: repo.dir,
+      project: repo.dir,
+      git: 'exec sleep 30',
+    });
+    expect(status).toBe(2);
+    expect(stderr).toMatch(/did not answer in time/);
+    // The hook's own timeout is 15 seconds; past it, Claude Code lets the push through.
+    expect(Date.now() - started).toBeLessThan(14_000);
   }, 30_000);
 
   it('refuses a brace expansion, which bash turns into a push to main', () => {
@@ -857,6 +971,74 @@ describe('hooks.json', () => {
 });
 
 describe('ci-watch.sh', () => {
+  let repo;
+  let bin;
+  let log;
+
+  beforeEach(() => {
+    repo = scratchRepo();
+    bin = mkdtempSync(join(tmpdir(), 'canon-bin-'));
+    log = join(bin, 'gh.log');
+  });
+  afterEach(() => {
+    rmSync(repo.dir, { recursive: true, force: true });
+    rmSync(bin, { recursive: true, force: true });
+  });
+
+  /**
+   * Run the hook with a stub `gh` that logs every call and lists `runs` for any
+   * commit, each with its conclusion; `conclusion` alone is one run, 42. `sleep` is
+   * stubbed too, so the waits cost nothing. `project` is `$CLAUDE_PROJECT_DIR`, which
+   * the payload's `cwd` overrides.
+   */
+  function watch({
+    command,
+    output = '',
+    cwd = repo.dir,
+    project = repo.dir,
+    conclusion,
+    runs = { 42: conclusion },
+  }) {
+    const of = Object.entries(runs)
+      .map(([id, result]) => `${id}) echo ${result} ;;`)
+      .join(' ');
+    writeFileSync(
+      join(bin, 'gh'),
+      [
+        '#!/bin/sh',
+        `echo "$*" >> '${log}'`,
+        `result() { case "$1" in ${of} esac; }`,
+        'case "$1 $2" in',
+        `  "run list") printf '%s\\n' ${Object.keys(runs).join(' ')} ;;`,
+        '  "run watch") [ "$(result "$3")" = success ] ;;',
+        '  "run view") case "$*" in *--log-failed*) echo log ;; *) result "$3" ;; esac ;;',
+        'esac',
+      ].join('\n'),
+      { mode: 0o755 }
+    );
+    writeFileSync(join(bin, 'sleep'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+    const result = spawnSync('bash', [join(HOOKS, 'ci-watch.sh')], {
+      input: JSON.stringify({
+        tool_name: 'Bash',
+        tool_input: { command },
+        tool_response: { stdout: '', stderr: output },
+        cwd,
+      }),
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        PATH: `${bin}:${process.env.PATH ?? ''}`,
+        CLAUDE_PROJECT_DIR: project,
+      },
+    });
+    const calls = existsSync(log) ? readFileSync(log, 'utf8') : '';
+    rmSync(log, { force: true });
+    return { status: result.status, stderr: result.stderr, calls };
+  }
+
+  const sha = (ref) =>
+    spawnSync('git', ['-C', repo.dir, 'rev-parse', ref], { encoding: 'utf8' }).stdout.trim();
+
   it('stays silent on a command that starts no CI run', () => {
     const result = spawnSync('bash', [join(HOOKS, 'ci-watch.sh')], {
       input: JSON.stringify({ tool_name: 'Bash', tool_input: { command: 'git status' } }),
@@ -864,5 +1046,206 @@ describe('ci-watch.sh', () => {
     });
     expect(result.status).toBe(0);
     expect(result.stderr).toBe('');
+  });
+
+  it('reports a failed run, and only a failure', () => {
+    const push = { command: 'git push -u origin HEAD' };
+    expect(watch({ ...push, conclusion: 'failure' }).status).toBe(2);
+    expect(watch({ ...push, conclusion: 'timed_out' }).status).toBe(2);
+    expect(watch({ ...push, conclusion: 'success' }).status).toBe(0);
+    expect(watch({ ...push, conclusion: 'cancelled' }).status).toBe(0);
+    // A workflow that skipped itself is not a failure. Staging's own test pins that it
+    // is not a pass either.
+    expect(watch({ ...push, conclusion: 'skipped' }).status).toBe(0);
+  });
+
+  it('watches every run the push started, not only the newest', () => {
+    const push = { command: 'git push -u origin HEAD' };
+    // A deploy check that skips itself is listed first; the real run fails after it.
+    const both = watch({ ...push, runs: { 41: 'skipped', 42: 'failure' } });
+    expect(both.status).toBe(2);
+    expect(both.calls).toContain('run watch 41');
+    expect(both.calls).toContain('run watch 42');
+    expect(both.calls).toContain('actions/runs/42/jobs');
+    expect(both.calls).not.toContain('actions/runs/41/jobs');
+    expect(watch({ ...push, runs: { 41: 'skipped', 42: 'success' } }).status).toBe(0);
+    expect(watch({ ...push, runs: { 41: 'neutral', 42: 'cancelled' } }).status).toBe(0);
+  });
+
+  it('names the branch the push wrote, not the one checked out', () => {
+    repo.git(
+      '-c',
+      'user.name=t',
+      '-c',
+      'user.email=t@t',
+      'commit',
+      '-q',
+      '--allow-empty',
+      '-m',
+      'y'
+    );
+    const sent = sha('HEAD~1');
+    const ranged = watch({
+      command: 'git push origin other',
+      output: `To origin\n   0000000..${sent.slice(0, 7)}  other -> other\nnext line\n`,
+      conclusion: 'failure',
+    });
+    expect(ranged.stderr).toContain(`CI failed on other at ${sent}.`);
+    const created = watch({
+      command: 'git push -u origin HEAD:feat/new',
+      output: " * [new branch]      HEAD -> feat/new\nbranch 'feature' set up\n",
+      conclusion: 'failure',
+    });
+    expect(created.stderr).toContain('CI failed on feat/new at');
+    // With nothing in the output to read, the checked-out branch.
+    expect(watch({ command: 'git push', conclusion: 'failure' }).stderr).toContain(
+      'CI failed on feature at'
+    );
+  });
+
+  it('watches the commit the push sent, not HEAD', () => {
+    repo.git(
+      '-c',
+      'user.name=t',
+      '-c',
+      'user.email=t@t',
+      'commit',
+      '-q',
+      '--allow-empty',
+      '-m',
+      'y'
+    );
+    const sent = sha('HEAD~1');
+    const { calls } = watch({
+      command: 'git push origin older:feature',
+      output: `To origin\n   0000000..${sent.slice(0, 7)}  older -> feature\n`,
+      conclusion: 'success',
+    });
+    expect(calls).toContain(`--commit ${sent}`);
+  });
+
+  it('reads the commit, the source and the branch from the same ref line', () => {
+    repo.git(
+      '-c',
+      'user.name=t',
+      '-c',
+      'user.email=t@t',
+      'commit',
+      '-q',
+      '--allow-empty',
+      '-m',
+      'y'
+    );
+    repo.git('branch', 'other', 'HEAD~1');
+    const older = sha('HEAD~1');
+    // A new branch prints no range: its source ref names the commit, not HEAD.
+    const created = watch({
+      command: 'git push -u origin other',
+      output: ' * [new branch]      other -> other\n',
+      conclusion: 'failure',
+    });
+    expect(created.calls).toContain(`--commit ${older}`);
+    expect(created.stderr).toContain(`CI failed on other at ${older}.`);
+    // Two refs: the last line wins whole, never a commit from one and a branch from another.
+    const both = watch({
+      command: 'git push origin feature other',
+      output: `   0000000..${sha('HEAD').slice(0, 7)}  feature -> feature\n * [new branch]      other -> other\n`,
+      conclusion: 'failure',
+    });
+    expect(both.stderr).toContain(`CI failed on other at ${older}.`);
+  });
+
+  it('stays quiet about a commit this checkout cannot resolve', () => {
+    const result = watch({
+      command: 'cd ../elsewhere && git push',
+      output: '   0000000..abcdef1  main -> main\n',
+      conclusion: 'failure',
+    });
+    expect(result.status).toBe(0);
+    expect(result.calls).toBe('');
+  });
+
+  it('runs in a worktree whose checkout predates the config, and nowhere else', () => {
+    const tree = join(repo.dir, '.wt');
+    repo.git('worktree', 'add', '-q', '--detach', tree, 'HEAD');
+    const unrelated = scratchRepo();
+    try {
+      // The worktree's checkout has no config; the project's does.
+      rmSync(join(tree, '.claude/canon.json'), { force: true });
+      const inTree = watch({
+        command: 'git push origin HEAD:feat/x',
+        cwd: tree,
+        conclusion: 'failure',
+      });
+      expect(inTree.status).toBe(2);
+      // Another repository with no config is not this project's CI.
+      rmSync(join(unrelated.dir, '.claude/canon.json'));
+      const elsewhere = watch({
+        command: 'git push -u origin HEAD',
+        cwd: unrelated.dir,
+        conclusion: 'failure',
+      });
+      expect(elsewhere.status).toBe(0);
+      expect(elsewhere.calls).toBe('');
+    } finally {
+      repo.git('worktree', 'remove', '--force', tree);
+      rmSync(unrelated.dir, { recursive: true, force: true });
+    }
+  });
+
+  it('falls back to HEAD for a new branch, which prints no range', () => {
+    const { calls } = watch({
+      command: 'git push -u origin HEAD',
+      output: ' * [new branch]      HEAD -> feature\n',
+      conclusion: 'success',
+    });
+    expect(calls).toContain(`--commit ${sha('HEAD')}`);
+  });
+
+  it('reads the commit in the directory the command ran in', () => {
+    const other = scratchRepo();
+    try {
+      other.git(
+        '-c',
+        'user.name=t',
+        '-c',
+        'user.email=t@t',
+        'commit',
+        '-q',
+        '--allow-empty',
+        '-m',
+        'z'
+      );
+      const head = spawnSync('git', ['-C', other.dir, 'rev-parse', 'HEAD'], {
+        encoding: 'utf8',
+      }).stdout.trim();
+      const { calls } = watch({
+        command: 'git push -u origin HEAD',
+        cwd: other.dir,
+        project: repo.dir,
+        conclusion: 'success',
+      });
+      expect(calls).toContain(`--commit ${head}`);
+    } finally {
+      rmSync(other.dir, { recursive: true, force: true });
+    }
+  });
+
+  it('skips an up-to-date push, unless the same call opened a pull request', () => {
+    const output = 'Everything up-to-date\n';
+    expect(watch({ command: 'git push', output, conclusion: 'failure' }).calls).toBe('');
+    const opened = watch({
+      command: 'git push -u origin HEAD && gh pr create --fill',
+      output,
+      conclusion: 'failure',
+    });
+    expect(opened.status).toBe(2);
+  });
+
+  it('stays silent outside a canon project', () => {
+    rmSync(join(repo.dir, '.claude/canon.json'));
+    const result = watch({ command: 'git push -u origin HEAD', conclusion: 'failure' });
+    expect(result.status).toBe(0);
+    expect(result.calls).toBe('');
   });
 });

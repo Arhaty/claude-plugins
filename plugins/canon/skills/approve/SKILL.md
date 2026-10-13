@@ -32,9 +32,13 @@ wrong and what would fix it.
   `docs/specs/NNN-*.md` this branch adds, committed or not:
 
   ```bash
-  { git diff --name-only origin/<integration>...HEAD -- 'docs/specs/[0-9]*.md'
-    git ls-files --others --modified --exclude-standard -- 'docs/specs/[0-9]*.md'; } | sort -u
+  { git diff --name-only --diff-filter=A --no-renames origin/<integration>...HEAD -- 'docs/specs/[0-9]*.md'
+    git diff --name-only --diff-filter=A --no-renames --cached -- 'docs/specs/[0-9]*.md'
+    git ls-files --others --exclude-standard -- 'docs/specs/[0-9]*.md'; } | sort -u
   ```
+
+  Added, not edited: an uncommitted edit to another spec, such as its status line, is not this
+  branch's spec. `--no-renames` keeps a renumbered spec in the list as added.
 
   None: say so and offer `/canon:define`. Never write one: approving a spec you wrote in the same
   breath approves nothing. More than one is two concerns on one branch: name them and stop.

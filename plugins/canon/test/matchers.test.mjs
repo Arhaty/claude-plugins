@@ -13,6 +13,7 @@ import {
   commandSkeleton,
   mergeTargets,
   mergesIn,
+  invocations,
   prCalls,
   prDetails,
   prFiles,
@@ -677,7 +678,7 @@ describe('prDetails and prFiles', () => {
       '--paginate',
       'repos/{owner}/{repo}/pulls/5/files?per_page=100',
       '--jq',
-      '.[].filename',
+      '.[] | .filename, (.previous_filename // empty)',
     ]);
     prFiles({ number: 5, url: 'https://github.com/o/r/pull/5' }, { exec });
     expect(calls[1]?.[3]).toBe('repos/o/r/pulls/5/files?per_page=100');
@@ -997,6 +998,38 @@ describe('prCalls', () => {
     expect(prCalls('gh pr -R o/r ready 9', ['ready'])[0]?.positionals).toEqual(['9']);
     const [call] = prCalls('ALLOW_UNDECIDED_MERGE=1 gh pr create --fill', ['create']);
     expect(call?.env.ALLOW_UNDECIDED_MERGE).toBe('1');
+  });
+
+  it('marks every call after a cd as one whose directory is unknown', () => {
+    const known = (command) =>
+      invocations(command).map(({ argv, dirKnown }) => `${argv[0]}:${dirKnown}`);
+    expect(known('gh pr create; cd x; gh pr create')).toEqual(['gh:true', 'cd:true', 'gh:false']);
+    for (const command of [
+      'cd x && gh pr create',
+      'cd -- x && gh pr create',
+      '(cd x) && gh pr create',
+      'bash -c "cd /x" && gh pr create',
+      'out=$(cd /x; pwd); gh pr create',
+      'eval cd /x; gh pr create',
+      '{ cd x; gh pr create; }',
+      'if cd x; then gh pr create; fi',
+      'case a in a) cd x;; esac; gh pr create',
+      '(case a in a) ;; esac; cd /x); gh pr create',
+      'false &&\ncd /x\ngh pr create',
+      'cd x && true & gh pr create',
+      'command cd x; gh pr create',
+      'builtin cd x; gh pr create',
+      'pushd x; gh pr create',
+    ]) {
+      expect(
+        prCalls(command, ['create']).map((call) => call.dirKnown),
+        command
+      ).toEqual([false]);
+    }
+    // A quoted mention of cd is text, not a cd.
+    expect(prCalls('git commit -m "fix cd handling" && gh pr create', ['create'])[0].dirKnown).toBe(
+      true
+    );
   });
 });
 

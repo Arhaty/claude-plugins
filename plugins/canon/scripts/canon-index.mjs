@@ -66,8 +66,16 @@ const CLAIM_OPENS = /^[ \t]*(?:[-*] )?\*\*/;
 /** `***` and its kin are a horizontal rule, which `CLAIM_OPENS` would otherwise read as a claim. */
 const THEMATIC_BREAK = /^\s*(?:\*\s*){3,}$/;
 
-/** What ends a paragraph: a blank line, a heading, a new list item, or a table. */
+/** What ends a paragraph: a blank line, a heading, a new list item, a table, or a code fence. */
 const ENDS_CLAIM = /^\s*$|^#|^[ \t]*[-*] |^\|/;
+
+/**
+ * A code fence line: its run of backticks or tildes, and what follows. A fence closes
+ * only on the character it opened with, at least as many of them, and nothing after,
+ * so a shorter fence inside a longer one is part of the example. A backtick run with
+ * another backtick after it on the line is an inline code span, not a fence.
+ */
+const FENCE = /^\s*(`{3,}(?=[^`]*$)|~{3,})(.*)$/;
 
 /** `|---|---|` is a table's underline, not a row of it. */
 const SEPARATOR_ROW = /^\|[\s:|-]+\|$/;
@@ -85,12 +93,31 @@ export function domainFiles(canon) {
  * A claim opens with `**` at the start of a line and closes with the next `**`, which
  * is often on a later line, so the claim is joined whole rather than cut mid-sentence.
  */
-export function extract(name, source) {
+export function extract(name, source, unclosed = new Set()) {
   const lines = source.split('\n');
   const out = [];
+  let fence = null;
+  let opened = -1;
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i] ?? '';
+
+    // An example inside a code fence is illustration, never a rule or a row of reference data.
+    const marker = unclosed.has(i) ? null : FENCE.exec(line);
+    if (fence === null && marker) {
+      fence = marker[1];
+      opened = i;
+      continue;
+    }
+    if (fence !== null) {
+      const closes =
+        marker &&
+        marker[1][0] === fence[0] &&
+        marker[1].length >= fence.length &&
+        marker[2].trim() === '';
+      if (closes) fence = null;
+      continue;
+    }
 
     if (line.startsWith('|')) {
       if (!SEPARATOR_ROW.test(line)) out.push(`${name}: ${line}`);
@@ -107,13 +134,18 @@ export function extract(name, source) {
     while (
       !/\*\*.+\*\*/.test(claim) &&
       i + 1 < lines.length &&
-      !ENDS_CLAIM.test(lines[i + 1] ?? '')
+      !ENDS_CLAIM.test(lines[i + 1] ?? '') &&
+      !FENCE.test(lines[i + 1] ?? '')
     ) {
       claim = `${claim} ${(lines[++i] ?? '').trim()}`;
     }
     out.push(`${name}: ${claim}`);
   }
 
+  // A fence that never closes is a stray line, not a block: read the file again with
+  // it as text. Hiding every rule below it would leave the review checking nothing
+  // there while the run stays green.
+  if (fence !== null) return extract(name, source, new Set([...unclosed, opened]));
   return out;
 }
 

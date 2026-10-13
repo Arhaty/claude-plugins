@@ -1,6 +1,6 @@
 #!/bin/bash
 # After a command that starts a CI run, watch the GitHub Actions run for the
-# current commit and, if it fails, exit 2 with the failing log on stderr. Exit 2
+# commit it pushed and, if it fails, exit 2 with the failing log on stderr. Exit 2
 # from an asyncRewake hook wakes Claude with that output, so a red run lands in
 # context instead of waiting to be noticed. Wire to PostToolUse on Bash with
 # "asyncRewake": true.
@@ -27,14 +27,23 @@
 input=$(cat)
 
 # Node rather than jq: every hook here already needs it, and a missing jq read every command as
-# empty and switched the watcher off without a word. Prints the command, then on a second line
-# whether the output says nothing was pushed.
+# empty and switched the watcher off without a word. Prints the command; whether the output says
+# nothing was pushed; the directory the command ran in; and, from the last ref git reported, the
+# commit it sent (`old..new  src -> dst`, empty for a `[new branch]` line), its source ref and the
+# branch it wrote. All three come from one line. The output is JSON-encoded here, so a newline is
+# a backslash.
 read_payload='let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{const p=JSON.parse(s);
 const out=JSON.stringify(p.tool_response??"");
-process.stdout.write((p.tool_input?.command??"").replace(/\n/g," ")+"\n"+(/Everything up-to-date/.test(out)?"1":"0"))}catch{}})'
+const ref=[...out.matchAll(/(?:\b[0-9a-f]{7,40}\.\.\.?([0-9a-f]{7,40})|\[new branch\])\s+([^\s\\]+) -> ([^\s\\]+)/g)].at(-1)??[];
+const one=(v)=>String(v??"").replace(/\n/g," ");
+process.stdout.write([one(p.tool_input?.command),/Everything up-to-date/.test(out)?"1":"0",one(p.cwd),ref[1]??"",ref[2]??"",ref[3]??""].join("\n"))}catch{}})'
 parsed=$(printf '%s' "$input" | node -e "$read_payload" 2>/dev/null)
-cmd=$(printf '%s' "$parsed" | head -n 1)
+cmd=$(printf '%s' "$parsed" | sed -n 1p)
 up_to_date=$(printf '%s' "$parsed" | sed -n 2p)
+cwd=$(printf '%s' "$parsed" | sed -n 3p)
+sent=$(printf '%s' "$parsed" | sed -n 4p)
+src=$(printf '%s' "$parsed" | sed -n 5p)
+dst=$(printf '%s' "$parsed" | sed -n 6p)
 
 case "$cmd" in
   *"git push"*) ;;
@@ -43,14 +52,42 @@ case "$cmd" in
 esac
 
 # A push that moved nothing starts no run, and the newest run for the SHA is an old one.
-[ "$up_to_date" = "1" ] && exit 0
+# Unless the same call also opened a pull request, which starts a run of its own.
+case "$cmd" in
+  *"gh pr create"*) ;;
+  *) [ "$up_to_date" = "1" ] && exit 0 ;;
+esac
 
 command -v gh >/dev/null 2>&1 || exit 0
-cd "${CLAUDE_PROJECT_DIR:-.}" 2>/dev/null || exit 0
-[ -f .claude/canon.json ] || exit 0
+# The directory the command ran in, which may be a worktree or another checkout: reading `HEAD`
+# in the project directory watched a commit nobody pushed.
+cd "${cwd:-${CLAUDE_PROJECT_DIR:-.}}" 2>/dev/null || exit 0
+top=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0
+# A canon project: the checkout the command ran in has the config, or it is a worktree of the
+# session's project, which does (a worktree cut from a branch that predates the config). A push
+# from any other repository is not this project's CI.
+common=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)
+project_common=$(git -C "${CLAUDE_PROJECT_DIR:-/nonexistent}" rev-parse --path-format=absolute \
+  --git-common-dir 2>/dev/null)
+[ -f "$top/.claude/canon.json" ] ||
+  { [ -n "$common" ] && [ "$common" = "$project_common" ] &&
+    [ -f "$CLAUDE_PROJECT_DIR/.claude/canon.json" ]; } ||
+  exit 0
 
-sha=$(git rev-parse HEAD 2>/dev/null) || exit 0
-branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null)
+# What the push sent, from the line git printed: `git push origin other-branch` sends a commit
+# that is not `HEAD`. A new branch prints no range, so its source ref names the commit. A commit
+# this checkout cannot resolve was pushed from somewhere else (`cd ../other && git push`): stay
+# quiet rather than watch the wrong one. With no ref line at all, `HEAD`.
+if [ -n "$sent" ]; then
+  sha=$(git rev-parse --verify -q "$sent^{commit}" 2>/dev/null) || exit 0
+elif [ -n "$src" ]; then
+  sha=$(git rev-parse --verify -q "$src^{commit}" 2>/dev/null) || exit 0
+else
+  sha=$(git rev-parse HEAD 2>/dev/null) || exit 0
+fi
+# The branch the push wrote, which `git push origin feature` from `main` is not `HEAD`'s.
+branch=${dst#refs/heads/}
+[ -n "$branch" ] || branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null)
 
 # GitHub takes a few seconds to register the run. A command that triggers nothing
 # is normal — a push to a branch with no pull request starts no run —
@@ -61,47 +98,66 @@ branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null)
 # result as this push's. A refused push and a `gh pr create` for an already-pushed SHA both start
 # nothing, and the time filter is what keeps them quiet.
 since=$(node -e 'process.stdout.write(new Date(Date.now()-60000).toISOString().replace(/\.\d+Z$/,"Z"))')
-id=""
+list_runs() {
+  gh run list --commit "$sha" --limit 20 --json databaseId,conclusion,createdAt \
+    --jq "map(select(.conclusion != \"skipped\" and .createdAt >= \"$since\")) | .[].databaseId" 2>/dev/null
+}
+ids=""
 for _ in $(seq 1 20); do
-  id=$(gh run list --commit "$sha" --limit 10 --json databaseId,conclusion,createdAt \
-        --jq "map(select(.conclusion != \"skipped\" and .createdAt >= \"$since\")) | .[0].databaseId // empty" 2>/dev/null)
-  [ -n "$id" ] && break
+  ids=$(list_runs)
+  [ -n "$ids" ] && break
   sleep 3
 done
-[ -n "$id" ] || exit 0
+[ -n "$ids" ] || exit 0
+# Workflows on one push register a few seconds apart; read once more for the stragglers.
+sleep 5
+ids=$(printf '%s\n%s\n' "$ids" "$(list_runs)" | grep -E '^[0-9]+$' | sort -u)
 
-gh run watch "$id" --exit-status --interval 10 >/dev/null 2>&1 && exit 0
-
-# `--exit-status` is non-zero for every conclusion that is not success, and
-# cancelled is one of them. A workflow with cancel-in-progress on pull requests
-# cancels the first of two pull-request events inside a minute by design, and
-# reporting that as a failure is noise. The later run is already being watched by
-# its own invocation, so there is nothing to say about the run it superseded.
+# **Every run, not the newest.** A workflow that skips itself, such as a deploy check on a
+# branch with no deployment, is listed with no conclusion yet, so the filter above cannot
+# drop it. Watching only the newest run watched that one, saw it skip, and never looked at
+# the run that failed.
 #
-# Only `cancelled` is forgiven. `timed_out` still reports: it is a real failure
-# wearing a softer word. `skipped` is filtered out above rather than forgiven
-# here, which is the narrower treatment of the two: a run that was never a
-# candidate cannot mask a later real one, whereas forgiving the conclusion here
-# would silence a genuine skip on the run this hook actually chose to watch.
-conclusion=$(gh run view "$id" --json conclusion --jq '.conclusion' 2>/dev/null)
-[ "$conclusion" = "cancelled" ] && exit 0
+# `--exit-status` is non-zero for every conclusion that is not success. Three of those are
+# not failures:
+#
+# - `cancelled`: a workflow with cancel-in-progress on pull requests cancels the first of two
+#   pull-request events inside a minute by design, and the later run is watched by its own
+#   invocation.
+# - `skipped` and `neutral`: the workflow chose not to run, or not to judge.
+#
+# None of them is a pass either: this hook reports failures and nothing else, and
+# `/canon:staging` merges only when no check on the head is pending or failing.
+# `timed_out` reports: it is a real failure wearing a softer word.
+failed=""
+for id in $ids; do
+  gh run watch "$id" --exit-status --interval 10 >/dev/null 2>&1 && continue
+  conclusion=$(gh run view "$id" --json conclusion --jq '.conclusion' 2>/dev/null)
+  case "$conclusion" in
+    cancelled | skipped | neutral) ;;
+    *) failed="$failed $id" ;;
+  esac
+done
+[ -n "$failed" ] || exit 0
 
 # The job tree and annotations say which step broke and why. The raw log is
 # mostly runner noise, so it goes in trimmed and last. A job's id is its
 # check run's id, which is where its annotations live.
 {
   echo "CI failed on ${branch} at ${sha}."
-  echo
-  gh api "repos/{owner}/{repo}/actions/runs/$id/jobs" --jq '.jobs[]
-    | "\(.name): \(.conclusion // .status)",
-      (.steps[]? | select(.conclusion == "failure") | "  failed step: \(.name)")' 2>&1
-  for job in $(gh api "repos/{owner}/{repo}/actions/runs/$id/jobs" \
-      --jq '.jobs[] | select(.conclusion == "failure") | .id' 2>/dev/null); do
-    gh api "repos/{owner}/{repo}/check-runs/$job/annotations" \
-      --jq '.[] | "  \(.annotation_level) \(.path):\(.start_line) \(.message)"' 2>&1
+  for id in $failed; do
+    echo
+    gh api "repos/{owner}/{repo}/actions/runs/$id/jobs" --jq '.jobs[]
+      | "\(.name): \(.conclusion // .status)",
+        (.steps[]? | select(.conclusion == "failure") | "  failed step: \(.name)")' 2>&1
+    for job in $(gh api "repos/{owner}/{repo}/actions/runs/$id/jobs" \
+        --jq '.jobs[] | select(.conclusion == "failure") | .id' 2>/dev/null); do
+      gh api "repos/{owner}/{repo}/check-runs/$job/annotations" \
+        --jq '.[] | "  \(.annotation_level) \(.path):\(.start_line) \(.message)"' 2>&1
+    done
+    echo
+    echo "Tail of the failing log:"
+    gh run view "$id" --log-failed 2>&1 | tail -30
   done
-  echo
-  echo "Tail of the failing log:"
-  gh run view "$id" --log-failed 2>&1 | tail -30
 } >&2
 exit 2

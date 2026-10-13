@@ -95,13 +95,26 @@ try {
   OWNER = owner;
   BOTH = `${branches.integration}\` and \`${branches.production}`;
 
+  /**
+   * **Every read shares one deadline inside the hook's 15 seconds.** A hook that times
+   * out is non-blocking, so a hung git would let the push through. A read that runs out
+   * of time refuses the push: an empty answer would read as "not protected".
+   */
+  const deadline = Date.now() + 10_000;
   const git = (dir, ...args) => {
     try {
       return execFileSync('git', ['-C', dir, ...args], {
         encoding: 'utf8',
         stdio: ['ignore', 'pipe', 'ignore'],
+        timeout: Math.max(1, deadline - Date.now()),
       }).trim();
-    } catch {
+    } catch (error) {
+      if (error?.code === 'ETIMEDOUT' || Date.now() >= deadline) {
+        fail(
+          push.targets.join('`, `') || 'an unknown branch',
+          `\`git ${args.join(' ')}\`, which did not answer in time. Name the branch literally`
+        );
+      }
       return '';
     }
   };
@@ -164,7 +177,26 @@ try {
       key.toLowerCase() in one.config
         ? [one.config[key.toLowerCase()]]
         : git(dir, 'config', '--get-all', key).split('\n').filter(Boolean);
+    // After a `cd` this cannot follow, nothing here knows which checkout's `HEAD`
+    // or upstream the push reads.
+    if (!one.dirKnown && (one.bare || one.targets.includes('HEAD'))) {
+      fail(
+        push.targets.join('`, `') || 'an unknown branch',
+        'a `cd` earlier in the command, so this hook cannot tell which checkout reads `HEAD` and the upstream. Run the `cd` in its own call, or name the branch literally'
+      );
+    }
     const current = git(dir, 'symbolic-ref', '--short', '-q', 'HEAD');
+
+    // `HEAD` and a bare push both mean the checked-out branch. When there is none to
+    // read (a detached `HEAD`, a `-C` naming no repository, or a git read that timed
+    // out), comparing `''` against the protected set answers "not protected" about a
+    // push that may land on a protected branch.
+    if (!current && (one.bare || one.targets.includes('HEAD'))) {
+      fail(
+        push.targets.join('`, `') || 'an unknown branch',
+        `\`HEAD\` in \`${dir}\`, which names no branch this hook can read. Name the branch literally`
+      );
+    }
 
     // `HEAD` means the current branch, which is how a feature branch is meant to be
     // pushed and must not be refused on the strength of the word alone.

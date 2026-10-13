@@ -591,14 +591,22 @@ const SHELL_VALUES = new Set(['-o', '+o', '-O', '+O', '--rcfile', '--init-file']
 const MAX_DEPTH = 4;
 
 /**
- * Every command the string runs, each as `{ argv, env }`: `argv[0]` is the bare
- * program name with any path dropped, and `env` holds the inline assignments that
- * preceded it, `GH_REPO=x gh ...` included.
+ * Every command the string runs, each as `{ argv, env, appended, dirKnown }`:
+ * `argv[0]` is the bare program name with any path dropped, and `env` holds the
+ * inline assignments that preceded it, `GH_REPO=x gh ...` included.
  *
  * `inherited` carries those assignments into a command line a wrapper runs, so
  * `GH_REPO=x bash -c "gh pr merge 5"` still names the other repository.
+ *
+ * `dirKnown` is false for every command after a `cd`, `pushd` or `popd` anywhere
+ * earlier in the call, nested shells included: the command may then run somewhere
+ * other than the call's directory, and no hook models where. Working out where
+ * bash keeps a directory is a list of cases with no end; Claude Code's own shell
+ * keeps its directory between calls, so a `cd` in its own call reaches the hooks
+ * as the next payload's `cwd`. `moved` is shared with the commands a wrapper or a
+ * substitution runs, so a `cd` inside one counts for everything after it.
  */
-export function invocations(command, depth = 0, inherited = {}) {
+export function invocations(command, depth = 0, inherited = {}, moved = { cd: false }) {
   if (typeof command !== 'string' || depth > MAX_DEPTH) return [];
 
   // `export GH_REPO=x; gh pr merge 5` sets it for every command after it. A bare
@@ -609,7 +617,9 @@ export function invocations(command, depth = 0, inherited = {}) {
   for (const { words, stdin, substitutions, pipedFrom } of simpleCommands(command)) {
     // A substitution runs with what was exported before it, so
     // `export GH_REPO=x; out="$(gh pr merge 5)"` still names the other repository.
-    for (const inner of substitutions) found.push(...invocations(inner, depth + 1, shared));
+    for (const inner of substitutions) {
+      found.push(...invocations(inner, depth + 1, shared, moved));
+    }
 
     const declaration = ['export', 'declare', 'typeset', 'readonly'].includes(words[0]);
     if (declaration || words.every((word) => ASSIGNMENT.test(word))) {
@@ -625,7 +635,7 @@ export function invocations(command, depth = 0, inherited = {}) {
       continue;
     }
     const piped = printed(pipedFrom);
-    found.push(...unwrap(words, piped === null ? stdin : [...stdin, piped], depth, shared));
+    found.push(...unwrap(words, piped === null ? stdin : [...stdin, piped], depth, shared, moved));
   }
 
   return found;
@@ -645,7 +655,10 @@ function printed(command) {
   return null;
 }
 
-function unwrap(words, stdin, depth, inherited) {
+/** The builtins that change the directory, after which no hook knows where a command runs. */
+const CHANGES_DIR = new Set(['cd', 'pushd', 'popd']);
+
+function unwrap(words, stdin, depth, inherited, moved = { cd: false }) {
   const env = { ...inherited };
   const argv = [...words];
   // `xargs` appends words read from its input, so what it runs is not all here.
@@ -685,7 +698,7 @@ function unwrap(words, stdin, depth, inherited) {
         if (split) {
           argv.shift();
           const line = split[1] || argv.shift() || '';
-          return invocations([line, ...argv].join(' '), depth + 1, env);
+          return invocations([line, ...argv].join(' '), depth + 1, env, moved);
         }
         if (wrapperValues.has(argv.shift())) argv.shift();
       }
@@ -707,16 +720,18 @@ function unwrap(words, stdin, depth, inherited) {
           break;
         }
       }
-      if (command && script !== undefined) return invocations(script, depth + 1, env);
+      if (command && script !== undefined) return invocations(script, depth + 1, env, moved);
       // `bash <<EOF`, `sh -s <<EOF` and `bash <<< "..."` run their input.
       if ((fromStdin || script === undefined) && stdin.length > 0) {
-        return invocations(stdin.join('\n'), depth + 1, env);
+        return invocations(stdin.join('\n'), depth + 1, env, moved);
       }
     }
 
-    if (name === 'eval') return invocations(argv.slice(1).join(' '), depth + 1, env);
+    if (name === 'eval') return invocations(argv.slice(1).join(' '), depth + 1, env, moved);
 
-    return [{ argv: [name, ...argv.slice(1)], env, appended }];
+    const dirKnown = !moved.cd;
+    if (CHANGES_DIR.has(name) || (name === 'builtin' && CHANGES_DIR.has(argv[1]))) moved.cd = true;
+    return [{ argv: [name, ...argv.slice(1)], env, appended, dirKnown }];
   }
 }
 
@@ -799,11 +814,13 @@ const PR_VALUES = {
  *
  * `require-canon.mjs` reads this rather than `prInvocations` because it needs what
  * the skeleton cannot give: `-B main` and `--base "main"` as well as `--base main`,
- * a real selector, and a bypass set on the command itself.
+ * a real selector, and a bypass set on the command itself. `dirKnown` is false
+ * after a `cd` earlier in the call, when nothing says which repository or branch
+ * the call acts on.
  */
 export function prCalls(command, subcommands) {
   const found = [];
-  for (const { argv, env, appended } of invocations(command)) {
+  for (const { argv, env, appended, dirKnown } of invocations(command)) {
     if (argv[0] !== 'gh' || argv[1] !== 'pr') continue;
     // `-R` is a group flag and can come first: `gh pr -R o/r merge 5`.
     const rest = argv.slice(2);
@@ -813,7 +830,7 @@ export function prCalls(command, subcommands) {
     if (!subcommands.includes(subcommand)) continue;
     const args = [...rest.slice(0, at), ...rest.slice(at + 1)];
     const { positionals, flags, pairs } = parseArgs(args, PR_VALUES[subcommand] ?? new Set());
-    found.push({ subcommand, positionals, flags, pairs, env, appended });
+    found.push({ subcommand, positionals, flags, pairs, env, appended, dirKnown });
   }
   return found;
 }
@@ -1190,14 +1207,21 @@ export function mergesIn(payload) {
 
 /**
  * When every `gh` read this hook makes has to be done: 15 seconds from start,
- * inside the 20 the hooks get in `.claude/settings.json`. A hook that runs past
+ * inside the 20 the hooks get in `hooks/hooks.json`. A hook that runs past
  * its timeout is treated as non-blocking, so a hung `gh` would let the merge
  * through `protect-merge.mjs`. Killed here, the read throws and each hook gives
  * its own answer to an unreadable pull request. One deadline rather than one
  * timeout per read, so a chained merge cannot add them up past 20.
  */
 const DEADLINE = Date.now() + 15_000;
-const timeout = () => Math.max(1, DEADLINE - Date.now());
+
+/**
+ * Milliseconds left before the deadline, never below 1. Exported so
+ * `require-canon.mjs` bounds its own git reads and its fetch by the same clock
+ * rather than adding a timeout of its own per call.
+ */
+export const remaining = () => Math.max(1, DEADLINE - Date.now());
+const timeout = remaining;
 
 /** The fields both merge hooks read, renamed to the shape they were written against. */
 const PR_FIELDS = '{baseRefName: .base.ref, number, url: .html_url}';
@@ -1302,7 +1326,9 @@ export function prFiles(pr, { cwd, exec } = {}) {
         // past the hook's timeout, which lets the merge through unchecked.
         `repos/${owner}/${repo}/pulls/${pr.number}/files?per_page=100`,
         '--jq',
-        '.[].filename',
+        // A renamed file under its old path too: moving a file out of a governed
+        // directory changes that directory.
+        '.[] | .filename, (.previous_filename // empty)',
       ],
       { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: timeout() }
     );
