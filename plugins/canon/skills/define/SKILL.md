@@ -32,9 +32,16 @@ and nothing else.
 
    - **A spec number** (`/canon:define 043`, optionally with feedback) is a revision round on
      `docs/specs/043-*.md`.
-   - **The current branch already adds an active spec** (`git diff --name-only --diff-filter=A
---no-renames origin/<integration>...HEAD -- 'docs/specs/[0-9]*.md'` plus untracked files there) is a
-     revision round on that spec, whatever the argument says.
+   - **The current branch already adds an active spec**, committed, staged or untracked, is a
+     revision round on that spec, whatever the argument says. It is the same lookup
+     `/canon:approve` makes:
+
+     ```bash
+     { git diff --name-only --diff-filter=A --no-renames origin/<integration>...HEAD -- 'docs/specs/[0-9]*.md'
+       git diff --name-only --diff-filter=A --no-renames --cached -- 'docs/specs/[0-9]*.md'
+       git ls-files --others --exclude-standard -- 'docs/specs/[0-9]*.md'; } | sort -u
+     ```
+
    - **Anything else** is a new spec. Derive a kebab-case slug from the argument, three to five
      words, naming the change.
 
