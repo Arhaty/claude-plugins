@@ -88,7 +88,7 @@ resolve a conflict by taking one side wholesale.
 active `docs/specs/NNN-*.md` it adds:
 
 ```bash
-git diff --name-only origin/<integration>...HEAD -- 'docs/specs/[0-9]*.md'
+git diff --name-only --diff-filter=A origin/<integration>...HEAD -- 'docs/specs/[0-9]*.md'
 ```
 
 None means a branch with no spec, which a small fix is: carry on and say so. Otherwise set the

@@ -32,7 +32,7 @@ and nothing else.
 
    - **A spec number** (`/canon:define 043`, optionally with feedback) is a revision round on
      `docs/specs/043-*.md`.
-   - **The current branch already adds an active spec** (`git diff --name-only
+   - **The current branch already adds an active spec** (`git diff --name-only --diff-filter=A
 origin/<integration>...HEAD -- 'docs/specs/[0-9]*.md'` plus untracked files there) is a
      revision round on that spec, whatever the argument says.
    - **Anything else** is a new spec. Derive a kebab-case slug from the argument, three to five

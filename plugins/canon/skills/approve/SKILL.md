@@ -32,7 +32,7 @@ wrong and what would fix it.
   `docs/specs/NNN-*.md` this branch adds, committed or not:
 
   ```bash
-  { git diff --name-only origin/<integration>...HEAD -- 'docs/specs/[0-9]*.md'
+  { git diff --name-only --diff-filter=A origin/<integration>...HEAD -- 'docs/specs/[0-9]*.md'
     git ls-files --others --modified --exclude-standard -- 'docs/specs/[0-9]*.md'; } | sort -u
   ```
 
