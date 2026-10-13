@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# A canon project with a Linear tracker, team ABC, and issue ABC-8 specced on its branch and not yet approved.
-# Linear is a stub: the project's settings preload it into every node process, it answers
-# from the issue below, and it logs every write to .git/linear-stub/writes.log.
+# A canon project with a tracker, team ABC, and issue ABC-8 specced on its branch and not yet approved.
+# The tracker is canon's file-backed fixture provider: no key, no network, and every write lands
+# in .claude/tracker-fixture.json, where a grader or a reader can check it.
 set -euo pipefail
 git init -q -b main
 git config user.name Eval
 git config user.email eval@example.com
-mkdir -p .claude docs/canon docs/specs/archive src/auth .git/linear-stub
+mkdir -p .claude docs/canon docs/specs/archive src/auth
 cat > .claude/canon.json <<'JSON'
 {
   "version": 1,
@@ -17,7 +17,7 @@ cat > .claude/canon.json <<'JSON'
   "formatFile": null,
   "urls": { "preview": null, "staging": null, "production": null },
   "tracker": {
-    "provider": "linear",
+    "provider": "fixture",
     "team": "ABC",
     "statuses": { "ready": "Todo", "spec": "In Spec", "approved": "Approved", "building": "In Progress", "blocked": "Blocked", "staging": "In Staging", "production": "Done" }
   }
@@ -50,41 +50,20 @@ MD
 printf '# NNN — <Change name>\n\n**Status:** draft\n\n## TL;DR\n' > docs/specs/_TEMPLATE.md
 echo 'export const MAX_FAILED_ATTEMPTS = 5;' > src/auth/limit.ts
 
-cat > .git/linear-stub/issue.json <<'JSON'
-{ "id": "uuid-8", "identifier": "ABC-8", "title": "Rate-limit password reset requests",
-  "description": "Limit password reset requests per account.", "state": "In Spec" }
-JSON
-cat > .git/linear-stub/stub.mjs <<'JS'
-import { appendFileSync, readFileSync } from 'node:fs';
-const dir = new URL('./', import.meta.url);
-const issue = JSON.parse(readFileSync(new URL('issue.json', dir), 'utf8'));
-const names = ['Todo', 'In Spec', 'Approved', 'In Progress', 'Blocked', 'In Staging', 'Done'];
-const reply = (data) => new Response(JSON.stringify({ data }), { status: 200 });
-globalThis.fetch = async (_, init) => {
-  const { query, variables } = JSON.parse(init.body);
-  const op = /^\s*(?:query|mutation)\s+(\w+)/.exec(query)?.[1];
-  const node = {
-    id: issue.id, identifier: issue.identifier, title: issue.title, description: issue.description,
-    url: `https://linear.app/example/issue/${issue.identifier}`, team: { key: 'ABC' },
-    state: { name: issue.state }, labels: { nodes: [] },
-  };
-  if (/^(SetState|Comment|Label)$/.test(op)) {
-    appendFileSync(new URL('writes.log', dir), `${op} ${JSON.stringify(variables)}\n`);
+cat > .claude/tracker-fixture.json <<'JSON'
+{
+  "states": ["Todo", "In Spec", "Approved", "In Progress", "Blocked", "In Staging", "Done"],
+  "labels": ["domain-auth"],
+  "issues": {
+    "ABC-8": {
+      "title": "Rate-limit password reset requests",
+      "description": "Limit password reset requests per account.",
+      "state": "In Spec",
+      "labels": [],
+      "comments": []
+    }
   }
-  switch (op) {
-    case 'Issue': return reply({ issue: variables.id === issue.identifier ? node : null });
-    case 'Comments': return reply({ issue: { comments: { nodes: [], pageInfo: { hasNextPage: false } } } });
-    case 'States': return reply({ workflowStates: { nodes: names.map((name, i) => ({ id: `s${i}`, name, type: 'started', position: i })) } });
-    case 'SetState': return reply({ issueUpdate: { success: true } });
-    case 'Comment': return reply({ commentCreate: { success: true } });
-    case 'Labels': return reply({ issueLabels: { nodes: [] } });
-    case 'Label': return reply({ issueUpdate: { success: true, issue: node } });
-    default: return reply(null);
-  }
-};
-JS
-cat > .claude/settings.json <<JSON
-{ "env": { "LINEAR_API_KEY": "lin_api_eval", "NODE_OPTIONS": "--import=$PWD/.git/linear-stub/stub.mjs" } }
+}
 JSON
 
 git add -A

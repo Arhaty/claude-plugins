@@ -12,23 +12,27 @@ execution:
 context:
   scaffold_script: scaffold.sh
 graders:
-  - type: tool_used
+  - name: reads-the-issue
+    type: tool_used
     tool: Bash
-    input_match: 'tracker\.mjs"?\s+issue\s+ABC-7'
+    input_match: 'issue\s+"?ABC-7\b'
     min: 1
-  - type: tool_used
+  - name: no-move-or-commit
+    type: tool_used
     tool: Bash
     input_match: 'set-state|git\b[^"]*\b(?:checkout -b|switch -c|commit|push)\b'
     min: 0
     max: 0
     arm: both
-  - type: tool_used
+  - name: no-spec-written
+    type: tool_used
     tool: Write
     input_match: 'docs/specs/'
     min: 0
     max: 0
     arm: both
-  - type: llm
+  - name: refuses-for-status
+    type: llm
     weight: 3
     focus: last_message
     criteria: >-

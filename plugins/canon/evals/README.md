@@ -18,5 +18,6 @@ Local only: they run Claude on your account and cost money, so CI does not run t
 The cases with a `scaffold.sh` build a throwaway canon project in the eval workspace, so they need
 `--scaffold`, and their skills need `--allow-tools Bash Write Edit`.
 
-The tracker cases stub Linear: their project's `.claude/settings.json` preloads a fake API into
-every `node` process through `NODE_OPTIONS`, so they make no network call and need no key.
+The tracker cases use the `fixture` provider, a tracker held in `.claude/tracker-fixture.json`, so
+they make no network call and need no key. An eval does not apply the scaffolded project's
+`.claude/settings.json` `env`, so a stub cannot be preloaded that way.
