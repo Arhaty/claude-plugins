@@ -69,6 +69,9 @@ const THEMATIC_BREAK = /^\s*(?:\*\s*){3,}$/;
 /** What ends a paragraph: a blank line, a heading, a new list item, or a table. */
 const ENDS_CLAIM = /^\s*$|^#|^[ \t]*[-*] |^\|/;
 
+/** A line that opens or closes a code fence. */
+const FENCE = /^\s*(?:```|~~~)/;
+
 /** `|---|---|` is a table's underline, not a row of it. */
 const SEPARATOR_ROW = /^\|[\s:|-]+\|$/;
 
@@ -88,9 +91,17 @@ export function domainFiles(canon) {
 export function extract(name, source) {
   const lines = source.split('\n');
   const out = [];
+  let fenced = false;
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i] ?? '';
+
+    // An example inside a code fence is illustration, never a rule or a row of reference data.
+    if (FENCE.test(line)) {
+      fenced = !fenced;
+      continue;
+    }
+    if (fenced) continue;
 
     if (line.startsWith('|')) {
       if (!SEPARATOR_ROW.test(line)) out.push(`${name}: ${line}`);
