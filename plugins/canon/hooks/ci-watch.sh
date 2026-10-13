@@ -1,6 +1,6 @@
 #!/bin/bash
 # After a command that starts a CI run, watch the GitHub Actions run for the
-# current commit and, if it fails, exit 2 with the failing log on stderr. Exit 2
+# commit it pushed and, if it fails, exit 2 with the failing log on stderr. Exit 2
 # from an asyncRewake hook wakes Claude with that output, so a red run lands in
 # context instead of waiting to be noticed. Wire to PostToolUse on Bash with
 # "asyncRewake": true.
@@ -27,14 +27,19 @@
 input=$(cat)
 
 # Node rather than jq: every hook here already needs it, and a missing jq read every command as
-# empty and switched the watcher off without a word. Prints the command, then on a second line
-# whether the output says nothing was pushed.
+# empty and switched the watcher off without a word. Prints the command; whether the output says
+# nothing was pushed; the directory the command ran in; and the commit the push sent, from git's
+# `old..new  src -> dst` line, when the output has one.
 read_payload='let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{const p=JSON.parse(s);
 const out=JSON.stringify(p.tool_response??"");
-process.stdout.write((p.tool_input?.command??"").replace(/\n/g," ")+"\n"+(/Everything up-to-date/.test(out)?"1":"0"))}catch{}})'
+const sent=[...out.matchAll(/\b[0-9a-f]{7,40}\.\.\.?([0-9a-f]{7,40})\s+\S+ -> /g)].at(-1)?.[1]??"";
+const one=(v)=>String(v??"").replace(/\n/g," ");
+process.stdout.write([one(p.tool_input?.command),/Everything up-to-date/.test(out)?"1":"0",one(p.cwd),sent].join("\n"))}catch{}})'
 parsed=$(printf '%s' "$input" | node -e "$read_payload" 2>/dev/null)
-cmd=$(printf '%s' "$parsed" | head -n 1)
+cmd=$(printf '%s' "$parsed" | sed -n 1p)
 up_to_date=$(printf '%s' "$parsed" | sed -n 2p)
+cwd=$(printf '%s' "$parsed" | sed -n 3p)
+sent=$(printf '%s' "$parsed" | sed -n 4p)
 
 case "$cmd" in
   *"git push"*) ;;
@@ -43,13 +48,24 @@ case "$cmd" in
 esac
 
 # A push that moved nothing starts no run, and the newest run for the SHA is an old one.
-[ "$up_to_date" = "1" ] && exit 0
+# Unless the same call also opened a pull request, which starts a run of its own.
+case "$cmd" in
+  *"gh pr create"*) ;;
+  *) [ "$up_to_date" = "1" ] && exit 0 ;;
+esac
 
 command -v gh >/dev/null 2>&1 || exit 0
-cd "${CLAUDE_PROJECT_DIR:-.}" 2>/dev/null || exit 0
-[ -f .claude/canon.json ] || exit 0
+# The directory the command ran in, which may be a worktree or another checkout: reading `HEAD`
+# in the project directory watched a commit nobody pushed.
+cd "${cwd:-${CLAUDE_PROJECT_DIR:-.}}" 2>/dev/null || exit 0
+top=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0
+[ -f "$top/.claude/canon.json" ] || exit 0
 
-sha=$(git rev-parse HEAD 2>/dev/null) || exit 0
+# What the push sent, when git printed it: `git push origin other-branch` sends a commit that is
+# not `HEAD`. A new branch prints no range, and then `HEAD` is the best cheap answer.
+sha=""
+[ -n "$sent" ] && sha=$(git rev-parse --verify -q "$sent^{commit}" 2>/dev/null)
+[ -n "$sha" ] || sha=$(git rev-parse HEAD 2>/dev/null) || exit 0
 branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null)
 
 # GitHub takes a few seconds to register the run. A command that triggers nothing
@@ -78,13 +94,17 @@ gh run watch "$id" --exit-status --interval 10 >/dev/null 2>&1 && exit 0
 # reporting that as a failure is noise. The later run is already being watched by
 # its own invocation, so there is nothing to say about the run it superseded.
 #
-# Only `cancelled` is forgiven. `timed_out` still reports: it is a real failure
-# wearing a softer word. `skipped` is filtered out above rather than forgiven
-# here, which is the narrower treatment of the two: a run that was never a
-# candidate cannot mask a later real one, whereas forgiving the conclusion here
-# would silence a genuine skip on the run this hook actually chose to watch.
+# `skipped` is not a failure either. A workflow that runs on the same commit and
+# skips itself (a deploy check on a branch with no deployment) is registered with
+# no conclusion, so the filter above cannot see it coming, and it ends `skipped`.
+# This hook reports failures and nothing else, so it stays quiet. That is not a pass:
+# `/canon:staging` merges only on a successful run for the head commit.
+#
+# `timed_out` still reports: it is a real failure wearing a softer word.
 conclusion=$(gh run view "$id" --json conclusion --jq '.conclusion' 2>/dev/null)
-[ "$conclusion" = "cancelled" ] && exit 0
+case "$conclusion" in
+  cancelled | skipped) exit 0 ;;
+esac
 
 # The job tree and annotations say which step broke and why. The raw log is
 # mostly runner noise, so it goes in trimmed and last. A job's id is its

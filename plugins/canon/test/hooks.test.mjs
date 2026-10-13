@@ -878,6 +878,56 @@ describe('hooks.json', () => {
 });
 
 describe('ci-watch.sh', () => {
+  let repo;
+  let bin;
+  let log;
+
+  beforeEach(() => {
+    repo = scratchRepo();
+    bin = mkdtempSync(join(tmpdir(), 'canon-bin-'));
+    log = join(bin, 'gh.log');
+  });
+  afterEach(() => {
+    rmSync(repo.dir, { recursive: true, force: true });
+    rmSync(bin, { recursive: true, force: true });
+  });
+
+  /**
+   * Run the hook with a stub `gh` that logs every call, finds run 42 for any commit,
+   * and reports `conclusion` for it. `project` is `$CLAUDE_PROJECT_DIR`, which the
+   * payload's `cwd` overrides.
+   */
+  function watch({ command, output = '', cwd = repo.dir, project = repo.dir, conclusion }) {
+    writeFileSync(
+      join(bin, 'gh'),
+      [
+        '#!/bin/sh',
+        `echo "$*" >> '${log}'`,
+        'case "$1 $2" in',
+        '  "run list") echo 42 ;;',
+        `  "run watch") [ '${conclusion}' = success ] ;;`,
+        `  "run view") case "$*" in *--log-failed*) echo log ;; *) echo '${conclusion}' ;; esac ;;`,
+        'esac',
+      ].join('\n'),
+      { mode: 0o755 }
+    );
+    const result = spawnSync('bash', [join(HOOKS, 'ci-watch.sh')], {
+      input: JSON.stringify({
+        tool_name: 'Bash',
+        tool_input: { command },
+        tool_response: { stdout: '', stderr: output },
+        cwd,
+      }),
+      encoding: 'utf8',
+      env: { ...process.env, PATH: `${bin}:${process.env.PATH ?? ''}`, CLAUDE_PROJECT_DIR: project },
+    });
+    const calls = existsSync(log) ? readFileSync(log, 'utf8') : '';
+    return { status: result.status, stderr: result.stderr, calls };
+  }
+
+  const sha = (ref) =>
+    spawnSync('git', ['-C', repo.dir, 'rev-parse', ref], { encoding: 'utf8' }).stdout.trim();
+
   it('stays silent on a command that starts no CI run', () => {
     const result = spawnSync('bash', [join(HOOKS, 'ci-watch.sh')], {
       input: JSON.stringify({ tool_name: 'Bash', tool_input: { command: 'git status' } }),
@@ -885,5 +935,73 @@ describe('ci-watch.sh', () => {
     });
     expect(result.status).toBe(0);
     expect(result.stderr).toBe('');
+  });
+
+  it('reports a failed run, and only a failure', () => {
+    const push = { command: 'git push -u origin HEAD' };
+    expect(watch({ ...push, conclusion: 'failure' }).status).toBe(2);
+    expect(watch({ ...push, conclusion: 'timed_out' }).status).toBe(2);
+    expect(watch({ ...push, conclusion: 'success' }).status).toBe(0);
+    expect(watch({ ...push, conclusion: 'cancelled' }).status).toBe(0);
+    // A workflow that skipped itself is not a failure. Staging's own test pins that it
+    // is not a pass either.
+    expect(watch({ ...push, conclusion: 'skipped' }).status).toBe(0);
+  });
+
+  it('watches the commit the push sent, not HEAD', () => {
+    repo.git('-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '--allow-empty', '-m', 'y');
+    const sent = sha('HEAD~1');
+    const { calls } = watch({
+      command: 'git push origin older:feature',
+      output: `To origin\n   0000000..${sent.slice(0, 7)}  older -> feature\n`,
+      conclusion: 'success',
+    });
+    expect(calls).toContain(`--commit ${sent}`);
+  });
+
+  it('falls back to HEAD for a new branch, which prints no range', () => {
+    const { calls } = watch({
+      command: 'git push -u origin HEAD',
+      output: ' * [new branch]      HEAD -> feature\n',
+      conclusion: 'success',
+    });
+    expect(calls).toContain(`--commit ${sha('HEAD')}`);
+  });
+
+  it('reads the commit in the directory the command ran in', () => {
+    const other = scratchRepo();
+    try {
+      other.git('-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '--allow-empty', '-m', 'z');
+      const head = spawnSync('git', ['-C', other.dir, 'rev-parse', 'HEAD'], {
+        encoding: 'utf8',
+      }).stdout.trim();
+      const { calls } = watch({
+        command: 'git push -u origin HEAD',
+        cwd: other.dir,
+        project: repo.dir,
+        conclusion: 'success',
+      });
+      expect(calls).toContain(`--commit ${head}`);
+    } finally {
+      rmSync(other.dir, { recursive: true, force: true });
+    }
+  });
+
+  it('skips an up-to-date push, unless the same call opened a pull request', () => {
+    const output = 'Everything up-to-date\n';
+    expect(watch({ command: 'git push', output, conclusion: 'failure' }).calls).toBe('');
+    const opened = watch({
+      command: 'git push -u origin HEAD && gh pr create --fill',
+      output,
+      conclusion: 'failure',
+    });
+    expect(opened.status).toBe(2);
+  });
+
+  it('stays silent outside a canon project', () => {
+    rmSync(join(repo.dir, '.claude/canon.json'));
+    const result = watch({ command: 'git push -u origin HEAD', conclusion: 'failure' });
+    expect(result.status).toBe(0);
+    expect(result.calls).toBe('');
   });
 });
