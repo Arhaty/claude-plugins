@@ -45,7 +45,9 @@ Commits carry no Co-authored-by trailer and use the GitHub noreply author email
 
 ## Adding a plugin
 
-1. Create `plugins/<name>/` with `.claude-plugin/plugin.json`, README, CHANGELOG and `test/`.
+1. Create `plugins/<name>/` with `.claude-plugin/plugin.json`, README, `test/` and an empty
+   `CHANGELOG.md`. release-please writes the `# Changelog` title; a title already there ends up
+   as a stray `## Changelog` below the first release.
 2. Add it to `.claude-plugin/marketplace.json`.
 3. Add it to `release-please-config.json` with `"initial-version": "0.1.0"`, and to
    `.release-please-manifest.json` at `0.0.0`. Without `initial-version` the first release is
