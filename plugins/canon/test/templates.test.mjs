@@ -319,12 +319,16 @@ describe('scaffold', () => {
       writeFileSync(answers, JSON.stringify({ tracker: {} }));
       expect(trustCli('--command', 'apiKeyCommand').status).toBe(1);
 
-      // A command that runs a file the repository holds is never approved.
-      writeFileSync(join(root, 'key.sh'), 'echo key\n');
-      writeFileSync(answers, JSON.stringify({ tracker: { apiKeyCommand: ['sh', 'key.sh'] } }));
+      // A command that names the repository, or a relative program, is never approved.
+      writeFileSync(
+        answers,
+        JSON.stringify({ tracker: { apiKeyCommand: ['sh', join(root, 'key.sh')] } })
+      );
       const refused = trustCli('--command', 'apiKeyCommand');
       expect(refused.status).toBe(2);
-      expect(refused.stderr).toMatch(/names key\.sh, a file in this repository/);
+      expect(refused.stderr).toMatch(/names this repository's path/);
+      writeFileSync(answers, JSON.stringify({ tracker: { apiKeyCommand: ['./key.sh'] } }));
+      expect(trustCli('--command', 'apiKeyCommand').stderr).toMatch(/not a relative path/);
     } finally {
       rmSync(home, { recursive: true, force: true });
     }

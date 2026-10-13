@@ -199,10 +199,13 @@ yours, and `/canon:setup` offers your team's real names:
 
 1. `LINEAR_API_KEY` in the environment.
 2. `LINEAR_API_KEY=` in `.env.local` at the project root. Only that key is read. Keep the file
-   ignored by git; setup checks.
+   ignored by git; setup checks, and a `.env.local` the repository commits is never read.
 3. `tracker.apiKeyCommand`, a command that prints the key, such as
-   `["op", "read", "op://Vault/Item/field"]`. It runs with no shell, and only after you approve
-   that exact command in `/canon:setup`, recorded outside the repository like the formatter.
+   `["op", "read", "op://Vault/Item/field"]`. It runs with no shell, from your home directory,
+   and only after you approve that exact command in `/canon:setup`, recorded outside the
+   repository like the formatter. The program is a name found on `PATH` or an absolute path, and
+   the command may not name the repository's own path anywhere: an approval covers the command
+   line, and anything the repository holds could change under it.
 
 The key is never printed, and an API error reports its HTTP status, not the response body.
 

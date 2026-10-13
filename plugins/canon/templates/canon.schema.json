@@ -179,7 +179,7 @@
               "type": "null"
             }
           ],
-          "description": "A command that prints the API key, as an argv list run with no shell, e.g. [\"op\", \"read\", \"op://Vault/Item/field\"]. Tried after LINEAR_API_KEY in the environment and in .env.local. It runs only after the owner approves this exact command for this project in /canon:setup, recorded in ~/.claude/canon/trusted.json like formatFile. null or absent: no command."
+          "description": "A command that prints the API key, as an argv list run with no shell, e.g. [\"op\", \"read\", \"op://Vault/Item/field\"]. Tried after LINEAR_API_KEY in the environment and in an uncommitted .env.local. The program is a name on PATH or an absolute path; the command runs from the home directory and may not name the repository's path. It runs only after the owner approves this exact command for this project in /canon:setup, recorded in ~/.claude/canon/trusted.json like formatFile. null or absent: no command."
         }
       }
     }

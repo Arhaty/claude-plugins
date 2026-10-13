@@ -256,14 +256,27 @@ function trackerErrors(tracker, isText) {
     errors.push('`tracker.labelPrefix` must be a lowercase prefix, e.g. "domain-"');
   }
   const command = tracker.apiKeyCommand;
-  if (
-    command !== undefined &&
-    command !== null &&
-    !(Array.isArray(command) && command.length > 0 && command.every(isText))
-  ) {
-    errors.push('`tracker.apiKeyCommand` must be a non-empty list of argv strings, or null');
+  if (command !== undefined && command !== null) {
+    const problem = keyCommandShape(command);
+    if (problem) errors.push(`\`tracker.apiKeyCommand\` ${problem}, or null`);
   }
   return errors;
+}
+
+/**
+ * What is wrong with the shape of a key command, or `null`. One rule, read by
+ * `validate` and by setup's approval. The program is a bare name, found on `PATH`,
+ * or an absolute path: a relative one would resolve wherever the command runs.
+ */
+export function keyCommandShape(argv) {
+  const isText = (value) => typeof value === 'string' && value.trim() !== '';
+  if (!Array.isArray(argv) || argv.length === 0 || !argv.every(isText)) {
+    return 'must be a non-empty list of argv strings';
+  }
+  if (argv[0].includes('/') && !argv[0].startsWith('/')) {
+    return 'must start with a program name or an absolute path, not a relative path';
+  }
+  return null;
 }
 
 /**
@@ -394,19 +407,31 @@ export function isKeyCommandTrusted(root, argv) {
 }
 
 /**
- * The first word of `argv` that names a file inside `root`, or `null`. A key command
- * that runs a script the repository holds is refused rather than approved: the
- * approval covers the command line, and the script can change under it in any
- * commit. The program itself counts only when it is a path, since a bare name is
- * found on `PATH`, not in the repository.
+ * Where a key command runs: the account's home directory, never the repository, so a
+ * relative path in an argument cannot reach a file the repository holds.
  */
-export function repositoryFile(root, argv) {
-  const base = canonical(root);
-  const inside = (path) => path === base || path.startsWith(base.endsWith(sep) ? base : base + sep);
-  for (const [i, word] of argv.entries()) {
-    if (i === 0 && !word.includes('/')) continue;
-    const path = resolve(root, word);
-    if (existsSync(path) && inside(canonical(path))) return word;
+export const keyCommandCwd = () => userInfo().homedir;
+
+/**
+ * Why a key command may not run against `root`, or `null`. An approval covers the
+ * command line; a file the repository holds can change under it in any commit. So
+ * the command runs outside the repository (`keyCommandCwd`), and is refused when any
+ * word names the repository's own path, as written or through a symlink, in a path,
+ * a `--flag=path` or a shell string. Recognising every way an argv list could reach
+ * a file is a list with no end; keeping the command out of the repository is not.
+ */
+export function keyCommandProblem(root, argv) {
+  const shape = keyCommandShape(argv);
+  if (shape) return shape;
+  const roots = [...new Set([resolve(root), canonical(root)])];
+  const under = (path) => roots.some((base) => path === base || path.startsWith(base + sep));
+  // Every absolute path in a word, standing alone, after `--flag=` or inside a shell
+  // string, resolved through symlinks and aliases such as macOS's `/var`.
+  const paths = (word) => word.split(/[\s=:;|&'"()]+/).filter((part) => part.startsWith('/'));
+  for (const word of argv) {
+    const hit =
+      roots.some((base) => word.includes(base)) || paths(word).some((p) => under(canonical(p)));
+    if (hit) return `names this repository's path (${word})`;
   }
   return null;
 }

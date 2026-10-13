@@ -87,7 +87,9 @@ file that exists and differs, and writes nothing until each one is approved by n
       Settings, Security & access.
       - **`.env.local`**: check it is ignored (`git check-ignore -q .env.local`). If it is not,
         say so plainly and stop until it is: a committed key is a leaked key.
-      - **A command**: show the exact argv and ask whether to approve running it to read the key.
+      - **A command**: a program on `PATH` or an absolute path, never a script in the repository:
+        it runs from the home directory and is refused if it names the repository's path. Show
+        the exact argv and ask whether to approve running it to read the key.
         The approval is recorded outside the repository, like the formatter's, and covers that
         command line only. A declined command stays in the config and never runs.
    2. **Fetch the team's statuses** so the owner picks from real names. Write a partial answers

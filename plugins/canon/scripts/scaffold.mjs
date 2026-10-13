@@ -53,7 +53,7 @@ import { fileURLToPath } from 'node:url';
 import {
   CONFIG_PATH,
   DOMAINS_PATH,
-  repositoryFile,
+  keyCommandProblem,
   symlinkIn,
   trust,
   trustKeyCommand,
@@ -285,21 +285,17 @@ function main(argv) {
   // team's statuses with it, so only the command itself has to be valid here.
   if (options.mode === 'trust' && options.command === 'apiKeyCommand') {
     const argv = config?.tracker?.apiKeyCommand;
-    if (!Array.isArray(argv) || argv.length === 0) {
+    if (argv === undefined || argv === null) {
       process.stderr.write(
         'scaffold: the answers set no apiKeyCommand, so there is nothing to trust.\n'
       );
       return 1;
     }
-    if (!argv.every((arg) => typeof arg === 'string' && arg.trim() !== '')) {
-      process.stderr.write('scaffold: tracker.apiKeyCommand must be a list of argv strings.\n');
-      return 2;
-    }
-    const inside = repositoryFile(root, argv);
-    if (inside !== null) {
+    const problem = keyCommandProblem(root, argv);
+    if (problem !== null) {
       process.stderr.write(
-        `scaffold: tracker.apiKeyCommand names ${inside}, a file in this repository. An approval\n` +
-          'covers the command line, and that file can change under it, so it cannot be approved.\n'
+        `scaffold: tracker.apiKeyCommand ${problem}, so it cannot be approved: an approval\n` +
+          'covers the command line, and anything the repository holds can change under it.\n'
       );
       return 2;
     }

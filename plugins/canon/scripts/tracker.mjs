@@ -36,7 +36,8 @@ import {
   PROVIDERS,
   ROLES,
   isKeyCommandTrusted,
-  repositoryFile,
+  keyCommandCwd,
+  keyCommandProblem,
   loadConfig,
   projectRoot,
   validate,
@@ -105,20 +106,23 @@ export function resolveKey({ root, tracker, variable, env = process.env, run = r
   const fromEnv = env[variable]?.trim();
   if (fromEnv) return fromEnv;
 
+  // A `.env.local` the repository commits is the repository's choice of key, not the
+  // owner's, and would send canon's comments to whatever workspace it names.
   const file = join(root, '.env.local');
-  if (existsSync(file)) {
+  const committed = existsSync(file) && tracked(root, '.env.local');
+  if (existsSync(file) && !committed) {
     const fromFile = envFileValue(readFileSync(file, 'utf8'), variable);
     if (fromFile) return fromFile;
   }
 
   const command = tracker?.apiKeyCommand;
   if (Array.isArray(command)) {
-    const inside = repositoryFile(root, command);
-    if (inside !== null) {
+    const problem = keyCommandProblem(root, command);
+    if (problem !== null) {
       throw new TrackerError(
-        `tracker.apiKeyCommand names ${inside}, a file in this repository, so it was not run: ` +
-          'an approval covers the command line, and a file the repository holds can change ' +
-          'under it. Point it at a program outside the repository.'
+        `tracker.apiKeyCommand ${problem}, so it was not run: an approval covers the command ` +
+          'line, and anything the repository holds can change under it. Point it at a program ' +
+          'outside the repository.'
       );
     }
     if (!isKeyCommandTrusted(root, command)) {
@@ -135,14 +139,33 @@ export function resolveKey({ root, tracker, variable, env = process.env, run = r
 
   throw new TrackerError(
     `No ${variable}: set it in the environment or in .env.local at the project root, ` +
-      'or configure tracker.apiKeyCommand with /canon:setup.'
+      'or configure tracker.apiKeyCommand with /canon:setup.' +
+      (committed ? ' The .env.local here is committed to the repository, so it was not read.' : '')
   );
 }
 
-/** Run the key command with no shell and nothing on stdin. Its output is never echoed. */
+/** Does git track `path` in `root`? A repository that is not one tracks nothing. */
+function tracked(root, path) {
+  try {
+    execFileSync('git', ['-C', root, 'ls-files', '--error-unmatch', '--', path], {
+      stdio: 'ignore',
+      timeout: 5_000,
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Run the key command with no shell, nothing on stdin, and from the home directory,
+ * so a relative path in it never resolves into the repository. Its output is never
+ * echoed.
+ */
 function runCommand(argv) {
   try {
     return execFileSync(argv[0], argv.slice(1), {
+      cwd: keyCommandCwd(),
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'ignore'],
       timeout: 60_000,
@@ -227,6 +250,27 @@ export async function main(argv, { cwd = process.cwd(), env = process.env, fetch
     tracker = { provider: 'linear', ...tracker, team };
   }
 
+  const flags = rest.filter((arg) => arg.startsWith('--'));
+  const words = rest.filter((arg) => !arg.startsWith('--'));
+  const allowed = command === 'comment' ? ['--blocked'] : [];
+  const unknown = flags.filter((flag) => !allowed.includes(flag));
+  if (unknown.length) throw usage(`${command} does not take ${unknown.join(' ')}`);
+  const id = () => {
+    if (!words[0]) throw usage(`${command} needs an issue identifier, e.g. ${tracker.team}-123`);
+    return words[0];
+  };
+  // Everything argv alone can get wrong, before a key command runs or a request leaves.
+  if (command !== 'states') id();
+  if (command === 'set-state' && !ROLES.includes(words[1])) {
+    throw usage(`set-state needs a role: ${SETTABLE.join(', ')}`);
+  }
+  if (command === 'label' && !words[1]) {
+    throw usage('label needs changes, e.g. label ABC-1 +domain-auth,-domain-old');
+  }
+  if (command === 'comment' && words.length > 1) {
+    throw usage(`comment takes its body on stdin, not as ${words.slice(1).join(' ')}`);
+  }
+
   const provider = await import(`./tracker/${tracker.provider}.mjs`);
   const client = provider.createClient({
     // A provider with no key variable, the fixture, reads no key.
@@ -238,16 +282,6 @@ export async function main(argv, { cwd = process.cwd(), env = process.env, fetch
     team: tracker.team,
     ...(fetch ? { fetch } : {}),
   });
-
-  const flags = rest.filter((arg) => arg.startsWith('--'));
-  const words = rest.filter((arg) => !arg.startsWith('--'));
-  const allowed = command === 'comment' ? ['--blocked'] : [];
-  const unknown = flags.filter((flag) => !allowed.includes(flag));
-  if (unknown.length) throw usage(`${command} does not take ${unknown.join(' ')}`);
-  const id = () => {
-    if (!words[0]) throw usage(`${command} needs an issue identifier, e.g. ${tracker.team}-123`);
-    return words[0];
-  };
 
   switch (command) {
     case 'issue': {
