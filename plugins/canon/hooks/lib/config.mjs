@@ -42,9 +42,11 @@ const TOP = [
   'formatFile',
   'urls',
   'tracker',
+  'ci',
 ];
 const BRANCHES = ['integration', 'production', 'prefixes'];
 const TRACKER = ['provider', 'team', 'statuses', 'labelPrefix', 'apiKeyCommand'];
+const CI = ['workflow', 'baseInput'];
 
 /**
  * The issue trackers a `tracker` block may name. One module each in `scripts/tracker/`.
@@ -65,8 +67,10 @@ export const ROLES = ['ready', 'spec', 'approved', 'building', 'blocked', 'stagi
  * `additionalProperties: false` throughout, and a typo such as `formatfile` would
  * otherwise validate here and silently mean `null` to every reader.
  */
+const isObject = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
+
 function unknownKeys(object, known, prefix) {
-  if (object === null || typeof object !== 'object' || Array.isArray(object)) return [];
+  if (!isObject(object)) return [];
   return Object.keys(object)
     .filter((key) => !known.includes(key))
     .map((key) => `\`${prefix}${key}\` is not a known key`);
@@ -150,7 +154,7 @@ export function validate(config) {
   const isText = (value) => typeof value === 'string' && value.trim() !== '';
   const textOrNull = (value) => value === null || isText(value);
 
-  if (config === null || typeof config !== 'object' || Array.isArray(config)) {
+  if (!isObject(config)) {
     return ['the file is not a JSON object'];
   }
   errors.push(
@@ -159,7 +163,8 @@ export function validate(config) {
     ...unknownKeys(config.commands, COMMANDS, 'commands.'),
     ...unknownKeys(config.urls, URLS, 'urls.'),
     ...unknownKeys(config.tracker, TRACKER, 'tracker.'),
-    ...unknownKeys(config.tracker?.statuses, ROLES, 'tracker.statuses.')
+    ...unknownKeys(config.tracker?.statuses, ROLES, 'tracker.statuses.'),
+    ...unknownKeys(config.ci, CI, 'ci.')
   );
   if (config.version !== 1) errors.push('`version` must be 1');
   if (!isText(config.owner)) errors.push('`owner` must be a non-empty string');
@@ -214,6 +219,28 @@ export function validate(config) {
   }
 
   if ('tracker' in config) errors.push(...trackerErrors(config.tracker, isText));
+  if ('ci' in config) errors.push(...ciErrors(config.ci));
+  return errors;
+}
+
+/**
+ * Problems with the optional `ci` block. Absent means `/canon:staging` only waits for
+ * CI; set, it starts the workflow on a head commit nothing has run on.
+ */
+function ciErrors(ci) {
+  if (!isObject(ci)) {
+    return ['`ci` must be an object, or left out'];
+  }
+  const errors = [];
+  if (typeof ci.workflow !== 'string' || !/^[\w.-]+\.ya?ml$/.test(ci.workflow)) {
+    errors.push('`ci.workflow` must be a workflow file name, e.g. "ci.yml"');
+  }
+  if (
+    ci.baseInput !== null &&
+    !(typeof ci.baseInput === 'string' && /^[A-Za-z_][\w-]*$/.test(ci.baseInput))
+  ) {
+    errors.push('`ci.baseInput` must be the name of a workflow_dispatch input, or null');
+  }
   return errors;
 }
 
@@ -222,7 +249,7 @@ export function validate(config) {
  * `**Status:**` line is the gate, as it always was.
  */
 function trackerErrors(tracker, isText) {
-  if (tracker === null || typeof tracker !== 'object' || Array.isArray(tracker)) {
+  if (!isObject(tracker)) {
     return ['`tracker` must be an object, or left out'];
   }
   const errors = [];
@@ -233,7 +260,7 @@ function trackerErrors(tracker, isText) {
     errors.push('`tracker.team` must be the team key in capitals, e.g. "ABC"');
   }
   const statuses = tracker.statuses;
-  if (statuses === null || typeof statuses !== 'object' || Array.isArray(statuses)) {
+  if (!isObject(statuses)) {
     errors.push('`tracker.statuses` must map each role to a status name');
   } else {
     for (const role of ROLES) {

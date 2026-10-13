@@ -182,6 +182,24 @@
           "description": "A command that prints the API key, as an argv list run with no shell, e.g. [\"op\", \"read\", \"op://Vault/Item/field\"]. Tried after LINEAR_API_KEY in the environment and in an uncommitted .env.local. The program is a name on PATH or an absolute path; the command runs from the home directory and may not name the repository's path. It runs only after the owner approves this exact command for this project in /canon:setup, recorded in ~/.claude/canon/trusted.json like formatFile. null or absent: no command."
         }
       }
+    },
+    "ci": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["workflow", "baseInput"],
+      "description": "Optional. The workflow /canon:staging starts with a workflow_dispatch when nothing has run on the head commit, for projects whose CI does not run on push or on pull request updates. Leave it out to only wait for CI, which is also right for a workflow with no workflow_dispatch trigger.",
+      "properties": {
+        "workflow": {
+          "type": "string",
+          "pattern": "^[\\w.-]+\\.ya?ml$",
+          "description": "The workflow's file name under .github/workflows/, e.g. \"ci.yml\". It must declare workflow_dispatch and be on the default branch, or GitHub refuses the dispatch."
+        },
+        "baseInput": {
+          "type": ["string", "null"],
+          "pattern": "^[A-Za-z_][\\w-]*$",
+          "description": "The workflow_dispatch input that takes the base branch, e.g. \"base\", given the integration branch on each dispatch. For a workflow that diffs against the base to skip work: a dispatched run carries no pull_request.base.sha. null when the workflow declares no such input; GitHub refuses an input the workflow does not declare."
+        }
+      }
     }
   }
 }
