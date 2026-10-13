@@ -1,0 +1,37 @@
+schema_version: '1.1'
+name: define-refuses-not-ready
+description: >-
+  With a tracker, /canon:define on an issue that is not in its ready status refuses: no branch,
+  no spec, no status move.
+tags: [define, tracker, behaviour]
+execution:
+  prompt: /canon:define ABC-7
+  max_turns: 25
+  timeout_seconds: 600
+  allowed_tools: [Read, Glob, Grep, Skill, Bash, Write, Edit]
+context:
+  scaffold_script: scaffold.sh
+graders:
+  - type: tool_used
+    tool: Bash
+    input_match: 'tracker\.mjs"?\s+issue\s+ABC-7'
+    min: 1
+  - type: tool_used
+    tool: Bash
+    input_match: 'set-state|git\b[^"]*\b(?:checkout -b|switch -c|commit|push)\b'
+    min: 0
+    max: 0
+    arm: both
+  - type: tool_used
+    tool: Write
+    input_match: 'docs/specs/'
+    min: 0
+    max: 0
+    arm: both
+  - type: llm
+    weight: 3
+    focus: last_message
+    criteria: >-
+      PASS if the reply refuses to start a spec because ABC-7 is In Progress (being built) rather
+      than in its ready status (Todo), and stops without writing a spec. FAIL if it writes a spec,
+      cuts a branch, moves the issue, or treats the status as something to work around.
