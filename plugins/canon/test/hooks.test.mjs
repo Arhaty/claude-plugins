@@ -342,25 +342,27 @@ describe('require-canon on a gh command', () => {
       expect(create(other.dir, other.dir)).toBe(2);
       expect(create(other.dir)).toBe(0);
 
-      // A cd in the command moves the judgement with it, both ways.
-      const createIn = (to, cwd = repo.dir) =>
-        run('require-canon.mjs', `cd ${to} && gh pr create --fill`, 'exit 1', {
-          cwd,
-          project: repo.dir,
-        }).status;
-      expect(createIn('.wt')).toBe(2);
-      expect(createIn(tree)).toBe(2);
-      expect(createIn(repo.dir, tree)).toBe(0);
-      expect(createIn(other.dir)).toBe(0);
-      expect(createIn('-- .wt')).toBe(2);
-
-      // A cd that never moves the shell `gh` runs in is not a way past the gate.
-      const fromTree = (command) =>
-        run('require-canon.mjs', command, 'exit 1', { cwd: tree, project: repo.dir }).status;
-      expect(fromTree(`(cd ${other.dir}) && gh pr create --fill`)).toBe(2);
-      expect(fromTree(`bash -c "cd ${other.dir}" && gh pr create --fill`)).toBe(2);
-      expect(fromTree(`cd ${other.dir} || gh pr create --fill`)).toBe(2);
-      expect(fromTree('cd ./no-such-dir; gh pr create --fill')).toBe(2);
+      // After a cd in the same command, nothing says which checkout `gh` acts on: refused,
+      // even from the integration branch, which is never judged by diff.
+      const after = (command, cwd = repo.dir) =>
+        run('require-canon.mjs', command, 'exit 1', { cwd, project: repo.dir });
+      for (const command of [
+        `cd ${tree} && gh pr create --fill`,
+        `cd ${other.dir} && gh pr create --fill`,
+        `(cd ${other.dir}) && gh pr create --fill`,
+        `bash -c "cd ${other.dir}" && gh pr create --fill`,
+        `cd ${other.dir} || gh pr create --fill`,
+        `false &&\ncd ${other.dir}\ngh pr create --fill`,
+        `(case a in a) ;; esac; cd ${other.dir}); gh pr create --fill`,
+      ]) {
+        const result = after(command);
+        expect(result.status, command).toBe(2);
+        expect(result.stderr, command).toMatch(/follows a `cd` in the same command/);
+      }
+      expect(after(`cd ${tree} && ALLOW_UNDECIDED_MERGE=1 gh pr create --fill`).status).toBe(0);
+      // A `cd` after the call does not touch it.
+      expect(after(`gh pr create --fill; cd ${other.dir}`, tree).status).toBe(2);
+      expect(after(`gh pr view; cd ${other.dir}`, tree).status).toBe(0);
     } finally {
       repo.git('worktree', 'remove', '--force', tree);
       rmSync(repo.dir, { recursive: true, force: true });
@@ -507,23 +509,27 @@ describe('protect-push', () => {
     expect(push('git push origin feature')).toBe(0);
   });
 
-  it('reads HEAD and the upstream in the checkout a cd moved to', () => {
+  it('refuses a push that reads HEAD after a cd, unless -C names the checkout', () => {
     const tree = join(repo.dir, '.wt');
     repo.git('worktree', 'add', '-q', tree, 'staging');
     try {
-      // The session is on a feature branch; the push runs in a checkout of staging.
-      expect(push(`cd ${tree} && git push origin HEAD`)).toBe(2);
-      expect(push('cd .wt && git push')).toBe(2);
-      expect(push(`(cd ${tree}) && git push origin HEAD`)).toBe(0);
-      // A cd that may not have happened leaves nothing to read HEAD from.
-      expect(push(`cd ${tree} || true; git push origin HEAD`)).toBe(2);
-      expect(push(`cd ${tree} || true; git push origin feature`)).toBe(0);
-      // Every other shape of cd fails closed rather than being modelled.
-      expect(push(`{ cd ${tree}; git push; }`)).toBe(2);
-      expect(push(`if cd ${tree}; then git push; fi`)).toBe(2);
-      expect(push(`case a in a) cd ${tree};; esac; git push`)).toBe(2);
-      expect(push(`cd ${tree} && true & git push`)).toBe(2);
-      expect(push(`{ cd ${tree}; git push origin feature; }`)).toBe(0);
+      for (const command of [
+        `cd ${tree} && git push origin HEAD`,
+        'cd .wt && git push',
+        `(cd ${tree}) && git push origin HEAD`,
+        `{ cd ${tree}; git push; }`,
+        `if cd ${tree}; then git push; fi`,
+        `case a in a) cd ${tree};; esac; git push`,
+        `false &&\ncd ${tree}\ngit push origin HEAD`,
+      ]) {
+        expect(push(command), command).toBe(2);
+      }
+      // A named branch needs no checkout's HEAD.
+      expect(push(`cd ${tree} && git push origin feature`)).toBe(0);
+      // An absolute -C names the checkout outright: staging's HEAD is refused, the
+      // session's own feature branch is not.
+      expect(push(`cd /tmp; git -C ${tree} push origin HEAD`)).toBe(2);
+      expect(push(`cd /tmp; git -C ${repo.dir} push origin HEAD`)).toBe(0);
     } finally {
       repo.git('worktree', 'remove', '--force', tree);
     }

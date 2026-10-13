@@ -182,7 +182,7 @@ try {
     if (!one.dirKnown && (one.bare || one.targets.includes('HEAD'))) {
       fail(
         push.targets.join('`, `') || 'an unknown branch',
-        'a `cd` before it that this hook cannot follow, so it cannot read `HEAD` or the upstream. Name the branch literally'
+        'a `cd` earlier in the command, so this hook cannot tell which checkout reads `HEAD` and the upstream. Run the `cd` in its own call, or name the branch literally'
       );
     }
     const current = git(dir, 'symbolic-ref', '--short', '-q', 'HEAD');

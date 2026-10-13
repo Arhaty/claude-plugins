@@ -57,7 +57,7 @@
 
 import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
-import { basename, join, resolve } from 'node:path';
+import { basename, join } from 'node:path';
 
 const allow = () => process.exit(0);
 
@@ -169,12 +169,12 @@ try {
     // quotes the bypass is an argument, and `invocations` never reads it as an assignment.
     if (call.env.ALLOW_UNDECIDED_MERGE === '1') continue;
 
-    // `cd elsewhere && gh pr create` acts on the repository in `elsewhere`, which may be
-    // a different branch of this project or another repository altogether.
-    // A directory that does not exist is a `cd` that failed, and the call runs where
-    // it was. Judging a missing directory would read no branch and let it through.
-    const moved = call.dir === null ? DIR : resolve(DIR, call.dir);
-    const dir = existsSync(moved) ? moved : DIR;
+    // After a `cd` in the same call, nothing says which repository or branch the call
+    // acts on, and judging the session's own checkout instead can wave it through: a
+    // session on the integration branch is never judged by diff. Refused, with the fix.
+    if (!call.dirKnown) block(movedRefusal(call));
+    const dir = DIR;
+    // Run from another repository's checkout, the call is about that repository.
     if (elsewhere(dir)) continue;
     const current = git(dir, 'rev-parse', '--abbrev-ref', 'HEAD')?.trim() ?? null;
     const protectedBranch = current === integration || current === production;
@@ -189,6 +189,19 @@ try {
   }
 
   allow();
+
+  /** The refusal for a `gh pr` call that follows a `cd` in the same command. */
+  function movedRefusal(call) {
+    return (
+      `Refusing \`gh pr ${call.subcommand}\`: it follows a \`cd\` in the same command, so this ` +
+      'hook cannot tell which repository or branch it acts on, or whether that change needs ' +
+      'a canon update.\n\n' +
+      'Run the `cd` on its own first, then the `gh` command in its own call: the shell keeps ' +
+      'its directory between calls, and the hook then judges the right checkout.\n\n' +
+      'If no rule changed, say so in one line and re-run with ALLOW_UNDECIDED_MERGE=1 on the ' +
+      '`gh` command.'
+    );
+  }
 
   /**
    * A `gh pr merge` or `gh pr ready` judged on the pull request it acts on. Aimed at

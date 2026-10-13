@@ -100,12 +100,13 @@ function commandConfig(env) {
 }
 
 /**
- * One `git push`, or `null` when the invocation is some other git command. `dir`
- * starts where `invocations` says the command runs, after any `cd`, and `-C` moves
- * it on from there; `dirKnown` is false when a `cd` before it cannot be followed.
+ * One `git push`, or `null` when the invocation is some other git command.
+ * `dirKnown` is false after a `cd` earlier in the call, unless an absolute `-C`
+ * names the directory outright.
  */
-function readPush({ argv, env, appended, dir: from = null, dirKnown = true }) {
-  let dir = from;
+function readPush({ argv, env, appended, dirKnown: known = true }) {
+  let dir = null;
+  let dirKnown = known;
   const config = commandConfig(env);
 
   let i = 1;
@@ -114,6 +115,7 @@ function readPush({ argv, env, appended, dir: from = null, dirKnown = true }) {
     if (GIT_VALUES.has(name) && !argv[i].includes('=')) {
       if (name === '-C') {
         const to = argv[i + 1] ?? '';
+        if (to.startsWith('/')) dirKnown = true;
         dir = dir === null || to.startsWith('/') ? to : `${dir}/${to}`;
       }
       if (name === '-c') {

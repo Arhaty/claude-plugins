@@ -1000,66 +1000,36 @@ describe('prCalls', () => {
     expect(call?.env.ALLOW_UNDECIDED_MERGE).toBe('1');
   });
 
-  it('follows a cd earlier in the command', () => {
-    const dir = (command) => prCalls(command, ['create']).map((call) => call.dir);
-    expect(dir('gh pr create --fill')).toEqual([null]);
-    expect(dir('cd ../other && gh pr create --fill')).toEqual(['../other']);
-    expect(dir('cd a; cd b && gh pr create')).toEqual(['a/b']);
-    expect(dir('cd a; cd /abs && gh pr create')).toEqual(['/abs']);
-    expect(dir('cd -P a && gh pr create')).toEqual(['a']);
-    expect(dir('cd -- sub && gh pr create')).toEqual(['sub']);
-    // A cd this does not follow goes back to the call's own directory.
-    for (const cd of ['cd', 'cd -', 'cd ~/x', 'cd $DIR', 'cd a && cd', 'popd', 'pushd +1']) {
-      expect(dir(`${cd} && gh pr create`), cd).toEqual([null]);
-    }
-  });
-
-  it('ignores a cd that does not move the shell the call runs in', () => {
-    const dir = (command) => prCalls(command, ['create']).map((call) => call.dir);
+  it('marks every call after a cd as one whose directory is unknown', () => {
+    const known = (command) =>
+      invocations(command).map(({ argv, dirKnown }) => `${argv[0]}:${dirKnown}`);
+    expect(known('gh pr create; cd x; gh pr create')).toEqual(['gh:true', 'cd:true', 'gh:false']);
     for (const command of [
-      // Each of these changes a directory the call never runs in.
-      '(cd ../other) && gh pr create',
+      'cd x && gh pr create',
+      'cd -- x && gh pr create',
+      '(cd x) && gh pr create',
       'bash -c "cd /x" && gh pr create',
       'out=$(cd /x; pwd); gh pr create',
-      '`cd /x`; gh pr create',
-      'cd /x | cat; gh pr create',
-      'cd /x & gh pr create',
-      // These may or may not have moved it.
-      'cd /x || gh pr create',
-      'cd x || exit; gh pr create',
-      'test -d x && cd x; gh pr create',
-      'git fetch && cd x && gh pr create',
+      'eval cd /x; gh pr create',
+      '{ cd x; gh pr create; }',
       'if cd x; then gh pr create; fi',
       'case a in a) cd x;; esac; gh pr create',
+      '(case a in a) ;; esac; cd /x); gh pr create',
+      'false &&\ncd /x\ngh pr create',
       'cd x && true & gh pr create',
-      // Only the plain shape is followed, so these read as unknown too.
-      '{ cd x; gh pr create; }',
-      'bash -c "cd /x && gh pr create"',
-      '(cd /x && gh pr create)',
-      'eval cd /x; gh pr create',
+      'command cd x; gh pr create',
+      'builtin cd x; gh pr create',
+      'pushd x; gh pr create',
     ]) {
-      expect(dir(command), command).toEqual([null]);
+      expect(
+        prCalls(command, ['create']).map((call) => call.dirKnown),
+        command
+      ).toEqual([false]);
     }
-  });
-
-  it('marks the directory unknown after any cd it does not follow', () => {
-    const known = (command) =>
-      invocations(command)
-        .filter(({ argv }) => argv[0] === 'git')
-        .map(({ dir, dirKnown }) => (dirKnown ? dir : '?'));
-    expect(known('cd x && git push')).toEqual(['x']);
-    expect(known('(cd x) && git push')).toEqual([null]);
-    for (const command of [
-      '{ cd x; git push; }',
-      'if cd x; then git push; fi',
-      'case a in a) cd x;; esac; git push',
-      '(cd y; case a in a) cd x;; esac; git push)',
-      'cd x && true & git push',
-      'cd x || git push',
-      'eval cd /x; git push',
-    ]) {
-      expect(known(command), command).toEqual(['?']);
-    }
+    // A quoted mention of cd is text, not a cd.
+    expect(prCalls('git commit -m "fix cd handling" && gh pr create', ['create'])[0].dirKnown).toBe(
+      true
+    );
   });
 });
 
