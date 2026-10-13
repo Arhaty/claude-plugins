@@ -16,9 +16,14 @@ describe('staging merges only on a success for the head commit', () => {
   it('reads every check run on the head SHA, not one that happens to have passed', () => {
     expect(staging).toContain('sha=$(gh pr view <number> --json headRefOid -q .headRefOid)');
     expect(staging).toContain('commits/$sha/check-runs');
-    expect(staging).toContain('if .status != "completed" then "pending"');
+    expect(staging).toContain(
+      'if .status != "completed" or .conclusion == "action_required" then "pending"'
+    );
     expect(staging).toContain('elif .conclusion == "success" then "success"');
-    expect(staging).toContain('elif (.conclusion | IN("skipped", "neutral")) then "ignored"');
+    // A run cancelled by a later one on the same head is superseded, not failing.
+    expect(staging).toContain(
+      'elif (.conclusion | IN("skipped", "neutral", "cancelled", "stale")) then "ignored"'
+    );
     expect(staging).toContain('else "failing" end');
     // A query that only counts successes passes on one quick check beside a failing one.
     expect(staging).not.toContain('select(.conclusion == "success")] | length');

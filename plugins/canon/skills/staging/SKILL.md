@@ -129,14 +129,16 @@ SHA:
 ```bash
 sha=$(gh pr view <number> --json headRefOid -q .headRefOid)
 gh api --paginate "repos/{owner}/{repo}/commits/$sha/check-runs?per_page=100" --jq '.check_runs[]
-  | if .status != "completed" then "pending"
+  | if .status != "completed" or .conclusion == "action_required" then "pending"
     elif .conclusion == "success" then "success"
-    elif (.conclusion | IN("skipped", "neutral")) then "ignored"
+    elif (.conclusion | IN("skipped", "neutral", "cancelled", "stale")) then "ignored"
     else "failing" end' | sort | uniq -c
 ```
 
 It passes only when at least one is `success`, none is `pending` and none is `failing`. `pending`
-means wait and read again; `failing` is a fix on this branch. No `success` at all means CI has not
+means wait and read again (`action_required` waits on a person). `failing` is a fix on this
+branch. `ignored` is neither: a run that skipped itself, or one cancelled or made stale by a later
+run on the same head, which is why a success is still required. No `success` at all means CI has not
 finished on this head, or never ran: wait and read again. A repository with no CI at all never
 shows one: after one minute with no check run registered, say the repository has no CI and ask
 the owner whether to merge on the local gate alone. Give up after about fifteen minutes and say
