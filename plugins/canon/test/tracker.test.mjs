@@ -9,7 +9,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-import { trust } from '../hooks/lib/config.mjs';
+import { trust, trustKeyCommand } from '../hooks/lib/config.mjs';
 import {
   BLOCKED_MARKER,
   blockedState,
@@ -135,7 +135,14 @@ describe('the Linear provider', () => {
           init.signal.addEventListener('abort', () => reject(init.signal.reason))
         ),
     });
-    await rejects(() => hung.issue('ABC-1'), /did not answer within/);
+    // `AbortSignal.timeout` does not hold the event loop open, and a real request's socket
+    // would. Without this, Node 20 and 22 end the test before the timeout fires.
+    const alive = setInterval(() => {}, 1_000);
+    try {
+      await rejects(() => hung.issue('ABC-1'), /did not answer within/);
+    } finally {
+      clearInterval(alive);
+    }
   });
 
   it('refuses to start without a key', () => {
@@ -351,7 +358,7 @@ describe('the API key', () => {
   });
 
   it('comes from the environment, then .env.local, then the approved command', () => {
-    trust(project, tracker.apiKeyCommand, 'apiKeyCommand');
+    trustKeyCommand(project, tracker.apiKeyCommand);
     writeFileSync(join(project, '.env.local'), 'OTHER=1\nLINEAR_API_KEY="from-file"\n');
     expect(key({ LINEAR_API_KEY: ' from-env ' })).toBe('from-env');
     expect(key()).toBe('from-file');
@@ -365,7 +372,7 @@ describe('the API key', () => {
     expect(() => key()).toThrow(/not approved/);
     trust(project, tracker.apiKeyCommand);
     expect(() => key()).toThrow(/not approved/);
-    trust(project, [...tracker.apiKeyCommand, '--changed'], 'apiKeyCommand');
+    trustKeyCommand(project, [...tracker.apiKeyCommand, '--changed']);
     expect(() => key()).toThrow(/not approved/);
     expect(calls).toEqual([]);
   });
