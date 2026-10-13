@@ -62,7 +62,7 @@ against what you read. `CLAUDE.md` is already loaded. Read, in this order:
    or the one active spec the branch adds:
 
    ```bash
-   git diff --name-only --diff-filter=A origin/<integration>...HEAD -- 'docs/specs/[0-9]*.md'
+   git diff --name-only --diff-filter=A --no-renames origin/<integration>...HEAD -- 'docs/specs/[0-9]*.md'
    ```
 
 **An unannounced contradiction with the canon is the most serious finding available**, more
