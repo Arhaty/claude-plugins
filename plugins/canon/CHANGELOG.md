@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.2.0](https://github.com/Arhaty/claude-plugins/compare/canon-v0.1.0...canon-v0.2.0) (2026-10-13)
+
+
+### Features
+
+* add optional linear tracker to canon ([#15](https://github.com/Arhaty/claude-plugins/issues/15)) ([396b319](https://github.com/Arhaty/claude-plugins/commit/396b319ee27c0bf9b42a98ae876327a49f27fac8))
+
+
+### Bug Fixes
+
+* port guard and spec lookup fixes to canon ([#14](https://github.com/Arhaty/claude-plugins/issues/14)) ([ea88728](https://github.com/Arhaty/claude-plugins/commit/ea88728fa20553c0ea8b35058d74994465674371))
+
 ## 0.1.0 (2026-10-12)
 
 Initial release.
