@@ -25,7 +25,8 @@ branch is not production: a bad merge there costs a revert. It is exactly why
 Run `node "${CLAUDE_PLUGIN_ROOT}/scripts/config.mjs"`. If it fails, stop and pass its message on.
 Below, `<owner>`, `<integration>` and `<production>` mean its `owner`, `branches.integration` and
 `branches.production`; **the gate** is its non-null `commands`; `urls.preview` (with `{branch}`
-replaced) and `urls.staging` are where the work can be seen, when they are set.
+replaced) and `urls.staging` are where the work can be seen, when they are set. A `ci` block
+names the workflow step 6 starts when nothing has run on the head commit.
 
 **If it has a `tracker` block**, read `${CLAUDE_PLUGIN_ROOT}/references/tracker.md` now. This
 command **never sets the issue's status**: the merge does, through the tracker's GitHub
@@ -128,11 +129,86 @@ If none is open, `gh pr create --base <integration>` with a body covering what c
 how to verify, and with a tracker a `Fixes <ID>` line. Then `gh pr ready <number>`, which is idempotent: `/canon:build` leaves the pull
 request in draft when the canon hook refused the ready mark.
 
-**6. Wait for CI on the head commit.**
+**6. Wait for CI on the head commit.** Read the head and the buckets every query below sorts a
+run into:
+
+```bash
+sha=$(gh pr view <number> --json headRefOid -q .headRefOid)
+buckets='if .status != "completed" or .conclusion == "action_required" then "pending"
+  elif .conclusion == "success" then "success"
+  elif (.conclusion | IN("skipped", "neutral", "cancelled", "stale")) then "ignored"
+  else "failing" end'
+```
+
+`pending` means wait and read again (`action_required` waits on a person). `failing` is a fix on
+this branch. `ignored` is neither: a run that skipped itself, or one cancelled or made stale by a
+later run on the same head. **A query that fails is not an empty answer.** Each one below prints
+`none` when it finds no run, and nothing when `gh api` fails: say GitHub's error and stop, never
+read it as nothing having run.
+
+**With a `ci` block, start the workflow first if nothing has run on the head.** Some projects run
+CI only when a pull request opens or leaves draft, so nothing runs on a later commit, including
+the merge commit step 1 pushed. Below, `<workflow>` and `<baseInput>` are `ci.workflow` and
+`ci.baseInput`. Read the configured workflow's runs on the head:
+
+```bash
+runs=$(gh api --paginate "repos/{owner}/{repo}/actions/workflows/<workflow>/runs?head_sha=$sha&per_page=100" \
+  --jq ".workflow_runs[] | $buckets") \
+  && if [ -z "$runs" ]; then echo none; else sort <<<"$runs" | uniq -c; fi
+```
+
+A `404` here means no workflow file has that name on the default branch: say `ci.workflow` is
+wrong and stop.
+
+If step 5 pushed a commit, opened the pull request or took it out of draft, a run those started
+can take a while to register: read every 15 seconds for up to 90 seconds before taking an empty
+answer as final. Otherwise one read is enough.
+
+- **`success` or `pending`: do not dispatch.** A dispatch on top of a queued or running run is a
+  second full run, and the two do not collapse: a typical `concurrency` key
+  (`pull_request.number || ref`) puts them in different groups.
+- **`failing`: do not dispatch.** CI failed on this head, which is a fix on this branch, not a
+  retry.
+- **Nothing else (`none`, or only `ignored`): dispatch, once for this head.**
+
+```bash
+branch=$(gh api "repos/{owner}/{repo}/pulls/<number>" \
+  --jq 'select(.head.repo.full_name == .base.repo.full_name) | .head.ref')
+gh api -X POST "repos/{owner}/{repo}/actions/workflows/<workflow>/dispatches" \
+  -f ref="$branch" -f "inputs[<baseInput>]=<integration>"
+```
+
+An empty `branch` is a pull request from a fork, whose branch this repository does not have: say
+so and do not dispatch. Leave out the `inputs` field when `<baseInput>` is null. `branch` is read
+off the pull request because an empty `ref` fails without saying why. The base input is for a
+workflow that diffs against the base to skip work: a dispatched run carries no
+`pull_request.base.sha`, so without it every dispatched run counts as everything changed.
+
+**A dispatch that fails is reported in one line and never retried:**
+
+- `404`: `<workflow>` is not on the default branch, or no workflow has that name. GitHub
+  dispatches only a workflow file the default branch has.
+- `422` saying the workflow has no `workflow_dispatch` trigger: add one, or remove the `ci` block
+  so this command only waits.
+- `422` about unexpected inputs: the workflow declares no `<baseInput>` input. Fix `ci.baseInput`,
+  or set it to null.
+- Anything else: GitHub's message, as it is.
+
+After a dispatch, read the workflow query every 15 seconds until it shows the run. **Never
+dispatch a second time for the same head.** A minute with still no run on `$sha`:
+
+- **The head moved** (`gh pr view <number> --json headRefOid` no longer gives `$sha`): the
+  dispatch ran on the new tip. That is step 7: go back to step 5.
+- **Otherwise the run failed to start:** say so and stop.
+
+**Then wait for the checks.** Without a `ci` block, watch them:
 
 ```bash
 gh pr checks <number> --watch --fail-fast -i 5
 ```
+
+With one, poll the two queries every 30 seconds instead: a dispatched run may not appear in the
+pull request's checks, so the watch can end before it starts. The queries decide either way.
 
 **Only a success on the head SHA is a pass.** An empty rollup, a missing run and a run that
 ended `skipped` or `neutral` are not: none of them shows the code passed. Nor is one quick check
@@ -140,22 +216,21 @@ that succeeded while the rest are still running or have failed. Read every check
 SHA:
 
 ```bash
-sha=$(gh pr view <number> --json headRefOid -q .headRefOid)
-gh api --paginate "repos/{owner}/{repo}/commits/$sha/check-runs?per_page=100" --jq '.check_runs[]
-  | if .status != "completed" or .conclusion == "action_required" then "pending"
-    elif .conclusion == "success" then "success"
-    elif (.conclusion | IN("skipped", "neutral", "cancelled", "stale")) then "ignored"
-    else "failing" end' | sort | uniq -c
+runs=$(gh api --paginate "repos/{owner}/{repo}/commits/$sha/check-runs?per_page=100" \
+  --jq ".check_runs[] | $buckets") \
+  && if [ -z "$runs" ]; then echo none; else sort <<<"$runs" | uniq -c; fi
 ```
 
-It passes only when at least one is `success`, none is `pending` and none is `failing`. `pending`
-means wait and read again (`action_required` waits on a person). `failing` is a fix on this
-branch. `ignored` is neither: a run that skipped itself, or one cancelled or made stale by a later
-run on the same head, which is why a success is still required. No `success` at all means CI has not
-finished on this head, or never ran: wait and read again. A repository with no CI at all never
-shows one: after one minute with no check run registered, say the repository has no CI and ask
-the owner whether to merge on the local gate alone. Give up after about fifteen minutes and say
-where to look.
+It passes only when at least one is `success`, none is `pending` and none is `failing`. An
+`ignored` run is why a success is still required. **With a `ci` block, the configured workflow's
+success is required too**, read again from the workflow query on every poll, never from the read
+before the dispatch: a success from another app, a deploy preview or a scanner, does not show CI
+passed. A dispatched run that ends `ignored` with no `success` beside it means the workflow
+skipped itself on this head: say so, and ask the owner whether to merge on the other checks. No `success` at all means CI has not finished on
+this head, or never ran: wait and read again. A repository with no CI at all, and no `ci` block,
+never shows one: after one minute with no check run registered, say the repository has no CI and
+ask the owner whether to merge on the local gate alone. Give up after about fifteen minutes and
+say where to look.
 
 **7. If anything in steps 5 or 6 produced a commit, go back to step 5.** Green checks on a commit
 that is no longer the head verify nothing.

@@ -157,6 +157,40 @@ describe('validate the tracker block', () => {
   });
 });
 
+describe('validate the ci block', () => {
+  const withCi = (ci) => ({ ...valid(), ci });
+
+  it('accepts a config without one, and one with or without a base input', () => {
+    expect('ci' in valid()).toBe(false);
+    expect(validate(valid())).toEqual([]);
+    expect(validate(withCi({ workflow: 'ci.yml', baseInput: 'base' }))).toEqual([]);
+    expect(validate(withCi({ workflow: 'checks.yaml', baseInput: null }))).toEqual([]);
+  });
+
+  it.each([
+    ['a non-object', 'ci.yml', /`ci` must be an object/],
+    ['null', null, /`ci` must be an object/],
+    ['no workflow', { baseInput: null }, /ci\.workflow/],
+    ['a workflow path', { workflow: '.github/workflows/ci.yml', baseInput: null }, /ci\.workflow/],
+    ['a workflow with no extension', { workflow: 'ci', baseInput: null }, /ci\.workflow/],
+    ['a workflow id', { workflow: 1234, baseInput: null }, /ci\.workflow/],
+    ['no base input key', { workflow: 'ci.yml' }, /ci\.baseInput/],
+    ['an empty base input', { workflow: 'ci.yml', baseInput: '' }, /ci\.baseInput/],
+    ['a base input with a bracket', { workflow: 'ci.yml', baseInput: 'a]' }, /ci\.baseInput/],
+    [
+      'an unknown key',
+      { workflow: 'ci.yml', baseInput: null, ref: 'staging' },
+      /`ci\.ref` is not a known key/,
+    ],
+  ])('rejects %s', (_, ci, pattern) => {
+    const errors = validate(withCi(ci));
+    expect(
+      errors.some((error) => pattern.test(error)),
+      errors.join('\n')
+    ).toBe(true);
+  });
+});
+
 describe('loadConfig', () => {
   it('tells absent, missing, invalid and ok apart', () => {
     const absent = makeProject({ config: false, domains: false, canonDir: false });
