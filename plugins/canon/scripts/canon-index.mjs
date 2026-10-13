@@ -72,9 +72,10 @@ const ENDS_CLAIM = /^\s*$|^#|^[ \t]*[-*] |^\||^\s*(?:```|~~~)/;
 /**
  * A code fence line: its run of backticks or tildes, and what follows. A fence closes
  * only on the character it opened with, at least as many of them, and nothing after,
- * so a shorter fence inside a longer one is part of the example.
+ * so a shorter fence inside a longer one is part of the example. A backtick run with
+ * another backtick after it on the line is an inline code span, not a fence.
  */
-const FENCE = /^\s*(`{3,}|~{3,})(.*)$/;
+const FENCE = /^\s*(`{3,}(?=[^`]*$)|~{3,})(.*)$/;
 
 /** `|---|---|` is a table's underline, not a row of it. */
 const SEPARATOR_ROW = /^\|[\s:|-]+\|$/;

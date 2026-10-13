@@ -47,6 +47,11 @@ describe('extract', () => {
     expect(extract('x.md', source)).toEqual(['x.md: **Open claim', 'x.md: **After.** A rule.']);
   });
 
+  it('reads a line that opens with an inline code span as prose, not a fence', () => {
+    const source = '```npm run x``` is the entrypoint.\n\n**A claim.** Why.\n';
+    expect(extract('x.md', source)).toEqual(['x.md: **A claim.** Why.']);
+  });
+
   it('reads claims again after a fence closes', () => {
     const source = '**Before.**\n```js\nconst a = 1;\n```\n**After.**\n';
     expect(extract('x.md', source)).toEqual(['x.md: **Before.**', 'x.md: **After.**']);
