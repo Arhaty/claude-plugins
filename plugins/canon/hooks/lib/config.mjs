@@ -122,10 +122,11 @@ export function symlinkIn(root, path) {
 
 /**
  * The project's root: `$CLAUDE_PROJECT_DIR` when Claude Code sets it, else the
- * work tree that holds the payload's `cwd`, else the process's own directory.
+ * work tree that holds the payload's `cwd`, else the process's own directory. `env`
+ * is the environment to read it from, the process's unless a caller passes its own.
  */
-export function projectRoot(payload) {
-  const fromEnv = process.env.CLAUDE_PROJECT_DIR;
+export function projectRoot(payload, env = process.env) {
+  const fromEnv = env.CLAUDE_PROJECT_DIR;
   if (fromEnv && existsSync(fromEnv)) return canonical(fromEnv);
   const cwd = typeof payload?.cwd === 'string' && existsSync(payload.cwd) ? payload.cwd : '.';
   try {
@@ -387,6 +388,24 @@ export function trust(root, argv) {
 export function isKeyCommandTrusted(root, argv) {
   const recorded = entryFor(readTrust(), trustKey(root)).apiKeyCommand;
   return Array.isArray(recorded) && JSON.stringify(recorded) === JSON.stringify(argv);
+}
+
+/**
+ * The first word of `argv` that names a file inside `root`, or `null`. A key command
+ * that runs a script the repository holds is refused rather than approved: the
+ * approval covers the command line, and the script can change under it in any
+ * commit. The program itself counts only when it is a path, since a bare name is
+ * found on `PATH`, not in the repository.
+ */
+export function repositoryFile(root, argv) {
+  const base = canonical(root);
+  const inside = (path) => path === base || path.startsWith(base.endsWith(sep) ? base : base + sep);
+  for (const [i, word] of argv.entries()) {
+    if (i === 0 && !word.includes('/')) continue;
+    const path = resolve(root, word);
+    if (existsSync(path) && inside(canonical(path))) return word;
+  }
+  return null;
 }
 
 /** Record the owner's approval of `argv` as `tracker.apiKeyCommand` for `root`. */

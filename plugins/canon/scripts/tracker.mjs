@@ -6,7 +6,7 @@
  *   node tracker.mjs issue <ID>                 the issue, with its status's role
  *   node tracker.mjs comments <ID>              every comment, and whether the owner
  *                                               has answered the open blocked question
- *   node tracker.mjs comment <ID> [--blocked]   post stdin as a comment
+ *   node tracker.mjs comment <ID> [--blocked]   post stdin as a comment, marked as canon's
  *   node tracker.mjs set-state <ID> <role>      spec, approved, building or blocked
  *   node tracker.mjs label <ID> +a,-b           add and remove labels
  *   node tracker.mjs states [<team>]            the team's status names, for setup
@@ -36,6 +36,7 @@ import {
   PROVIDERS,
   ROLES,
   isKeyCommandTrusted,
+  repositoryFile,
   loadConfig,
   projectRoot,
   validate,
@@ -44,8 +45,14 @@ import {
 /** The roles a skill may set. The rest belong to the owner or to the GitHub integration. */
 export const SETTABLE = ['spec', 'approved', 'building', 'blocked'];
 
-/** The first line of the comment that asks the owner a question, and what marks a block. */
-export const BLOCKED_MARKER = 'canon: blocked';
+/**
+ * The first line of every comment canon posts: `canon: blocked` on a question for the
+ * owner, `canon: note` on anything else (a report, an answer relayed from the session).
+ * A comment without it is a person's.
+ */
+export const MARKER = 'canon:';
+export const BLOCKED_MARKER = `${MARKER} blocked`;
+export const NOTE_MARKER = `${MARKER} note`;
 
 export class TrackerError extends Error {
   constructor(message, code = 1) {
@@ -57,16 +64,20 @@ export class TrackerError extends Error {
 const usage = (message) => new TrackerError(message, 2);
 
 /**
- * Where a blocked issue stands, from its comments alone. The newest comment that
- * starts with the marker is the question; every later comment without the marker is
- * the answer. Who wrote either is never read: with the owner's own key, Claude's
- * question and the owner's reply come from the same user.
+ * Where a blocked issue stands, from its comments alone. The newest comment marked
+ * `canon: blocked` is the question; every later comment that carries no `canon:`
+ * marker at all is the answer, so a report canon posts after the question never
+ * reads as one. Who wrote a comment is never read: with the owner's own key, canon's
+ * comments and the owner's replies come from the same user.
  */
 export function blockedState(comments) {
-  const marked = (comment) => comment.body.trimStart().startsWith(BLOCKED_MARKER);
-  const at = comments.findLastIndex(marked);
+  const first = (comment) => comment.body.trimStart();
+  const at = comments.findLastIndex((comment) => first(comment).startsWith(BLOCKED_MARKER));
   if (at === -1) return null;
-  return { question: comments[at], answers: comments.slice(at + 1).filter((c) => !marked(c)) };
+  return {
+    question: comments[at],
+    answers: comments.slice(at + 1).filter((comment) => !first(comment).startsWith(MARKER)),
+  };
 }
 
 /** The value of one key in a dotenv file, or `null`. Reads that key and nothing else. */
@@ -102,6 +113,14 @@ export function resolveKey({ root, tracker, variable, env = process.env, run = r
 
   const command = tracker?.apiKeyCommand;
   if (Array.isArray(command)) {
+    const inside = repositoryFile(root, command);
+    if (inside !== null) {
+      throw new TrackerError(
+        `tracker.apiKeyCommand names ${inside}, a file in this repository, so it was not run: ` +
+          'an approval covers the command line, and a file the repository holds can change ' +
+          'under it. Point it at a program outside the repository.'
+      );
+    }
     if (!isKeyCommandTrusted(root, command)) {
       throw new TrackerError(
         `tracker.apiKeyCommand ${JSON.stringify(command)} is not approved for this repository, ` +
@@ -200,10 +219,10 @@ export async function main(argv, { cwd = process.cwd(), env = process.env, fetch
     throw usage(`unknown command '${command ?? ''}'. Expected one of: ${known.join(', ')}`);
   }
 
-  const root = projectRoot({ cwd });
+  const root = projectRoot({ cwd }, env);
   let tracker = loadTracker(root, configFile && resolve(cwd, configFile), command === 'states');
   if (command === 'states') {
-    const team = rest[0]?.toUpperCase() ?? tracker?.team;
+    const team = rest.find((arg) => !arg.startsWith('--'))?.toUpperCase() ?? tracker?.team;
     if (!team || !/^[A-Z0-9]+$/.test(team)) throw usage('states needs a team key, e.g. states ABC');
     tracker = { provider: 'linear', ...tracker, team };
   }
@@ -215,9 +234,14 @@ export async function main(argv, { cwd = process.cwd(), env = process.env, fetch
     ...(fetch ? { fetch } : {}),
   });
 
+  const flags = rest.filter((arg) => arg.startsWith('--'));
+  const words = rest.filter((arg) => !arg.startsWith('--'));
+  const allowed = command === 'comment' ? ['--blocked'] : [];
+  const unknown = flags.filter((flag) => !allowed.includes(flag));
+  if (unknown.length) throw usage(`${command} does not take ${unknown.join(' ')}`);
   const id = () => {
-    if (!rest[0]) throw usage(`${command} needs an issue identifier, e.g. ${tracker.team}-123`);
-    return rest[0];
+    if (!words[0]) throw usage(`${command} needs an issue identifier, e.g. ${tracker.team}-123`);
+    return words[0];
   };
 
   switch (command) {
@@ -231,19 +255,18 @@ export async function main(argv, { cwd = process.cwd(), env = process.env, fetch
     }
     case 'comment': {
       const identifier = id();
-      const extra = rest.slice(1).filter((arg) => arg !== '--blocked');
+      const extra = words.slice(1);
       if (extra.length) throw usage(`comment takes its body on stdin, not as ${extra.join(' ')}`);
       const body = (stdin ?? (await readStdin())).trim();
       if (!body) throw usage('comment needs a body on stdin');
-      const blocked = rest.includes('--blocked');
-      const text =
-        blocked && !body.startsWith(BLOCKED_MARKER) ? `${BLOCKED_MARKER}\n\n${body}` : body;
+      const marker = flags.includes('--blocked') ? BLOCKED_MARKER : NOTE_MARKER;
+      const text = body.startsWith(marker) ? body : `${marker}\n\n${body}`;
       await client.comment(identifier, text);
       return { ok: true };
     }
     case 'set-state': {
       const identifier = id();
-      const role = rest[1];
+      const role = words[1];
       if (!ROLES.includes(role)) {
         throw usage(`set-state needs a role: ${SETTABLE.join(', ')}`);
       }
@@ -260,13 +283,15 @@ export async function main(argv, { cwd = process.cwd(), env = process.env, fetch
     }
     case 'label': {
       const identifier = id();
-      if (!rest[1]) throw usage('label needs changes, e.g. label ABC-1 +domain-auth,-domain-old');
-      const changes = rest[1]
+      if (!words[1]) throw usage('label needs changes, e.g. label ABC-1 +domain-auth,-domain-old');
+      const changes = words[1]
         .split(',')
         .map((name) => name.trim())
         .filter(Boolean);
       const add = changes.filter((name) => !name.startsWith('-')).map((n) => n.replace(/^\+/, ''));
       const remove = changes.filter((name) => name.startsWith('-')).map((n) => n.slice(1));
+      const both = add.filter((name) => remove.includes(name));
+      if (both.length) throw usage(`label adds and removes ${both.join(', ')} at once`);
       return client.label(identifier, add, remove);
     }
     case 'states': {

@@ -188,7 +188,8 @@ yours, and `/canon:setup` offers your team's real names:
   and `/canon:ship` post the question as a comment starting `canon: blocked`, set the status, and
   ask in the session too. Answer in the session and the run carries on. Answer on the issue, in a
   comment below the question, and re-run the command: it reads the answer and moves the issue back
-  to building.
+  to building. Every comment canon posts starts with a `canon:` line, and only a comment without
+  one counts as your answer.
 - **The client** is `scripts/tracker.mjs`, over Linear's GraphQL API with a personal API key. Not
   the Linear MCP server, whose OAuth needs a browser that a cloud session doesn't have.
 

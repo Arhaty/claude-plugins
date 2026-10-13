@@ -53,6 +53,7 @@ import { fileURLToPath } from 'node:url';
 import {
   CONFIG_PATH,
   DOMAINS_PATH,
+  repositoryFile,
   symlinkIn,
   trust,
   trustKeyCommand,
@@ -292,6 +293,14 @@ function main(argv) {
     }
     if (!argv.every((arg) => typeof arg === 'string' && arg.trim() !== '')) {
       process.stderr.write('scaffold: tracker.apiKeyCommand must be a list of argv strings.\n');
+      return 2;
+    }
+    const inside = repositoryFile(root, argv);
+    if (inside !== null) {
+      process.stderr.write(
+        `scaffold: tracker.apiKeyCommand names ${inside}, a file in this repository. An approval\n` +
+          'covers the command line, and that file can change under it, so it cannot be approved.\n'
+      );
       return 2;
     }
     trustKeyCommand(root, argv);

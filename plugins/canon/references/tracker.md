@@ -22,8 +22,11 @@ node "$tracker" set-state ABC-123 building     # spec, approved, building or blo
 node "$tracker" label ABC-123 +domain-auth     # add with +, remove with -
 ```
 
-Output is JSON. Exit 1 is a failure, with the reason on stderr: stop and pass it on rather than
-working around it.
+Output is JSON. Exit 1 is a failure and exit 2 a usage error, with the reason on stderr: stop and
+pass it on rather than working around it.
+
+**Every comment canon posts starts with a `canon:` line**, which the client adds: `canon: blocked`
+on a question for the owner, `canon: note` on anything else. A comment without one is a person's.
 
 ## Roles
 
@@ -75,12 +78,13 @@ irreversible action.
 3. **Ask the same question in the chat** with `AskUserQuestion`, recommended option first. The
    comment is for an owner who is not watching the session; it is never the only way to answer.
 
-**An answer in the chat** wins: post it on the issue as a plain comment (no `--blocked`), so the
-issue holds the decision too, then `set-state building` and carry on from the step that stopped.
+**An answer in the chat** wins: post it on the issue with `comment` (no `--blocked`), so the issue
+holds the decision too, then `set-state building` and carry on from the step that stopped.
 
 **Resuming in a later session**: `node "$tracker" comments ABC-123` returns `blocked.question`, the
-newest comment marked `canon: blocked`, and `blocked.answers`, every later comment without the
-marker. Never decide by who wrote a comment: with the owner's own key, the question and the
-answer come from the same user. No answers means the owner has not replied: repeat the question
+newest comment marked `canon: blocked`, and `blocked.answers`, every later comment with no
+`canon:` line at all, so a report canon posted after the question is not an answer. Never decide
+by who wrote a comment: with the owner's own key, canon's comments and the owner's answers come
+from the same user. No answers means the owner has not replied: repeat the question
 and stop, still blocked. Answers mean read them, fold a decision into the spec's `## Decisions`
 table, `set-state building`, and carry on.

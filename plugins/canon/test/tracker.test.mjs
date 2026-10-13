@@ -4,7 +4,7 @@
  */
 
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -108,6 +108,27 @@ describe('the Linear provider', () => {
 
     await client.label('ABC-1', [], ['domain-billing']);
     expect(state.issues['ABC-1'].labels).toEqual(['l1']);
+  });
+
+  it('names two members of one single-select group rather than sending both', async () => {
+    await rejects(
+      () => client.label('ABC-1', ['surface-app', 'surface-site'], []),
+      /surface-app and surface-site are both in the label group Surface/
+    );
+    expect(state.requests.some((r) => r.operation === 'Label')).toBe(false);
+  });
+
+  it('finds a label a parent team holds, and works where there are no sub-teams', async () => {
+    expect(await client.label('ABC-1', ['domain-search'], [])).toEqual({
+      labels: ['domain-search'],
+      missing: [],
+    });
+    const flat = linearState({ ancestorsFail: true });
+    const plain = createClient({ apiKey: flat.key, team: 'ABC', fetch: fakeLinear(flat) });
+    expect(await plain.label('ABC-1', ['domain-search', 'domain-auth'], [])).toEqual({
+      labels: ['domain-auth'],
+      missing: ['domain-search'],
+    });
   });
 
   it('swaps a member of a single-select group rather than adding a second', async () => {
@@ -247,8 +268,16 @@ describe('tracker.mjs', () => {
     expect(question.body).toBe(`${BLOCKED_MARKER}\n\nWhich limit applies?`);
     expect((await run(['comments', 'ABC-1'])).blocked).toMatchObject({ answers: [] });
 
-    // The owner answers with the same key, so as the same user.
-    await run(['comment', 'ABC-1'], { stdin: 'Five per hour.' });
+    // canon's own report after the question is not an answer.
+    await run(['comment', 'ABC-1'], { stdin: 'Stopped. Waiting on the limit.' });
+    expect((await run(['comments', 'ABC-1'])).blocked.answers).toEqual([]);
+
+    // The owner answers with the same key, so as the same user, with no marker.
+    state.issues['ABC-1'].comments.push({
+      id: 'owner',
+      body: 'Five per hour.',
+      createdAt: '2026-01-02T00:00:00.000Z',
+    });
     const { blocked } = await run(['comments', 'ABC-1']);
     expect(blocked.question.body).toBe(question.body);
     expect(blocked.answers.map((c) => c.body)).toEqual(['Five per hour.']);
@@ -259,12 +288,49 @@ describe('tracker.mjs', () => {
     await rejects(() => run(['comment', 'ABC-1', 'hello'], { stdin: 'x' }), /on stdin, not as/);
   });
 
+  it("marks every comment as canon's, and reads a flag wherever it is", async () => {
+    await run(['comment', '--blocked', 'ABC-1'], { stdin: 'Which limit?' });
+    await run(['comment', 'ABC-1'], { stdin: 'Shipped.' });
+    expect(state.issues['ABC-1'].comments.map((c) => c.body)).toEqual([
+      'canon: blocked\n\nWhich limit?',
+      'canon: note\n\nShipped.',
+    ]);
+    const error = await rejects(
+      () => run(['comment', 'ABC-1', '--loud'], { stdin: 'x' }),
+      /does not take --loud/
+    );
+    expect(error.code).toBe(2);
+    await rejects(() => run(['issue', '--blocked', 'ABC-1']), /does not take --blocked/);
+  });
+
+  it("takes the project from the environment it is given, not the process's", async () => {
+    const elsewhere = makeProject();
+    try {
+      process.env.CLAUDE_PROJECT_DIR = elsewhere;
+      expect(
+        (await run(['issue', 'ABC-1'], { env: { ...env(), CLAUDE_PROJECT_DIR: project } })).role
+      ).toBe('ready');
+      await rejects(
+        () => run(['issue', 'ABC-1'], { env: { ...env(), CLAUDE_PROJECT_DIR: elsewhere } }),
+        /sets no tracker/
+      );
+    } finally {
+      delete process.env.CLAUDE_PROJECT_DIR;
+      rmSync(elsewhere, { recursive: true, force: true });
+    }
+  });
+
   it('adds and removes labels, reporting a name that does not exist', async () => {
     expect(await run(['label', 'ABC-1', '+domain-auth,domain-billing,+nope'])).toEqual({
       labels: ['domain-auth', 'domain-billing'],
       missing: ['nope'],
     });
     expect((await run(['label', 'ABC-1', '-domain-billing'])).labels).toEqual(['domain-auth']);
+    const both = await rejects(
+      () => run(['label', 'ABC-1', '+domain-auth,-domain-auth']),
+      /adds and removes domain-auth/
+    );
+    expect(both.code).toBe(2);
   });
 
   it("lists a team's statuses from a partial config, for setup", async () => {
@@ -377,6 +443,24 @@ describe('the API key', () => {
     trustKeyCommand(project, [...tracker.apiKeyCommand, '--changed']);
     expect(() => key()).toThrow(/not approved/);
     expect(calls).toEqual([]);
+  });
+
+  it('refuses a key command that runs a file the repository holds', () => {
+    mkdirSync(join(project, 'scripts'));
+    writeFileSync(join(project, 'scripts/key.sh'), 'echo key\n');
+    for (const command of [['./scripts/key.sh'], ['bash', 'scripts/key.sh']]) {
+      trustKeyCommand(project, command);
+      expect(() => key({}, { ...TRACKER, apiKeyCommand: command })).toThrow(
+        /a file in this repository/
+      );
+    }
+    // A program found on PATH is not a repository file, whatever the repository holds.
+    writeFileSync(join(project, 'op'), '');
+    trustKeyCommand(project, ['op', 'read', 'op://Vault/Item/field']);
+    expect(key({}, { ...TRACKER, apiKeyCommand: ['op', 'read', 'op://Vault/Item/field'] })).toBe(
+      'from-command'
+    );
+    expect(calls).toEqual([['op', 'read', 'op://Vault/Item/field']]);
   });
 
   it('says where it looked when there is no key anywhere', () => {

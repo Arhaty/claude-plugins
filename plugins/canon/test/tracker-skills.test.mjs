@@ -61,7 +61,9 @@ describe('the tracker in the skills', () => {
   });
 
   it('refuses define on an issue not in ready, and build on one not approved', () => {
-    expect(skill('define')).toMatch(/New spec: the role must be `ready`\./);
+    expect(skill('define')).toMatch(
+      /New spec: the role must be `ready`\*\*, or `spec` with no spec/
+    );
     expect(skill('build')).toMatch(/refuse unless the issue's role is `approved` or `blocked`/);
     expect(skill('ship')).toMatch(/the gate is the issue's role/);
   });
@@ -84,8 +86,9 @@ describe('the tracker in the skills', () => {
 
   it('resumes from the marker, never from who wrote a comment', () => {
     const reference = read('references/tracker.md');
-    expect(reference).toMatch(/Never decide by who wrote a comment/);
+    expect(reference).toMatch(/Never decide\s+by who wrote a comment/);
     expect(reference).toMatch(/newest comment marked `canon: blocked`/);
+    expect(reference).toMatch(/every later comment with no\s+`canon:` line at all/);
     expect(reference).not.toMatch(/\bauthor\b/);
   });
 
