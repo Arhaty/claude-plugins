@@ -122,19 +122,25 @@ gh pr checks <number> --watch --fail-fast -i 5
 ```
 
 **Only a success on the head SHA is a pass.** An empty rollup, a missing run and a run that
-ended `skipped` or `neutral` are not: none of them shows the code passed. Confirm a run on the
-head SHA succeeded:
+ended `skipped` or `neutral` are not: none of them shows the code passed. Nor is one quick check
+that succeeded while the rest are still running or have failed. Read every check run on the head
+SHA:
 
 ```bash
 sha=$(gh pr view <number> --json headRefOid -q .headRefOid)
-gh api "repos/{owner}/{repo}/commits/$sha/check-runs" \
-  --jq '[.check_runs[] | select(.conclusion == "success")] | length'
+gh api --paginate "repos/{owner}/{repo}/commits/$sha/check-runs?per_page=100" --jq '.check_runs[]
+  | if .status != "completed" then "pending"
+    elif .conclusion == "success" then "success"
+    elif (.conclusion | IN("skipped", "neutral")) then "ignored"
+    else "failing" end' | sort | uniq -c
 ```
 
-`0` means CI has not finished on this head: wait and read again. A repository with no CI at all
-returns `0` forever: after one minute with no check run registered, say the repository has no CI
-and ask the owner whether to merge on the local gate alone. Give up after about fifteen minutes and
-say where to look.
+It passes only when at least one is `success`, none is `pending` and none is `failing`. `pending`
+means wait and read again; `failing` is a fix on this branch. No `success` at all means CI has not
+finished on this head, or never ran: wait and read again. A repository with no CI at all never
+shows one: after one minute with no check run registered, say the repository has no CI and ask
+the owner whether to merge on the local gate alone. Give up after about fifteen minutes and say
+where to look.
 
 **7. If anything in steps 5 or 6 produced a commit, go back to step 5.** Green checks on a commit
 that is no longer the head verify nothing.
