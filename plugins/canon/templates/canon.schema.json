@@ -100,6 +100,88 @@
           "description": "Where the production branch is served, e.g. \"https://example.com\"."
         }
       }
+    },
+    "tracker": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["provider", "team", "statuses"],
+      "description": "Optional. When set, the issue tracker is the record and the gate: each command reads and sets the issue's status, and the spec's **Status:** line mirrors it. Leave it out to gate on the spec file alone.",
+      "properties": {
+        "provider": {
+          "enum": ["linear"],
+          "description": "The tracker. Only \"linear\" is supported."
+        },
+        "team": {
+          "type": "string",
+          "pattern": "^[A-Z0-9]+$",
+          "description": "The team key, the prefix of every issue identifier, e.g. \"ABC\" for ABC-123."
+        },
+        "statuses": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["ready", "spec", "approved", "building", "blocked", "staging", "production"],
+          "description": "canon's lifecycle roles mapped to this team's status names, which differ per team. Each role needs a different status. /canon:setup offers the team's real names.",
+          "properties": {
+            "ready": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Prioritised and waiting for a spec. /canon:define refuses a new spec on an issue in any other status."
+            },
+            "spec": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Being specced. /canon:define sets it when it starts; the issue rests here until approved."
+            },
+            "approved": {
+              "type": "string",
+              "minLength": 1,
+              "description": "The owner approved the spec. /canon:approve sets it, after the spec is pushed. /canon:build refuses anything else, except blocked."
+            },
+            "building": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Being built. /canon:build sets it when it starts, and again when it resumes from blocked."
+            },
+            "blocked": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Claude is waiting on the owner, and nothing else. /canon:build and /canon:ship set it at a stop condition and post the question as a comment."
+            },
+            "staging": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Merged into the integration branch. Set by the tracker's GitHub integration on that merge, never by canon."
+            },
+            "production": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Merged into production. Set by the tracker's GitHub integration on the release merge, never by canon."
+            }
+          }
+        },
+        "labelPrefix": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9-]*$",
+          "default": "domain-",
+          "description": "Prefix of the labels that route an issue to its canon file: auth.md is <prefix>auth. /canon:define adds the missing ones and never creates a label."
+        },
+        "apiKeyCommand": {
+          "oneOf": [
+            {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "A command that prints the API key, as an argv list run with no shell, e.g. [\"op\", \"read\", \"op://Vault/Item/field\"]. Tried after LINEAR_API_KEY in the environment and in .env.local. It runs only after the owner approves this exact command for this project in /canon:setup, recorded in ~/.claude/canon/trusted.json like formatFile. null or absent: no command."
+        }
+      }
     }
   }
 }

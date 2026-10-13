@@ -12,7 +12,16 @@ import {
   trustKey,
   validate,
 } from '../hooks/lib/config.mjs';
-import { CONFIG, describe, expect, fakeHome, it, makeProject, scratchRepo } from './helpers.mjs';
+import {
+  CONFIG,
+  TRACKER,
+  describe,
+  expect,
+  fakeHome,
+  it,
+  makeProject,
+  scratchRepo,
+} from './helpers.mjs';
 
 const valid = () => structuredClone(CONFIG);
 
@@ -89,6 +98,63 @@ describe('validate', () => {
   });
 });
 
+describe('validate the tracker block', () => {
+  const withTracker = (change = (t) => t) => ({
+    ...valid(),
+    tracker: change(structuredClone(TRACKER)),
+  });
+
+  it('accepts a config without one, and a full one', () => {
+    expect('tracker' in valid()).toBe(false);
+    expect(validate(withTracker())).toEqual([]);
+    expect(
+      validate(
+        withTracker((t) => ({ ...t, labelPrefix: 'area-', apiKeyCommand: ['op', 'read', 'x'] }))
+      )
+    ).toEqual([]);
+    expect(validate(withTracker((t) => ({ ...t, apiKeyCommand: null })))).toEqual([]);
+  });
+
+  it.each([
+    ['a non-object', () => 'linear', /`tracker` must be an object/],
+    ['an unknown provider', (t) => ({ ...t, provider: 'jira' }), /tracker\.provider/],
+    ['no provider', ({ provider, ...t }) => t, /tracker\.provider/],
+    ['a lowercase team', (t) => ({ ...t, team: 'abc' }), /tracker\.team/],
+    ['no team', ({ team, ...t }) => t, /tracker\.team/],
+    ['no statuses', ({ statuses, ...t }) => t, /tracker\.statuses/],
+    [
+      'a missing role',
+      (t) => ({ ...t, statuses: { ...t.statuses, blocked: undefined } }),
+      /tracker\.statuses\.blocked/,
+    ],
+    [
+      'an empty status name',
+      (t) => ({ ...t, statuses: { ...t.statuses, spec: ' ' } }),
+      /tracker\.statuses\.spec/,
+    ],
+    [
+      'one status for two roles',
+      (t) => ({ ...t, statuses: { ...t.statuses, blocked: 'In Progress' } }),
+      /repeated: In Progress/,
+    ],
+    [
+      'an unknown role',
+      (t) => ({ ...t, statuses: { ...t.statuses, review: 'In Review' } }),
+      /tracker\.statuses\.review` is not a known key/,
+    ],
+    ['an unknown key', (t) => ({ ...t, apikey: 'x' }), /tracker\.apikey` is not a known key/],
+    ['an uppercase label prefix', (t) => ({ ...t, labelPrefix: 'Domain-' }), /labelPrefix/],
+    ['a string key command', (t) => ({ ...t, apiKeyCommand: 'op read x' }), /apiKeyCommand/],
+    ['an empty key command', (t) => ({ ...t, apiKeyCommand: [] }), /apiKeyCommand/],
+  ])('rejects %s', (_, change, pattern) => {
+    const errors = validate(withTracker(change));
+    expect(
+      errors.some((error) => pattern.test(error)),
+      errors.join('\n')
+    ).toBe(true);
+  });
+});
+
 describe('loadConfig', () => {
   it('tells absent, missing, invalid and ok apart', () => {
     const absent = makeProject({ config: false, domains: false, canonDir: false });
@@ -103,7 +169,7 @@ describe('loadConfig', () => {
   });
 });
 
-describe('the formatter trust store', () => {
+describe('the trust store', () => {
   it('trusts only the exact command, for the exact root, from outside the repository', () => {
     const home = mkdtempSync(join(tmpdir(), 'canon-home-'));
     const restore = fakeHome(home);
@@ -126,6 +192,44 @@ describe('the formatter trust store', () => {
       rmSync(other, { recursive: true, force: true });
     } finally {
       restore();
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it('keeps each kind of command apart, and reads an entry written before kinds', () => {
+    const home = mkdtempSync(join(tmpdir(), 'canon-home-'));
+    const restore = fakeHome(home);
+    const project = makeProject();
+    try {
+      const format = ['pnpm', 'exec', 'prettier', '--write'];
+      const key = ['op', 'read', 'op://Vault/Item/field'];
+
+      // The shape every approval had before there was a second kind.
+      mkdirSync(join(home, '.claude/canon'), { recursive: true });
+      writeFileSync(
+        trustFile(),
+        JSON.stringify({
+          [trustKey(project)]: { sha256: commandDigest(format), formatFile: format },
+        })
+      );
+      expect(isTrusted(project, format)).toBe(true);
+      expect(isTrusted(project, format, 'apiKeyCommand')).toBe(false);
+
+      trust(project, key, 'apiKeyCommand');
+      expect(isTrusted(project, key, 'apiKeyCommand')).toBe(true);
+      // Approving one kind neither approves the same argv as the other kind nor drops it.
+      expect(isTrusted(project, key)).toBe(false);
+      expect(isTrusted(project, format)).toBe(true);
+
+      trust(project, ['prettier', '--write']);
+      expect(isTrusted(project, key, 'apiKeyCommand')).toBe(true);
+      expect(isTrusted(project, format)).toBe(false);
+
+      expect(isTrusted(project, key, 'somethingElse')).toBe(false);
+      expect(() => trust(project, key, 'somethingElse')).toThrow();
+    } finally {
+      restore();
+      rmSync(project, { recursive: true, force: true });
       rmSync(home, { recursive: true, force: true });
     }
   });

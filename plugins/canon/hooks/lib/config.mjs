@@ -41,8 +41,21 @@ const TOP = [
   'commands',
   'formatFile',
   'urls',
+  'tracker',
 ];
 const BRANCHES = ['integration', 'production', 'prefixes'];
+const TRACKER = ['provider', 'team', 'statuses', 'labelPrefix', 'apiKeyCommand'];
+
+/** The issue trackers a `tracker` block may name. One module each in `scripts/tracker/`. */
+export const PROVIDERS = ['linear'];
+
+/**
+ * canon's lifecycle roles, which `tracker.statuses` maps to the team's own status
+ * names. Each names somewhere the work can be: waiting for a spec, being specced,
+ * approved, being built, waiting on the owner, merged into the integration branch,
+ * merged into production.
+ */
+export const ROLES = ['ready', 'spec', 'approved', 'building', 'blocked', 'staging', 'production'];
 
 /**
  * A key the schema does not name, at any level, as an error per key. The schema sets
@@ -140,7 +153,9 @@ export function validate(config) {
     ...unknownKeys(config, TOP, ''),
     ...unknownKeys(config.branches, BRANCHES, 'branches.'),
     ...unknownKeys(config.commands, COMMANDS, 'commands.'),
-    ...unknownKeys(config.urls, URLS, 'urls.')
+    ...unknownKeys(config.urls, URLS, 'urls.'),
+    ...unknownKeys(config.tracker, TRACKER, 'tracker.'),
+    ...unknownKeys(config.tracker?.statuses, ROLES, 'tracker.statuses.')
   );
   if (config.version !== 1) errors.push('`version` must be 1');
   if (!isText(config.owner)) errors.push('`owner` must be a non-empty string');
@@ -193,6 +208,57 @@ export function validate(config) {
       errors.push('`urls.preview` must contain `{branch}`');
     }
   }
+
+  if ('tracker' in config) errors.push(...trackerErrors(config.tracker, isText));
+  return errors;
+}
+
+/**
+ * Problems with the optional `tracker` block. Absent means no tracker, and the spec's
+ * `**Status:**` line is the gate, as it always was.
+ */
+function trackerErrors(tracker, isText) {
+  if (tracker === null || typeof tracker !== 'object' || Array.isArray(tracker)) {
+    return ['`tracker` must be an object, or left out'];
+  }
+  const errors = [];
+  if (!PROVIDERS.includes(tracker.provider)) {
+    errors.push(`\`tracker.provider\` must be one of: ${PROVIDERS.join(', ')}`);
+  }
+  if (!isText(tracker.team) || !/^[A-Z0-9]+$/.test(tracker.team)) {
+    errors.push('`tracker.team` must be the team key in capitals, e.g. "ABC"');
+  }
+  const statuses = tracker.statuses;
+  if (statuses === null || typeof statuses !== 'object' || Array.isArray(statuses)) {
+    errors.push('`tracker.statuses` must map each role to a status name');
+  } else {
+    for (const role of ROLES) {
+      if (!isText(statuses[role])) {
+        errors.push(`\`tracker.statuses.${role}\` must be a status name`);
+      }
+    }
+    const names = ROLES.map((role) => statuses[role]).filter(isText);
+    const repeated = names.filter((name, i) => names.indexOf(name) !== i);
+    if (repeated.length) {
+      errors.push(
+        `\`tracker.statuses\` must name a different status for each role; repeated: ${[...new Set(repeated)].join(', ')}`
+      );
+    }
+  }
+  if (
+    'labelPrefix' in tracker &&
+    !(isText(tracker.labelPrefix) && /^[a-z0-9][a-z0-9-]*$/.test(tracker.labelPrefix))
+  ) {
+    errors.push('`tracker.labelPrefix` must be a lowercase prefix, e.g. "domain-"');
+  }
+  const command = tracker.apiKeyCommand;
+  if (
+    command !== undefined &&
+    command !== null &&
+    !(Array.isArray(command) && command.length > 0 && command.every(isText))
+  ) {
+    errors.push('`tracker.apiKeyCommand` must be a non-empty list of argv strings, or null');
+  }
   return errors;
 }
 
@@ -233,7 +299,7 @@ export function configProblem(state, hook) {
 }
 
 /**
- * Where the owner's approval of each project's `formatFile` is kept: in their home
+ * Where the owner's approvals of each project's commands are kept: in their home
  * directory, outside every repository. A record inside the repository proves
  * nothing, because whoever commits the command can commit the approval beside it.
  *
@@ -242,7 +308,15 @@ export function configProblem(state, hook) {
  */
 export const trustFile = () => join(userInfo().homedir, '.claude', 'canon', 'trusted.json');
 
-/** The sha256 of a `formatFile` argv list, which is what an approval records. */
+/**
+ * The commands a project names that run only once approved: `formatFile`, which the
+ * PostToolUse hook runs on every edited file, and `tracker.apiKeyCommand`, which
+ * `scripts/tracker.mjs` runs to read the tracker's API key. Each is approved on its
+ * own: approving one says nothing about the other.
+ */
+export const TRUSTED_COMMANDS = ['formatFile', 'apiKeyCommand'];
+
+/** The sha256 of an argv list, which is what an approval records. */
 export function commandDigest(argv) {
   return createHash('sha256').update(JSON.stringify(argv)).digest('hex');
 }
@@ -279,20 +353,40 @@ export function trustKey(root) {
 }
 
 /**
- * Has the owner approved exactly this `formatFile` for this repository? Keyed by
- * `trustKey` and the command's digest, so a changed command, or the same command
- * in another clone, is not approved until setup asks again.
+ * The digest recorded for `kind` in one repository's entry. A `formatFile` approval
+ * sits at the top of the entry, `{ sha256, formatFile }`, which is the shape every
+ * approval had before there was a second kind; any other kind is a nested
+ * `{ sha256, argv }` under its own name.
  */
-export function isTrusted(root, argv) {
-  const entry = readTrust()[trustKey(root)];
-  return typeof entry?.sha256 === 'string' && entry.sha256 === commandDigest(argv);
+function recorded(entry, kind) {
+  const digest = kind === 'formatFile' ? entry?.sha256 : entry?.[kind]?.sha256;
+  return typeof digest === 'string' ? digest : null;
 }
 
-/** Record the owner's approval of `argv` for `root`, replacing any earlier one. */
-export function trust(root, argv) {
+/**
+ * Has the owner approved exactly this command, as `kind`, for this repository? Keyed
+ * by `trustKey` and the command's digest, so a changed command, or the same command
+ * in another clone, is not approved until setup asks again.
+ */
+export function isTrusted(root, argv, kind = 'formatFile') {
+  if (!TRUSTED_COMMANDS.includes(kind)) return false;
+  return recorded(readTrust()[trustKey(root)], kind) === commandDigest(argv);
+}
+
+/**
+ * Record the owner's approval of `argv` as `kind` for `root`, replacing any earlier
+ * approval of that kind and keeping the other kinds.
+ */
+export function trust(root, argv, kind = 'formatFile') {
+  if (!TRUSTED_COMMANDS.includes(kind)) throw new Error(`cannot trust a command as ${kind}`);
   const file = trustFile();
   const trusted = readTrust();
-  trusted[trustKey(root)] = { sha256: commandDigest(argv), formatFile: argv };
+  const key = trustKey(root);
+  const entry = trusted[key] !== null && typeof trusted[key] === 'object' ? trusted[key] : {};
+  trusted[key] =
+    kind === 'formatFile'
+      ? { ...entry, sha256: commandDigest(argv), formatFile: argv }
+      : { ...entry, [kind]: { sha256: commandDigest(argv), argv } };
   mkdirSync(dirname(file), { recursive: true, mode: 0o700 });
   writeFileSync(file, `${JSON.stringify(trusted, null, 2)}\n`, { mode: 0o600 });
 }
