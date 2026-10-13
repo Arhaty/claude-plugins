@@ -40,7 +40,7 @@ A spec's status is the `**Status:**` line under its title, and each command make
 the spec did not settle. `/canon:explain` describes the work in flight in a few short sections.
 
 Small fixes and tweaks do not need a spec. Feature work does: if there is none, run
-`/canon:define` rather than building. If the build discovers new behaviour, update the spec first.
+`/canon:define` rather than building. If the build discovers new behaviour, update the spec first.{{tracker}}
 
 ### Branches and commits
 

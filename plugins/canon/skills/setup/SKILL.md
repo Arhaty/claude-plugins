@@ -71,6 +71,43 @@ file that exists and differs, and writes nothing until each one is approved by n
      repository that the command reads can change later without asking again.
    - **Whether to enable canon in the project's own `.claude/settings.json`.** That turns canon on
      for everyone who clones the project and has the plugin installed.
+   - **Whether to use an issue tracker** as the record and the gate. Linear is the only one
+     supported. Without one, the spec's `**Status:**` line is the gate and the config gets no
+     `tracker` block; skip the tracker questions below.
+
+   If an existing config has a `tracker` block, its values are the defaults below too.
+
+   **The tracker, when the owner wants one.** Read `${CLAUDE_PLUGIN_ROOT}/references/tracker.md`
+   first for what each role means.
+
+   1. **Ask for the team key**, the prefix of the team's issue identifiers (`ABC` for
+      `ABC-123`), and **where the API key comes from**: `LINEAR_API_KEY` in the environment,
+      `LINEAR_API_KEY=` in `.env.local` at the project root, or a command that prints it, such as
+      a password manager's CLI, as an argv list. A personal key is created in Linear under
+      Settings, Security & access.
+      - **`.env.local`**: check it is ignored (`git check-ignore -q .env.local`). If it is not,
+        say so plainly and stop until it is: a committed key is a leaked key.
+      - **A command**: show the exact argv and ask whether to approve running it to read the key.
+        The approval is recorded outside the repository, like the formatter's, and covers that
+        command line only. A declined command stays in the config and never runs.
+   2. **Fetch the team's statuses** so the owner picks from real names. Write a partial answers
+      file outside the project, `{"tracker": {"provider": "linear", "team": "<KEY>",
+"apiKeyCommand": <argv or null>}}`, record an approved command first (step 5's
+      `trust --command apiKeyCommand`, against this file), then:
+
+      ```bash
+      node "${CLAUDE_PLUGIN_ROOT}/scripts/tracker.mjs" --config <partial file> states <KEY>
+      ```
+
+      A failure (no key, a wrong team) is said as it is, and asked again; never guessed past.
+
+   3. **Map each role to one of those statuses.** Propose a mapping by name and type (Linear's
+      `unstarted`, `started`, `completed` types help: `ready` is usually the first `unstarted`
+      status after the backlog, `production` the `completed` one), show it as a table beside the
+      full list, and ask the owner to confirm or correct it. Every role needs a status of its
+      own. A team with no status that fits `blocked`, or one of the others, needs one added in
+      Linear first: say which, and wait.
+   4. **The label prefix** for domain routing is `domain-` unless the owner names another.
 
 4. **Write the answers to a scratch file and plan.** The answers file is the full config:
 
@@ -82,9 +119,12 @@ file that exists and differs, and writes nothing until each one is approved by n
      "packageManager": "<pm>",
      "commands": { "typecheck": "<cmd or null>", "lint": "<cmd or null>", "format": "<cmd or null>", "test": "<cmd or null>" },
      "formatFile": ["<argv>", "..."] or null,
-     "urls": { "preview": "<pattern or null>", "staging": "<url or null>", "production": "<url or null>" }
+     "urls": { "preview": "<pattern or null>", "staging": "<url or null>", "production": "<url or null>" },
+     "tracker": { "provider": "linear", "team": "<KEY>", "statuses": { "ready": "<status>", "...": "..." }, "labelPrefix": "domain-", "apiKeyCommand": ["<argv>"] or null }
    }
    ```
+
+   Leave `tracker` out entirely when the owner wants none.
 
    Write it outside the project (your scratchpad or `$TMPDIR`), then:
 
@@ -116,7 +156,11 @@ file that exists and differs, and writes nothing until each one is approved by n
    ```
 
    Never run `trust` without that yes. A declined formatter stays in `.claude/canon.json` and
-   never runs.
+   never runs. An approved API key command is recorded the same way, on its own yes:
+
+   ```bash
+   node "${CLAUDE_PLUGIN_ROOT}/scripts/scaffold.mjs" trust --root <project root> --answers <file> --command apiKeyCommand
+   ```
 
    A conflict the user declines stays as it is. If declining it means the setup is incomplete
    (for example an existing `.claude/canon.json` they will not replace), say what that leaves
@@ -137,6 +181,10 @@ file that exists and differs, and writes nothing until each one is approved by n
      file that governs them, and is empty until then.
    - Turn on GitHub branch protection for both branches. The hooks are a seatbelt; protection is
      the boundary.
+   - **With a tracker**, configure Linear's GitHub integration as the plugin README's
+     "Configuring Linear" section says, and check the API key works with
+     `node "${CLAUDE_PLUGIN_ROOT}/scripts/tracker.mjs" states`. Without the branch rules, nothing
+     moves an issue to its staging or production status.
 
 ## Hard limits
 
