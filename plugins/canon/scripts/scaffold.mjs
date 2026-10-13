@@ -4,7 +4,7 @@
  *
  *   node scaffold.mjs plan  --root <dir> --answers <file> [--enable-plugin] [--json]
  *   node scaffold.mjs apply --root <dir> --answers <file> [--enable-plugin] [--allow <path>]...
- *   node scaffold.mjs trust --root <dir> --answers <file>
+ *   node scaffold.mjs trust --root <dir> --answers <file> [--command formatFile|apiKeyCommand]
  *
  * `--answers` is a JSON file holding the `.claude/canon.json` to write; it is
  * validated against the same rules the hooks use. `--enable-plugin` also sets
@@ -27,9 +27,10 @@
  * link anywhere. A link that stays inside, such as `CLAUDE.md -> AGENTS.md`, is
  * written through.
  *
- * `trust` records the owner's approval of the answers' `formatFile` for this
- * repository in `~/.claude/canon/trusted.json`, outside it, which is the only
- * thing that lets `format-file.mjs` run it. Setup runs it after asking.
+ * `trust` records the owner's approval of the answers' `formatFile` (or, with
+ * `--command apiKeyCommand`, of `tracker.apiKeyCommand`) for this repository in
+ * `~/.claude/canon/trusted.json`, outside it, which is the only thing that lets
+ * `format-file.mjs` or `tracker.mjs` run it. Setup runs it after asking.
  *
  * Two files are edited rather than replaced, and still count as a conflict when
  * they exist: `CLAUDE.md`, where only the section between the `canon:begin` and
@@ -49,7 +50,15 @@ import {
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { CONFIG_PATH, DOMAINS_PATH, symlinkIn, trust, validate } from '../hooks/lib/config.mjs';
+import {
+  CONFIG_PATH,
+  DOMAINS_PATH,
+  keyCommandProblem,
+  symlinkIn,
+  trust,
+  trustKeyCommand,
+  validate,
+} from '../hooks/lib/config.mjs';
 import { build as buildIndex } from './canon-index.mjs';
 
 const PLUGIN = fileURLToPath(new URL('../', import.meta.url));
@@ -82,7 +91,33 @@ export function placeholders(config) {
     production: config.branches.production,
     prefixes: config.branches.prefixes.map((p) => code(`${p}/`)).join(', '),
     checks: checks.length ? checks.map(code).join(', ') : 'none configured in `.claude/canon.json`',
+    tracker: config.tracker ? trackerSection(config) : '',
   };
+}
+
+/**
+ * The CLAUDE.md paragraph for a project whose issue tracker is the gate, or nothing.
+ * Kept here rather than in the template so a project without a tracker gets no
+ * trace of one.
+ */
+function trackerSection({ tracker, owner }) {
+  const name = { linear: 'Linear' }[tracker.provider] ?? tracker.provider;
+  const status = (role) => `\`${tracker.statuses[role]}\``;
+  return [
+    `\n\n### ${name}\n`,
+    `${name} team \`${tracker.team}\` is the record and the gate. The commands take an issue ID`,
+    `(\`${tracker.team}-123\`) where they would take a spec number, read its status, and move it:`,
+    `\`/canon:define\` from ${status('ready')} to ${status('spec')}, \`/canon:approve\` to ${status('approved')},`,
+    `\`/canon:build\` to ${status('building')}, and \`/canon:build\` or \`/canon:ship\` to ${status('blocked')}`,
+    `when they need ${owner}. ${name}'s GitHub integration sets ${status('staging')} and ${status('production')}`,
+    "when the pull requests merge, never by hand. The spec's `**Status:**` line mirrors the issue.",
+    '',
+    `- Branches are \`<prefix>/${tracker.team.toLowerCase()}-123-<slug>\`. Commit bodies carry`,
+    `  \`Part of ${tracker.team}-123\`; the pull request body carries \`Fixes ${tracker.team}-123\`,`,
+    '  which is what moves the issue on merge.',
+    `- A ${status('blocked')} issue has its question in a comment starting \`canon: blocked\`.`,
+    '  Answer it in a comment below, or in the session, and re-run the command.',
+  ].join('\n');
 }
 
 /** Fill every `{{name}}`. An unknown name throws, so a typo in a template cannot ship. */
@@ -201,7 +236,7 @@ export function apply(root, config, { allow = [], ...options } = {}) {
 
 function parse(argv) {
   const [mode, ...rest] = argv;
-  const options = { mode, allow: [], enablePlugin: false, json: false };
+  const options = { mode, allow: [], enablePlugin: false, json: false, command: 'formatFile' };
   for (let i = 0; i < rest.length; i++) {
     const arg = rest[i];
     if (arg === '--root') options.root = rest[++i];
@@ -209,12 +244,16 @@ function parse(argv) {
     else if (arg === '--allow') options.allow.push(rest[++i]);
     else if (arg === '--enable-plugin') options.enablePlugin = true;
     else if (arg === '--json') options.json = true;
+    else if (arg === '--command') options.command = rest[++i];
     else throw new Error(`unknown argument ${arg}`);
   }
   if (!['plan', 'apply', 'trust'].includes(mode)) {
     throw new Error('first argument must be plan, apply or trust');
   }
   if (!options.root || !options.answers) throw new Error('--root and --answers are required');
+  if (!['formatFile', 'apiKeyCommand'].includes(options.command)) {
+    throw new Error('--command must be formatFile or apiKeyCommand');
+  }
   return options;
 }
 
@@ -241,6 +280,30 @@ function main(argv) {
     return 2;
   }
   delete config.$schema;
+
+  // Setup approves the key command before the rest of the config exists, to list the
+  // team's statuses with it, so only the command itself has to be valid here.
+  if (options.mode === 'trust' && options.command === 'apiKeyCommand') {
+    const argv = config?.tracker?.apiKeyCommand;
+    if (argv === undefined || argv === null) {
+      process.stderr.write(
+        'scaffold: the answers set no apiKeyCommand, so there is nothing to trust.\n'
+      );
+      return 1;
+    }
+    const problem = keyCommandProblem(root, argv);
+    if (problem !== null) {
+      process.stderr.write(
+        `scaffold: tracker.apiKeyCommand ${problem}, so it cannot be approved: an approval\n` +
+          'covers the command line, and anything the repository holds can change under it.\n'
+      );
+      return 2;
+    }
+    trustKeyCommand(root, argv);
+    process.stdout.write(`trusted   apiKeyCommand ${JSON.stringify(argv)} for ${root}\n`);
+    return 0;
+  }
+
   const errors = validate(config);
   if (errors.length) {
     process.stderr.write(

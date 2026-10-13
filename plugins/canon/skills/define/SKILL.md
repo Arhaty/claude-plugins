@@ -1,7 +1,7 @@
 ---
 name: define
 description: Research a change and write its spec to docs/specs, asking the owner questions until nothing is open
-argument-hint: <slug or one-line description, or a spec number for a revision round>
+argument-hint: <slug or one-line description, an issue ID with a tracker, or a spec number for a revision>
 disable-model-invocation: true
 ---
 
@@ -14,6 +14,9 @@ the project needs `/canon:setup`. Otherwise it prints the project's config. Belo
 `<integration>` and `<production>` mean its `owner`, `branches.integration` and
 `branches.production`, and `<prefixes>` its `branches.prefixes`.
 
+**If it has a `tracker` block**, read `${CLAUDE_PLUGIN_ROOT}/references/tracker.md` now, then
+follow **With a tracker** below wherever a step names it.
+
 ## What this is for
 
 The owner ran this and is reading the conversation as it happens. That is the point: every
@@ -25,6 +28,37 @@ so a question not asked here is a guess made there.
 The spec file is the record. Its `**Status:**` line, directly under the H1, is the gate every
 later command reads, and `docs/specs/README.md` owns the lifecycle. This command writes `draft`
 and nothing else.
+
+## With a tracker
+
+A new spec starts from an issue, and `$ARGUMENTS` is its identifier, e.g. `ABC-123`. Anything else
+for a new spec is a stop: ask for the issue.
+
+1. **Read the issue and its comments** with `issue` and `comments`. The title and description are
+   the brief; a comment from the owner refines it.
+2. **Check the role before anything else.**
+   - **New spec: the role must be `ready`**, or `spec` with no spec for it anywhere: no branch
+     `*/<id>-*` on the remote or here, and no spec file naming `<ID>`. That is a define that
+     stopped before writing one; carry on from it as a new spec, on its branch if it cut one.
+     `spec` with a spec already has one waiting to be read, so it wants `/canon:approve` or a
+     revision round on that spec; `approved` wants `/canon:build`;
+     `building` or `blocked` is being built; `staging` or `production` is merged. Say which and
+     stop.
+   - **Revision round: the role must be `spec` or `approved`.** `approved` goes back to `spec`,
+     and the status line back to `draft`, for the same reason: the approval was for text that no
+     longer exists. `building` or later stops, as `in-progress` does.
+3. **Set `spec` once the checks pass, before the research**: `set-state <ID> spec`. It is the board
+   saying the issue is being worked, and where it rests until `/canon:approve`.
+4. **The slug comes from the issue title**, and the branch is `<prefix>/<id>-<slug>` with the
+   identifier in lowercase. A revision round finds it with `git branch -a --list '*/<id>-*'`. A
+   branch that already exists for the identifier on a new spec is a stop: name it.
+5. **The spec carries `**Issue:** <ID>`** on the line under `**Status:**`.
+6. **Fill in the domain labels when the spec is written.** Put every path in `## Where` through
+   `.claude/canon-domains.json`; each canon file it names is a label, `<labelPrefix><name>`,
+   where `labelPrefix` is `tracker.labelPrefix` (default `domain-`) and `<name>` the file without
+   `.md`: `auth.md` is `domain-auth`. Add the ones the issue lacks with `label <ID> +a,+b`, and
+   remove none. A label the client reports `missing` does not exist in the workspace: say so in
+   the hand-back and never create it.
 
 ## Steps
 
@@ -51,6 +85,9 @@ and nothing else.
    text that no longer exists. If it is `in-progress` or later, stop: a build is running against
    it, and changing the contract under it is the owner's call.
 
+   With a tracker, see **With a tracker**: the argument is the issue, and its role decides the
+   round.
+
    **A new slug that is already taken is refused.** Check every spec, active and archived:
 
    ```bash
@@ -66,7 +103,7 @@ and nothing else.
    already does half the work.
 
    The branch is `<prefix>/<slug>`, with a prefix from `<prefixes>` matching what the change is.
-   Say which in one line.
+   With a tracker it is `<prefix>/<id>-<slug>`. Say which in one line.
 
    **New spec:**
 
@@ -123,7 +160,8 @@ and nothing else.
 5. **Write the spec to `docs/specs/NNN-<slug>.md` and leave it uncommitted.**
 
    Start from `docs/specs/_TEMPLATE.md` and fill every section in order, with
-   `**Status:** draft` directly under the H1 and `## TL;DR` under that. A file rather than a chat
+   `**Status:** draft` directly under the H1 (and `**Issue:** <ID>` under it, with a tracker) and
+   `## TL;DR` under that. A file rather than a chat
    message, because a spec goes through several rounds and is edited in place, diffed between
    rounds and handed to reviewers by path. **Do not paste the spec into the chat.** Report what
    changed and why, and let the owner read the file.
@@ -154,7 +192,8 @@ and nothing else.
    `Decisions`, and say what moved rather than restating the spec. Two to four rounds is normal.
 
 6. **Stop with the spec written, the frontier empty and the status `draft`.** Say where the file
-   is, how many decisions it holds, and that `/canon:approve` is next.
+   is, how many decisions it holds, and that `/canon:approve` is next. With a tracker, also the
+   issue's status and any label that was missing from the workspace.
 
 ## Hard limits
 
@@ -164,6 +203,8 @@ and nothing else.
 - **Write `draft` and nothing else.** `approved` is `/canon:approve`'s, `in-progress` is
   `/canon:build`'s, `shipped` is `/canon:staging`'s, and `abandoned` is set only on the owner's
   instruction.
+- **With a tracker, one status move: `ready` to `spec`**, or `approved` back to `spec` in a
+  revision round. Never post the spec to the issue: it lives in `docs/specs/`.
 - **Never commit, push or open a pull request.**
 - **Do not edit `docs/canon/` on your own initiative.** If the owner asks for the canon edit
   during this pass, write it to `/canon:canon`'s format and leave it uncommitted, so

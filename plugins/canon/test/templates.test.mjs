@@ -22,7 +22,7 @@ import { pathToFileURL } from 'node:url';
 
 import { trustKey, validate } from '../hooks/lib/config.mjs';
 import { apply, fill, plan } from '../scripts/scaffold.mjs';
-import { CONFIG, ROOT, afterEach, beforeEach, describe, expect, it } from './helpers.mjs';
+import { CONFIG, ROOT, TRACKER, afterEach, beforeEach, describe, expect, it } from './helpers.mjs';
 
 const EXPECTED = [
   'CLAUDE.md',
@@ -250,6 +250,88 @@ describe('scaffold', () => {
     expect(stored[trustKey(root)].formatFile).toEqual(argv);
     expect(existsSync(join(root, '.claude'))).toBe(false);
     rmSync(home, { recursive: true, force: true });
+  });
+
+  it('writes the tracker paragraph only for a project with a tracker', () => {
+    apply(root, config());
+    const plain = readFileSync(join(root, 'CLAUDE.md'), 'utf8');
+    expect(plain).not.toMatch(/Linear|canon: blocked|Fixes /);
+    expect(plain).toMatch(/update the spec first\.\n\n### Branches and commits/);
+
+    const other = mkdtempSync(join(tmpdir(), 'canon-scaffold-'));
+    try {
+      apply(other, { ...config(), tracker: TRACKER });
+      const claude = readFileSync(join(other, 'CLAUDE.md'), 'utf8');
+      expect(claude).toMatch(/update the spec first\.\n\n### Linear\n\nLinear team `ABC`/);
+      expect(claude).toMatch(/from `Todo` to `In Spec`/);
+      expect(claude).toMatch(/`<prefix>\/abc-123-<slug>`/);
+      expect(claude).toMatch(/`Fixes ABC-123`/);
+      expect(claude).toMatch(/re-run the command\.\n\n### Branches and commits/);
+      const written = JSON.parse(readFileSync(join(other, '.claude/canon.json'), 'utf8'));
+      expect(written.tracker).toEqual(TRACKER);
+    } finally {
+      rmSync(other, { recursive: true, force: true });
+    }
+  });
+
+  it('records an approved API key command from a partial answers file', () => {
+    const home = mkdtempSync(join(tmpdir(), 'canon-home-'));
+    const answers = join(root, 'answers.json');
+    const argv = ['op', 'read', 'op://Vault/Item/field'];
+    const trustCli = (...extra) =>
+      spawnSync(
+        process.execPath,
+        [
+          join(ROOT, 'scripts/scaffold.mjs'),
+          'trust',
+          '--root',
+          root,
+          '--answers',
+          answers,
+          ...extra,
+        ],
+        {
+          encoding: 'utf8',
+          env: {
+            ...process.env,
+            CANON_TEST_HOME: home,
+            NODE_OPTIONS: `--import=${pathToFileURL(join(ROOT, 'test/fake-home.mjs'))}`,
+          },
+        }
+      );
+    try {
+      // Setup lists the team's statuses before the rest of the config exists.
+      writeFileSync(
+        answers,
+        JSON.stringify({ tracker: { provider: 'linear', team: 'ABC', apiKeyCommand: argv } })
+      );
+      const result = trustCli('--command', 'apiKeyCommand');
+      expect(result.status, result.stderr).toBe(0);
+      const stored = JSON.parse(readFileSync(join(home, '.claude/canon/trusted.json'), 'utf8'));
+      expect(stored[trustKey(root)].apiKeyCommand).toEqual(argv);
+      expect(stored[trustKey(root)].formatFile).toBeUndefined();
+
+      // The formatter still needs a whole valid config, and an unknown kind is refused.
+      expect(trustCli().status).toBe(2);
+      expect(trustCli('--command', 'anything').status).toBe(2);
+      writeFileSync(answers, JSON.stringify({ tracker: { apiKeyCommand: ['op', ''] } }));
+      expect(trustCli('--command', 'apiKeyCommand').status).toBe(2);
+      writeFileSync(answers, JSON.stringify({ tracker: {} }));
+      expect(trustCli('--command', 'apiKeyCommand').status).toBe(1);
+
+      // A command that names the repository, or a relative program, is never approved.
+      writeFileSync(
+        answers,
+        JSON.stringify({ tracker: { apiKeyCommand: ['sh', join(root, 'key.sh')] } })
+      );
+      const refused = trustCli('--command', 'apiKeyCommand');
+      expect(refused.status).toBe(2);
+      expect(refused.stderr).toMatch(/names this repository's path/);
+      writeFileSync(answers, JSON.stringify({ tracker: { apiKeyCommand: ['./key.sh'] } }));
+      expect(trustCli('--command', 'apiKeyCommand').stderr).toMatch(/not a relative path/);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
   });
 
   it('throws on an unknown placeholder rather than shipping it', () => {

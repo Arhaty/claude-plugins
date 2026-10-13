@@ -27,6 +27,11 @@ Below, `<owner>`, `<integration>` and `<production>` mean its `owner`, `branches
 `branches.production`; **the gate** is its non-null `commands`; `urls.preview` (with `{branch}`
 replaced) and `urls.staging` are where the work can be seen, when they are set.
 
+**If it has a `tracker` block**, read `${CLAUDE_PLUGIN_ROOT}/references/tracker.md` now. This
+command **never sets the issue's status**: the merge does, through the tracker's GitHub
+integration, from the `Fixes <ID>` line in the pull request body. `<ID>` is the spec's
+`**Issue:**` line.
+
 ## Requires `gh`
 
 Merging needs the API. Without an authenticated `gh`, say so and give the pull request URL so the
@@ -64,6 +69,14 @@ Check all of these before merging, and stop at the first that fails.
   two concerns. A `draft` or `approved` spec means the work was not built through
   `/canon:build`: say which and let the owner decide; never move a status this command does not
   own.
+
+- **With a tracker, the pull request body does not close the issue**: no `Fixes <ID>` line, or
+  the identifier sits beside a contributing word (`Part of`, `ref`, `related to`,
+  `contributes to`, `towards`), which links the pull request and stops the merge moving the
+  issue. Read it with `gh pr view <number> --json body -q .body`. This one is free to fix and
+  this command fixes it: rewrite the body with a `Fixes <ID>` line and no contributing word for
+  `<ID>` (`gh pr edit <number> --body-file <file>`), then carry on. After the merge it cannot be
+  fixed: a merge event does not replay.
 
 ## Steps
 
@@ -112,7 +125,7 @@ gh pr view --json number,state,baseRefName,mergeable,url
 ```
 
 If none is open, `gh pr create --base <integration>` with a body covering what changed, why and
-how to verify. Then `gh pr ready <number>`, which is idempotent: `/canon:build` leaves the pull
+how to verify, and with a tracker a `Fixes <ID>` line. Then `gh pr ready <number>`, which is idempotent: `/canon:build` leaves the pull
 request in draft when the canon hook refused the ready mark.
 
 **6. Wait for CI on the head commit.**
@@ -173,4 +186,7 @@ git checkout <integration> && git pull --ff-only && git branch -d <branch>
 - That it merged, and where to see it: `urls.staging` if set. If `urls.preview` is null, say the
   branch had no preview, so the integration deployment is the first served build of the work.
 - That production is unaffected.
+- **With a tracker**, the issue's status a minute after the merge (`issue <ID>`). Still not at
+  `staging`: say so, and that the GitHub integration's branch rule for `<integration>` or the pull
+  request body is what to check. Never set it by hand.
 - **If this command opened the pull request itself, say so**: nobody read the diff.

@@ -41,8 +41,24 @@ const TOP = [
   'commands',
   'formatFile',
   'urls',
+  'tracker',
 ];
 const BRANCHES = ['integration', 'production', 'prefixes'];
+const TRACKER = ['provider', 'team', 'statuses', 'labelPrefix', 'apiKeyCommand'];
+
+/**
+ * The issue trackers a `tracker` block may name. One module each in `scripts/tracker/`.
+ * `fixture` is a tracker held in a file in the project, for tests and evals.
+ */
+export const PROVIDERS = ['linear', 'fixture'];
+
+/**
+ * canon's lifecycle roles, which `tracker.statuses` maps to the team's own status
+ * names. Each names somewhere the work can be: waiting for a spec, being specced,
+ * approved, being built, waiting on the owner, merged into the integration branch,
+ * merged into production.
+ */
+export const ROLES = ['ready', 'spec', 'approved', 'building', 'blocked', 'staging', 'production'];
 
 /**
  * A key the schema does not name, at any level, as an error per key. The schema sets
@@ -109,10 +125,11 @@ export function symlinkIn(root, path) {
 
 /**
  * The project's root: `$CLAUDE_PROJECT_DIR` when Claude Code sets it, else the
- * work tree that holds the payload's `cwd`, else the process's own directory.
+ * work tree that holds the payload's `cwd`, else the process's own directory. `env`
+ * is the environment to read it from, the process's unless a caller passes its own.
  */
-export function projectRoot(payload) {
-  const fromEnv = process.env.CLAUDE_PROJECT_DIR;
+export function projectRoot(payload, env = process.env) {
+  const fromEnv = env.CLAUDE_PROJECT_DIR;
   if (fromEnv && existsSync(fromEnv)) return canonical(fromEnv);
   const cwd = typeof payload?.cwd === 'string' && existsSync(payload.cwd) ? payload.cwd : '.';
   try {
@@ -140,7 +157,9 @@ export function validate(config) {
     ...unknownKeys(config, TOP, ''),
     ...unknownKeys(config.branches, BRANCHES, 'branches.'),
     ...unknownKeys(config.commands, COMMANDS, 'commands.'),
-    ...unknownKeys(config.urls, URLS, 'urls.')
+    ...unknownKeys(config.urls, URLS, 'urls.'),
+    ...unknownKeys(config.tracker, TRACKER, 'tracker.'),
+    ...unknownKeys(config.tracker?.statuses, ROLES, 'tracker.statuses.')
   );
   if (config.version !== 1) errors.push('`version` must be 1');
   if (!isText(config.owner)) errors.push('`owner` must be a non-empty string');
@@ -193,7 +212,71 @@ export function validate(config) {
       errors.push('`urls.preview` must contain `{branch}`');
     }
   }
+
+  if ('tracker' in config) errors.push(...trackerErrors(config.tracker, isText));
   return errors;
+}
+
+/**
+ * Problems with the optional `tracker` block. Absent means no tracker, and the spec's
+ * `**Status:**` line is the gate, as it always was.
+ */
+function trackerErrors(tracker, isText) {
+  if (tracker === null || typeof tracker !== 'object' || Array.isArray(tracker)) {
+    return ['`tracker` must be an object, or left out'];
+  }
+  const errors = [];
+  if (!PROVIDERS.includes(tracker.provider)) {
+    errors.push(`\`tracker.provider\` must be one of: ${PROVIDERS.join(', ')}`);
+  }
+  if (!isText(tracker.team) || !/^[A-Z0-9]+$/.test(tracker.team)) {
+    errors.push('`tracker.team` must be the team key in capitals, e.g. "ABC"');
+  }
+  const statuses = tracker.statuses;
+  if (statuses === null || typeof statuses !== 'object' || Array.isArray(statuses)) {
+    errors.push('`tracker.statuses` must map each role to a status name');
+  } else {
+    for (const role of ROLES) {
+      if (!isText(statuses[role])) {
+        errors.push(`\`tracker.statuses.${role}\` must be a status name`);
+      }
+    }
+    const names = ROLES.map((role) => statuses[role]).filter(isText);
+    const repeated = names.filter((name, i) => names.indexOf(name) !== i);
+    if (repeated.length) {
+      errors.push(
+        `\`tracker.statuses\` must name a different status for each role; repeated: ${[...new Set(repeated)].join(', ')}`
+      );
+    }
+  }
+  if (
+    'labelPrefix' in tracker &&
+    !(isText(tracker.labelPrefix) && /^[a-z0-9][a-z0-9-]*$/.test(tracker.labelPrefix))
+  ) {
+    errors.push('`tracker.labelPrefix` must be a lowercase prefix, e.g. "domain-"');
+  }
+  const command = tracker.apiKeyCommand;
+  if (command !== undefined && command !== null) {
+    const problem = keyCommandShape(command);
+    if (problem) errors.push(`\`tracker.apiKeyCommand\` ${problem}, or null`);
+  }
+  return errors;
+}
+
+/**
+ * What is wrong with the shape of a key command, or `null`. One rule, read by
+ * `validate` and by setup's approval. The program is a bare name, found on `PATH`,
+ * or an absolute path: a relative one would resolve wherever the command runs.
+ */
+export function keyCommandShape(argv) {
+  const isText = (value) => typeof value === 'string' && value.trim() !== '';
+  if (!Array.isArray(argv) || argv.length === 0 || !argv.every(isText)) {
+    return 'must be a non-empty list of argv strings';
+  }
+  if (argv[0].includes('/') && !argv[0].startsWith('/')) {
+    return 'must start with a program name or an absolute path, not a relative path';
+  }
+  return null;
 }
 
 /**
@@ -233,7 +316,8 @@ export function configProblem(state, hook) {
 }
 
 /**
- * Where the owner's approval of each project's `formatFile` is kept: in their home
+ * Where the owner's approvals of each project's commands are kept, `formatFile` and
+ * `tracker.apiKeyCommand`, each approved on its own: in their home
  * directory, outside every repository. A record inside the repository proves
  * nothing, because whoever commits the command can commit the approval beside it.
  *
@@ -242,7 +326,7 @@ export function configProblem(state, hook) {
  */
 export const trustFile = () => join(userInfo().homedir, '.claude', 'canon', 'trusted.json');
 
-/** The sha256 of a `formatFile` argv list, which is what an approval records. */
+/** The sha256 of an argv list, which is what an approval records. */
 export function commandDigest(argv) {
   return createHash('sha256').update(JSON.stringify(argv)).digest('hex');
 }
@@ -278,23 +362,86 @@ export function trustKey(root) {
   return canonical(root);
 }
 
+/** This repository's entry in the trust file, as an object, empty when there is none. */
+function entryFor(trusted, key) {
+  const entry = trusted[key];
+  return entry !== null && typeof entry === 'object' && !Array.isArray(entry) ? entry : {};
+}
+
+function writeTrust(trusted) {
+  const file = trustFile();
+  mkdirSync(dirname(file), { recursive: true, mode: 0o700 });
+  writeFileSync(file, `${JSON.stringify(trusted, null, 2)}\n`, { mode: 0o600 });
+}
+
 /**
  * Has the owner approved exactly this `formatFile` for this repository? Keyed by
  * `trustKey` and the command's digest, so a changed command, or the same command
  * in another clone, is not approved until setup asks again.
  */
 export function isTrusted(root, argv) {
-  const entry = readTrust()[trustKey(root)];
-  return typeof entry?.sha256 === 'string' && entry.sha256 === commandDigest(argv);
+  const digest = entryFor(readTrust(), trustKey(root)).sha256;
+  return typeof digest === 'string' && digest === commandDigest(argv);
 }
 
-/** Record the owner's approval of `argv` for `root`, replacing any earlier one. */
+/**
+ * Record the owner's approval of `argv` as `formatFile` for `root`, replacing any
+ * earlier one and keeping the key command's.
+ */
 export function trust(root, argv) {
-  const file = trustFile();
   const trusted = readTrust();
-  trusted[trustKey(root)] = { sha256: commandDigest(argv), formatFile: argv };
-  mkdirSync(dirname(file), { recursive: true, mode: 0o700 });
-  writeFileSync(file, `${JSON.stringify(trusted, null, 2)}\n`, { mode: 0o600 });
+  const key = trustKey(root);
+  trusted[key] = { ...entryFor(trusted, key), sha256: commandDigest(argv), formatFile: argv };
+  writeTrust(trusted);
+}
+
+/**
+ * Has the owner approved exactly this `tracker.apiKeyCommand` for this repository?
+ * Approved on its own: approving the formatter says nothing about it, or the other
+ * way round. The argv list itself is recorded and compared, as `apiKeyCommand` in
+ * the repository's entry; a changed command is not approved until setup asks again.
+ */
+export function isKeyCommandTrusted(root, argv) {
+  const recorded = entryFor(readTrust(), trustKey(root)).apiKeyCommand;
+  return Array.isArray(recorded) && JSON.stringify(recorded) === JSON.stringify(argv);
+}
+
+/**
+ * Where a key command runs: the account's home directory, never the repository, so a
+ * relative path in an argument cannot reach a file the repository holds.
+ */
+export const keyCommandCwd = () => userInfo().homedir;
+
+/**
+ * Why a key command may not run against `root`, or `null`. An approval covers the
+ * command line; a file the repository holds can change under it in any commit. So
+ * the command runs outside the repository (`keyCommandCwd`), and is refused when any
+ * word names the repository's own path, as written or through a symlink, in a path,
+ * a `--flag=path` or a shell string. Recognising every way an argv list could reach
+ * a file is a list with no end; keeping the command out of the repository is not.
+ */
+export function keyCommandProblem(root, argv) {
+  const shape = keyCommandShape(argv);
+  if (shape) return shape;
+  const roots = [...new Set([resolve(root), canonical(root)])];
+  const under = (path) => roots.some((base) => path === base || path.startsWith(base + sep));
+  // Every absolute path in a word, standing alone, after `--flag=` or inside a shell
+  // string, resolved through symlinks and aliases such as macOS's `/var`.
+  const paths = (word) => word.split(/[\s=:;|&'"()]+/).filter((part) => part.startsWith('/'));
+  for (const word of argv) {
+    const hit =
+      roots.some((base) => word.includes(base)) || paths(word).some((p) => under(canonical(p)));
+    if (hit) return `names this repository's path (${word})`;
+  }
+  return null;
+}
+
+/** Record the owner's approval of `argv` as `tracker.apiKeyCommand` for `root`. */
+export function trustKeyCommand(root, argv) {
+  const trusted = readTrust();
+  const key = trustKey(root);
+  trusted[key] = { ...entryFor(trusted, key), apiKeyCommand: argv };
+  writeTrust(trusted);
 }
 
 /** Read and parse a hook's stdin payload. `null` when it is not JSON. */

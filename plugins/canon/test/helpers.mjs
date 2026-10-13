@@ -101,6 +101,21 @@ export const CONFIG = {
   urls: { preview: null, staging: null, production: null },
 };
 
+/** A `tracker` block for a fictional Linear team, `ABC`. */
+export const TRACKER = {
+  provider: 'linear',
+  team: 'ABC',
+  statuses: {
+    ready: 'Todo',
+    spec: 'In Spec',
+    approved: 'Approved',
+    building: 'In Progress',
+    blocked: 'Blocked',
+    staging: 'In Staging',
+    production: 'Done',
+  },
+};
+
 /** The domain map every fixture project starts from. */
 export const DOMAINS = {
   $comment: ['Fixture map for the hook tests.'],
