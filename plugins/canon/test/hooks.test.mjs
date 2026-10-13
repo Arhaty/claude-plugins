@@ -1118,6 +1118,63 @@ describe('ci-watch.sh', () => {
     expect(calls).toContain(`--commit ${sent}`);
   });
 
+  it('reads the commit, the source and the branch from the same ref line', () => {
+    repo.git(
+      '-c',
+      'user.name=t',
+      '-c',
+      'user.email=t@t',
+      'commit',
+      '-q',
+      '--allow-empty',
+      '-m',
+      'y'
+    );
+    repo.git('branch', 'other', 'HEAD~1');
+    const older = sha('HEAD~1');
+    // A new branch prints no range: its source ref names the commit, not HEAD.
+    const created = watch({
+      command: 'git push -u origin other',
+      output: ' * [new branch]      other -> other\n',
+      conclusion: 'failure',
+    });
+    expect(created.calls).toContain(`--commit ${older}`);
+    expect(created.stderr).toContain(`CI failed on other at ${older}.`);
+    // Two refs: the last line wins whole, never a commit from one and a branch from another.
+    const both = watch({
+      command: 'git push origin feature other',
+      output: `   0000000..${sha('HEAD').slice(0, 7)}  feature -> feature\n * [new branch]      other -> other\n`,
+      conclusion: 'failure',
+    });
+    expect(both.stderr).toContain(`CI failed on other at ${older}.`);
+  });
+
+  it('stays quiet about a commit this checkout cannot resolve', () => {
+    const result = watch({
+      command: 'cd ../elsewhere && git push',
+      output: '   0000000..abcdef1  main -> main\n',
+      conclusion: 'failure',
+    });
+    expect(result.status).toBe(0);
+    expect(result.calls).toBe('');
+  });
+
+  it('runs in a worktree whose checkout predates the config', () => {
+    const plain = scratchRepo();
+    try {
+      rmSync(join(plain.dir, '.claude/canon.json'));
+      const result = watch({
+        command: 'git push -u origin HEAD',
+        cwd: plain.dir,
+        project: repo.dir,
+        conclusion: 'failure',
+      });
+      expect(result.status).toBe(2);
+    } finally {
+      rmSync(plain.dir, { recursive: true, force: true });
+    }
+  });
+
   it('falls back to HEAD for a new branch, which prints no range', () => {
     const { calls } = watch({
       command: 'git push -u origin HEAD',

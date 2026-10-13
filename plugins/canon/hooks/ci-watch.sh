@@ -28,21 +28,22 @@ input=$(cat)
 
 # Node rather than jq: every hook here already needs it, and a missing jq read every command as
 # empty and switched the watcher off without a word. Prints the command; whether the output says
-# nothing was pushed; the directory the command ran in; the commit the push sent, from git's
-# `old..new  src -> dst` line, when the output has one; and the branch it wrote, `dst`, from that
-# line or a `[new branch]` one. The output is JSON-encoded here, so a newline is a backslash.
+# nothing was pushed; the directory the command ran in; and, from the last ref git reported, the
+# commit it sent (`old..new  src -> dst`, empty for a `[new branch]` line), its source ref and the
+# branch it wrote. All three come from one line. The output is JSON-encoded here, so a newline is
+# a backslash.
 read_payload='let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{const p=JSON.parse(s);
 const out=JSON.stringify(p.tool_response??"");
-const sent=[...out.matchAll(/\b[0-9a-f]{7,40}\.\.\.?([0-9a-f]{7,40})\s+\S+ -> /g)].at(-1)?.[1]??"";
-const dst=[...out.matchAll(/(?:\b[0-9a-f]{7,40}\.\.\.?[0-9a-f]{7,40}|\[new branch\])\s+\S+ -> ([^\s\\]+)/g)].at(-1)?.[1]??"";
+const ref=[...out.matchAll(/(?:\b[0-9a-f]{7,40}\.\.\.?([0-9a-f]{7,40})|\[new branch\])\s+([^\s\\]+) -> ([^\s\\]+)/g)].at(-1)??[];
 const one=(v)=>String(v??"").replace(/\n/g," ");
-process.stdout.write([one(p.tool_input?.command),/Everything up-to-date/.test(out)?"1":"0",one(p.cwd),sent,dst].join("\n"))}catch{}})'
+process.stdout.write([one(p.tool_input?.command),/Everything up-to-date/.test(out)?"1":"0",one(p.cwd),ref[1]??"",ref[2]??"",ref[3]??""].join("\n"))}catch{}})'
 parsed=$(printf '%s' "$input" | node -e "$read_payload" 2>/dev/null)
 cmd=$(printf '%s' "$parsed" | sed -n 1p)
 up_to_date=$(printf '%s' "$parsed" | sed -n 2p)
 cwd=$(printf '%s' "$parsed" | sed -n 3p)
 sent=$(printf '%s' "$parsed" | sed -n 4p)
-dst=$(printf '%s' "$parsed" | sed -n 5p)
+src=$(printf '%s' "$parsed" | sed -n 5p)
+dst=$(printf '%s' "$parsed" | sed -n 6p)
 
 case "$cmd" in
   *"git push"*) ;;
@@ -62,13 +63,22 @@ command -v gh >/dev/null 2>&1 || exit 0
 # in the project directory watched a commit nobody pushed.
 cd "${cwd:-${CLAUDE_PROJECT_DIR:-.}}" 2>/dev/null || exit 0
 top=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0
-[ -f "$top/.claude/canon.json" ] || exit 0
+# A canon project: the checkout the command ran in, or the session's project, when a worktree
+# was cut from a branch that predates the config.
+[ -f "$top/.claude/canon.json" ] || [ -f "${CLAUDE_PROJECT_DIR:-/nonexistent}/.claude/canon.json" ] ||
+  exit 0
 
-# What the push sent, when git printed it: `git push origin other-branch` sends a commit that is
-# not `HEAD`. A new branch prints no range, and then `HEAD` is the best cheap answer.
-sha=""
-[ -n "$sent" ] && sha=$(git rev-parse --verify -q "$sent^{commit}" 2>/dev/null)
-[ -n "$sha" ] || sha=$(git rev-parse HEAD 2>/dev/null) || exit 0
+# What the push sent, from the line git printed: `git push origin other-branch` sends a commit
+# that is not `HEAD`. A new branch prints no range, so its source ref names the commit. A commit
+# this checkout cannot resolve was pushed from somewhere else (`cd ../other && git push`): stay
+# quiet rather than watch the wrong one. With no ref line at all, `HEAD`.
+if [ -n "$sent" ]; then
+  sha=$(git rev-parse --verify -q "$sent^{commit}" 2>/dev/null) || exit 0
+elif [ -n "$src" ]; then
+  sha=$(git rev-parse --verify -q "$src^{commit}" 2>/dev/null) || exit 0
+else
+  sha=$(git rev-parse HEAD 2>/dev/null) || exit 0
+fi
 # The branch the push wrote, which `git push origin feature` from `main` is not `HEAD`'s.
 branch=${dst#refs/heads/}
 [ -n "$branch" ] || branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null)
