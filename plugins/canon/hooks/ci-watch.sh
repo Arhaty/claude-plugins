@@ -28,18 +28,21 @@ input=$(cat)
 
 # Node rather than jq: every hook here already needs it, and a missing jq read every command as
 # empty and switched the watcher off without a word. Prints the command; whether the output says
-# nothing was pushed; the directory the command ran in; and the commit the push sent, from git's
-# `old..new  src -> dst` line, when the output has one.
+# nothing was pushed; the directory the command ran in; the commit the push sent, from git's
+# `old..new  src -> dst` line, when the output has one; and the branch it wrote, `dst`, from that
+# line or a `[new branch]` one. The output is JSON-encoded here, so a newline is a backslash.
 read_payload='let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{const p=JSON.parse(s);
 const out=JSON.stringify(p.tool_response??"");
 const sent=[...out.matchAll(/\b[0-9a-f]{7,40}\.\.\.?([0-9a-f]{7,40})\s+\S+ -> /g)].at(-1)?.[1]??"";
+const dst=[...out.matchAll(/(?:\b[0-9a-f]{7,40}\.\.\.?[0-9a-f]{7,40}|\[new branch\])\s+\S+ -> ([^\s\\]+)/g)].at(-1)?.[1]??"";
 const one=(v)=>String(v??"").replace(/\n/g," ");
-process.stdout.write([one(p.tool_input?.command),/Everything up-to-date/.test(out)?"1":"0",one(p.cwd),sent].join("\n"))}catch{}})'
+process.stdout.write([one(p.tool_input?.command),/Everything up-to-date/.test(out)?"1":"0",one(p.cwd),sent,dst].join("\n"))}catch{}})'
 parsed=$(printf '%s' "$input" | node -e "$read_payload" 2>/dev/null)
 cmd=$(printf '%s' "$parsed" | sed -n 1p)
 up_to_date=$(printf '%s' "$parsed" | sed -n 2p)
 cwd=$(printf '%s' "$parsed" | sed -n 3p)
 sent=$(printf '%s' "$parsed" | sed -n 4p)
+dst=$(printf '%s' "$parsed" | sed -n 5p)
 
 case "$cmd" in
   *"git push"*) ;;
@@ -66,7 +69,9 @@ top=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0
 sha=""
 [ -n "$sent" ] && sha=$(git rev-parse --verify -q "$sent^{commit}" 2>/dev/null)
 [ -n "$sha" ] || sha=$(git rev-parse HEAD 2>/dev/null) || exit 0
-branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null)
+# The branch the push wrote, which `git push origin feature` from `main` is not `HEAD`'s.
+branch=${dst#refs/heads/}
+[ -n "$branch" ] || branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null)
 
 # GitHub takes a few seconds to register the run. A command that triggers nothing
 # is normal — a push to a branch with no pull request starts no run —
@@ -77,51 +82,66 @@ branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null)
 # result as this push's. A refused push and a `gh pr create` for an already-pushed SHA both start
 # nothing, and the time filter is what keeps them quiet.
 since=$(node -e 'process.stdout.write(new Date(Date.now()-60000).toISOString().replace(/\.\d+Z$/,"Z"))')
-id=""
+list_runs() {
+  gh run list --commit "$sha" --limit 20 --json databaseId,conclusion,createdAt \
+    --jq "map(select(.conclusion != \"skipped\" and .createdAt >= \"$since\")) | .[].databaseId" 2>/dev/null
+}
+ids=""
 for _ in $(seq 1 20); do
-  id=$(gh run list --commit "$sha" --limit 10 --json databaseId,conclusion,createdAt \
-        --jq "map(select(.conclusion != \"skipped\" and .createdAt >= \"$since\")) | .[0].databaseId // empty" 2>/dev/null)
-  [ -n "$id" ] && break
+  ids=$(list_runs)
+  [ -n "$ids" ] && break
   sleep 3
 done
-[ -n "$id" ] || exit 0
+[ -n "$ids" ] || exit 0
+# Workflows on one push register a few seconds apart; read once more for the stragglers.
+sleep 5
+ids=$(printf '%s\n%s\n' "$ids" "$(list_runs)" | grep -E '^[0-9]+$' | sort -u)
 
-gh run watch "$id" --exit-status --interval 10 >/dev/null 2>&1 && exit 0
-
-# `--exit-status` is non-zero for every conclusion that is not success, and
-# cancelled is one of them. A workflow with cancel-in-progress on pull requests
-# cancels the first of two pull-request events inside a minute by design, and
-# reporting that as a failure is noise. The later run is already being watched by
-# its own invocation, so there is nothing to say about the run it superseded.
+# **Every run, not the newest.** A workflow that skips itself, such as a deploy check on a
+# branch with no deployment, is listed with no conclusion yet, so the filter above cannot
+# drop it. Watching only the newest run watched that one, saw it skip, and never looked at
+# the run that failed.
 #
-# `skipped` is not a failure either. A workflow that runs on the same commit and
-# skips itself (a deploy check on a branch with no deployment) is registered with
-# no conclusion, so the filter above cannot see it coming, and it ends `skipped`.
-# This hook reports failures and nothing else, so it stays quiet. That is not a pass:
-# `/canon:staging` merges only on a successful run for the head commit.
+# `--exit-status` is non-zero for every conclusion that is not success. Three of those are
+# not failures:
 #
-# `timed_out` still reports: it is a real failure wearing a softer word.
-conclusion=$(gh run view "$id" --json conclusion --jq '.conclusion' 2>/dev/null)
-case "$conclusion" in
-  cancelled | skipped) exit 0 ;;
-esac
+# - `cancelled`: a workflow with cancel-in-progress on pull requests cancels the first of two
+#   pull-request events inside a minute by design, and the later run is watched by its own
+#   invocation.
+# - `skipped` and `neutral`: the workflow chose not to run, or not to judge.
+#
+# None of them is a pass either: this hook reports failures and nothing else, and
+# `/canon:staging` merges only when no check on the head is pending or failing.
+# `timed_out` reports: it is a real failure wearing a softer word.
+failed=""
+for id in $ids; do
+  gh run watch "$id" --exit-status --interval 10 >/dev/null 2>&1 && continue
+  conclusion=$(gh run view "$id" --json conclusion --jq '.conclusion' 2>/dev/null)
+  case "$conclusion" in
+    cancelled | skipped | neutral) ;;
+    *) failed="$failed $id" ;;
+  esac
+done
+[ -n "$failed" ] || exit 0
 
 # The job tree and annotations say which step broke and why. The raw log is
 # mostly runner noise, so it goes in trimmed and last. A job's id is its
 # check run's id, which is where its annotations live.
 {
   echo "CI failed on ${branch} at ${sha}."
-  echo
-  gh api "repos/{owner}/{repo}/actions/runs/$id/jobs" --jq '.jobs[]
-    | "\(.name): \(.conclusion // .status)",
-      (.steps[]? | select(.conclusion == "failure") | "  failed step: \(.name)")' 2>&1
-  for job in $(gh api "repos/{owner}/{repo}/actions/runs/$id/jobs" \
-      --jq '.jobs[] | select(.conclusion == "failure") | .id' 2>/dev/null); do
-    gh api "repos/{owner}/{repo}/check-runs/$job/annotations" \
-      --jq '.[] | "  \(.annotation_level) \(.path):\(.start_line) \(.message)"' 2>&1
+  for id in $failed; do
+    echo
+    gh api "repos/{owner}/{repo}/actions/runs/$id/jobs" --jq '.jobs[]
+      | "\(.name): \(.conclusion // .status)",
+        (.steps[]? | select(.conclusion == "failure") | "  failed step: \(.name)")' 2>&1
+    for job in $(gh api "repos/{owner}/{repo}/actions/runs/$id/jobs" \
+        --jq '.jobs[] | select(.conclusion == "failure") | .id' 2>/dev/null); do
+      gh api "repos/{owner}/{repo}/check-runs/$job/annotations" \
+        --jq '.[] | "  \(.annotation_level) \(.path):\(.start_line) \(.message)"' 2>&1
+    done
+    echo
+    echo "Tail of the failing log:"
+    gh run view "$id" --log-failed 2>&1 | tail -30
   done
-  echo
-  echo "Tail of the failing log:"
-  gh run view "$id" --log-failed 2>&1 | tail -30
 } >&2
 exit 2

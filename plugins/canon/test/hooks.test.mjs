@@ -974,24 +974,37 @@ describe('ci-watch.sh', () => {
   });
 
   /**
-   * Run the hook with a stub `gh` that logs every call, finds run 42 for any commit,
-   * and reports `conclusion` for it. `project` is `$CLAUDE_PROJECT_DIR`, which the
-   * payload's `cwd` overrides.
+   * Run the hook with a stub `gh` that logs every call and lists `runs` for any
+   * commit, each with its conclusion; `conclusion` alone is one run, 42. `sleep` is
+   * stubbed too, so the waits cost nothing. `project` is `$CLAUDE_PROJECT_DIR`, which
+   * the payload's `cwd` overrides.
    */
-  function watch({ command, output = '', cwd = repo.dir, project = repo.dir, conclusion }) {
+  function watch({
+    command,
+    output = '',
+    cwd = repo.dir,
+    project = repo.dir,
+    conclusion,
+    runs = { 42: conclusion },
+  }) {
+    const of = Object.entries(runs)
+      .map(([id, result]) => `${id}) echo ${result} ;;`)
+      .join(' ');
     writeFileSync(
       join(bin, 'gh'),
       [
         '#!/bin/sh',
         `echo "$*" >> '${log}'`,
+        `result() { case "$1" in ${of} esac; }`,
         'case "$1 $2" in',
-        '  "run list") echo 42 ;;',
-        `  "run watch") [ '${conclusion}' = success ] ;;`,
-        `  "run view") case "$*" in *--log-failed*) echo log ;; *) echo '${conclusion}' ;; esac ;;`,
+        `  "run list") printf '%s\\n' ${Object.keys(runs).join(' ')} ;;`,
+        '  "run watch") [ "$(result "$3")" = success ] ;;',
+        '  "run view") case "$*" in *--log-failed*) echo log ;; *) result "$3" ;; esac ;;',
         'esac',
       ].join('\n'),
       { mode: 0o755 }
     );
+    writeFileSync(join(bin, 'sleep'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
     const result = spawnSync('bash', [join(HOOKS, 'ci-watch.sh')], {
       input: JSON.stringify({
         tool_name: 'Bash',
@@ -1007,6 +1020,7 @@ describe('ci-watch.sh', () => {
       },
     });
     const calls = existsSync(log) ? readFileSync(log, 'utf8') : '';
+    rmSync(log, { force: true });
     return { status: result.status, stderr: result.stderr, calls };
   }
 
@@ -1031,6 +1045,50 @@ describe('ci-watch.sh', () => {
     // A workflow that skipped itself is not a failure. Staging's own test pins that it
     // is not a pass either.
     expect(watch({ ...push, conclusion: 'skipped' }).status).toBe(0);
+  });
+
+  it('watches every run the push started, not only the newest', () => {
+    const push = { command: 'git push -u origin HEAD' };
+    // A deploy check that skips itself is listed first; the real run fails after it.
+    const both = watch({ ...push, runs: { 41: 'skipped', 42: 'failure' } });
+    expect(both.status).toBe(2);
+    expect(both.calls).toContain('run watch 41');
+    expect(both.calls).toContain('run watch 42');
+    expect(both.calls).toContain('actions/runs/42/jobs');
+    expect(both.calls).not.toContain('actions/runs/41/jobs');
+    expect(watch({ ...push, runs: { 41: 'skipped', 42: 'success' } }).status).toBe(0);
+    expect(watch({ ...push, runs: { 41: 'neutral', 42: 'cancelled' } }).status).toBe(0);
+  });
+
+  it('names the branch the push wrote, not the one checked out', () => {
+    repo.git(
+      '-c',
+      'user.name=t',
+      '-c',
+      'user.email=t@t',
+      'commit',
+      '-q',
+      '--allow-empty',
+      '-m',
+      'y'
+    );
+    const sent = sha('HEAD~1');
+    const ranged = watch({
+      command: 'git push origin other',
+      output: `To origin\n   0000000..${sent.slice(0, 7)}  other -> other\nnext line\n`,
+      conclusion: 'failure',
+    });
+    expect(ranged.stderr).toContain(`CI failed on other at ${sent}.`);
+    const created = watch({
+      command: 'git push -u origin HEAD:feat/new',
+      output: " * [new branch]      HEAD -> feat/new\nbranch 'feature' set up\n",
+      conclusion: 'failure',
+    });
+    expect(created.stderr).toContain('CI failed on feat/new at');
+    // With nothing in the output to read, the checked-out branch.
+    expect(watch({ command: 'git push', conclusion: 'failure' }).stderr).toContain(
+      'CI failed on feature at'
+    );
   });
 
   it('watches the commit the push sent, not HEAD', () => {
