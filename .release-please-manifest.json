@@ -1,3 +1,4 @@
 {
-  "plugins/canon": "0.1.0"
+  "plugins/canon": "0.1.0",
+  "plugins/write": "0.0.0"
 }

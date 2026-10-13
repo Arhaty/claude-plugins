@@ -12,6 +12,7 @@ A Claude Code plugin marketplace. Add it once, then install the plugins you want
 | Plugin                  | What it does                                                                                                                                | Install                        |
 | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------ |
 | [canon](plugins/canon/) | A spec, build, review, canon workflow: specs plan the work, `docs/canon/` records how the project works today, hooks enforce the git rules. | `/plugin install canon@arhaty` |
+| [write](plugins/write/) | Drafts and edits text other people will read, in the project's voice, and strips AI writing tells.                                          | `/plugin install write@arhaty` |
 
 Before installing canon, check its [prerequisites](plugins/canon/README.md#prerequisites) and
 [limitations](plugins/canon/README.md#limitations).

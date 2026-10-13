@@ -63,6 +63,20 @@ Paths below are relative to `plugins/canon/`.
 - **Templates use `{{placeholders}}`** filled by `scripts/scaffold.mjs`. An unknown placeholder
   throws, and `test/templates.test.mjs` checks none survive.
 
+### write
+
+Paths below are relative to `plugins/write/`.
+
+- **`scripts/check.mjs` and `skills/write/references/patterns.md` change together.** A flag's
+  `#n` is the pattern's number in the list, and `test/check.test.mjs` fails when a number points
+  nowhere or a listed word goes unflagged. Renumbering the list means updating the checker.
+- **A new hard pattern ships with a test that it fires and one that it doesn't**: on its own in a
+  sentence, and inside code or a quotation, which the skill leaves alone.
+- **Setup never overwrites without an approval by name.** A new setting goes in
+  `templates/write.schema.json`, in `validate` in `scripts/scaffold.mjs`, and in `/write:setup`.
+- **Presets use `{{language}}` and nothing else** unless `render` fills the new placeholder; an
+  unknown one throws.
+
 ## Evals
 
 `plugins/<name>/evals/` holds `claude plugin eval` cases: does a skill trigger on the prompts it

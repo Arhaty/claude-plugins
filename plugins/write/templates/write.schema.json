@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/arhaty/claude-plugins/main/plugins/write/templates/write.schema.json",
+  "title": "write plugin config",
+  "description": "Per-project settings for the write plugin, in .claude/write.json. Written by /write:setup.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "language", "guide", "samples"],
+  "properties": {
+    "$schema": { "type": "string" },
+    "version": { "const": 1 },
+    "language": {
+      "description": "The language the project writes in, such as \"English\". The pattern list and the checker apply to English only.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 50
+    },
+    "guide": {
+      "description": "The project's style guide: a path relative to the project root, an https:// URL, or null for the skill's defaults. The guide overrides the skill where the two disagree.",
+      "oneOf": [
+        { "type": "null" },
+        { "type": "string", "pattern": "^https://\\S+$" },
+        {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^(?=.*\\S)(?!~)(?![a-zA-Z][a-zA-Z0-9+.-]*:)(?!(?:\\./)?\\.[cC][lL][aA][uU][dD][eE](?:/[wW][rR][iI][tT][eE]\\.[jJ][sS][oO][nN])?$)(?:\\./)?(?:(?!\\.\\.?/)[^/\\\\\\u0000-\\u001f\\u007f\\u0085\\u2028\\u2029]+/)*(?!\\.\\.?$)[^/\\\\\\u0000-\\u001f\\u007f\\u0085\\u2028\\u2029]+$"
+        }
+      ]
+    },
+    "samples": {
+      "description": "A Markdown file of sent or published text to match, one sample per ## heading, as a path relative to the project root, or null.",
+      "oneOf": [
+        { "type": "null" },
+        {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^(?=.*\\S)(?!~)(?![a-zA-Z][a-zA-Z0-9+.-]*:)(?!(?:\\./)?\\.[cC][lL][aA][uU][dD][eE](?:/[wW][rR][iI][tT][eE]\\.[jJ][sS][oO][nN])?$)(?:\\./)?(?:(?!\\.\\.?/)[^/\\\\\\u0000-\\u001f\\u007f\\u0085\\u2028\\u2029]+/)*(?!\\.\\.?$)[^/\\\\\\u0000-\\u001f\\u007f\\u0085\\u2028\\u2029]+$"
+        }
+      ]
+    }
+  }
+}
