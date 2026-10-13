@@ -46,6 +46,8 @@ enforce the git rules around it.
   optional
 - a per-file formatter, and whether you approve running it
 - whether to enable canon in the project's `.claude/settings.json`
+- whether `/canon:staging` should start CI when nothing has run on the head commit, and with
+  which workflow. See [CI that skips later commits](#ci-that-skips-later-commits).
 - whether to use an issue tracker: the team key, where the API key comes from, and which of the
   team's statuses each step of the loop moves an issue to. See
   [Configuring Linear](#configuring-linear).
@@ -236,6 +238,27 @@ The rules act on the closing word in the pull request body:
 
 A merge event doesn't replay: an issue the merge didn't move stays where it is, and the fix is the
 rule or the body, next time. canon reports it and leaves the status alone.
+
+## CI that skips later commits
+
+Some projects run CI only when a pull request opens or leaves draft, and on `workflow_dispatch`,
+with no `push` or `synchronize`, to keep the Actions bill down. Nothing then runs on a commit
+pushed later, including the merge commit `/canon:staging` pushes itself, and it would wait for a
+success that never comes. A `ci` block in `.claude/canon.json` lets it start the run:
+
+```json
+"ci": { "workflow": "ci.yml", "baseInput": "base" }
+```
+
+When nothing of that workflow has run, is running or is queued on the head commit,
+`/canon:staging` dispatches it once on the pull request's branch and waits. `baseInput` names the
+`workflow_dispatch` input that takes the base branch, and gets the integration branch, for a
+workflow that diffs against the base: a dispatched run has no `pull_request.base.sha`. Set it to
+`null` when the workflow declares no such input, since GitHub refuses an undeclared one. The
+workflow must declare `workflow_dispatch` and be on the default branch. With a `ci` block, a merge
+also needs that workflow's success on the head, not only some check's.
+
+Leave the block out to only wait, which is right for CI that runs on every push.
 
 ## Migrating an existing project
 
