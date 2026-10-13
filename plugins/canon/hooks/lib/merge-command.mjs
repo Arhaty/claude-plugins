@@ -29,7 +29,7 @@
  */
 
 import { execFileSync } from 'node:child_process';
-import { basename } from 'node:path';
+import { basename, isAbsolute, join } from 'node:path';
 
 /**
  * A `git` invocation including any global options that sit before the subcommand.
@@ -800,10 +800,23 @@ const PR_VALUES = {
  * `require-canon.mjs` reads this rather than `prInvocations` because it needs what
  * the skeleton cannot give: `-B main` and `--base "main"` as well as `--base main`,
  * a real selector, and a bypass set on the command itself.
+ *
+ * `dir` is where a `cd` earlier in the call left it, relative to the call's working
+ * directory, or `null` for that directory itself. `cd x && gh pr create` opens the
+ * pull request for the repository in `x`, and judging the hook's own checkout instead
+ * reads the wrong branch. A `cd` this cannot follow (`cd`, `cd -`, `~`, an expansion)
+ * goes back to `null`: a best guess, on a hook that fails open anyway.
  */
 export function prCalls(command, subcommands) {
   const found = [];
+  let dir = null;
   for (const { argv, env, appended } of invocations(command)) {
+    if (argv[0] === 'cd') {
+      const to = argv.slice(1).find((arg) => !/^-[LPe@]+$/.test(arg));
+      const readable = to !== undefined && to !== '-' && !/^~|[$`]/.test(to);
+      dir = !readable ? null : dir === null || isAbsolute(to) ? to : join(dir, to);
+      continue;
+    }
     if (argv[0] !== 'gh' || argv[1] !== 'pr') continue;
     // `-R` is a group flag and can come first: `gh pr -R o/r merge 5`.
     const rest = argv.slice(2);
@@ -813,7 +826,7 @@ export function prCalls(command, subcommands) {
     if (!subcommands.includes(subcommand)) continue;
     const args = [...rest.slice(0, at), ...rest.slice(at + 1)];
     const { positionals, flags, pairs } = parseArgs(args, PR_VALUES[subcommand] ?? new Set());
-    found.push({ subcommand, positionals, flags, pairs, env, appended });
+    found.push({ subcommand, positionals, flags, pairs, env, appended, dir });
   }
   return found;
 }

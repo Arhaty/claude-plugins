@@ -57,7 +57,7 @@
 
 import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
-import { basename, join } from 'node:path';
+import { basename, join, resolve } from 'node:path';
 
 const allow = () => process.exit(0);
 
@@ -125,15 +125,18 @@ try {
       return null;
     }
   };
-  const here = commonDir(DIR);
   const project = commonDir(ROOT);
-  if (here !== null && project !== null && here !== project) allow();
+  const elsewhere = (dir) => {
+    const there = commonDir(dir);
+    return there !== null && project !== null && there !== project;
+  };
 
   // A merge through an MCP server's tool carries no command, so it is judged on the pull
   // request it names rather than on a local diff: the files GitHub lists for it. Without
   // this branch the tool's `settings.json` entry ran the hook and the hook found nothing
   // to read. Unreadable fails open, as below; `protect-merge.mjs` refuses it anyway.
   if (isMcpMerge) {
+    if (elsewhere(DIR)) allow();
     const [merge] = mergesIn(payload);
     const refused = merge?.selector == null ? null : fromPullRequest(merge.selector, 'the merge');
     if (refused) block(refused);
@@ -147,9 +150,9 @@ try {
   if (calls.length === 0) allow();
 
   // A git failure is an unreadable diff, not a crash: it fails open, per the header.
-  const git = (...args) => {
+  const git = (dir, ...args) => {
     try {
-      return execFileSync('git', ['-C', DIR, ...args], {
+      return execFileSync('git', ['-C', dir, ...args], {
         encoding: 'utf8',
         stdio: ['ignore', 'pipe', 'ignore'],
         timeout: remaining(),
@@ -159,23 +162,27 @@ try {
     }
   };
 
-  /** The bases already fetched in this call. */
+  /** The repository and base pairs already fetched in this call. */
   const fetched = new Set();
-
-  const current = git('rev-parse', '--abbrev-ref', 'HEAD')?.trim() ?? null;
-  const protectedBranch = current === integration || current === production;
 
   for (const call of calls) {
     // The assignment on this `gh` command, not one anywhere in the text: a `--body` that
     // quotes the bypass is an argument, and `invocations` never reads it as an assignment.
     if (call.env.ALLOW_UNDECIDED_MERGE === '1') continue;
 
+    // `cd elsewhere && gh pr create` acts on the repository in `elsewhere`, which may be
+    // a different branch of this project or another repository altogether.
+    const dir = call.dir === null ? DIR : resolve(DIR, call.dir);
+    if (elsewhere(dir)) continue;
+    const current = git(dir, 'rev-parse', '--abbrev-ref', 'HEAD')?.trim() ?? null;
+    const protectedBranch = current === integration || current === production;
+
     const verb = `\`gh pr ${call.subcommand}\``;
     const [selector] = call.positionals;
     const refused =
       call.subcommand !== 'create' && (selector !== undefined || protectedBranch)
-        ? fromCall(call, verb)
-        : fromDiff(call, verb);
+        ? fromCall(call, verb, dir)
+        : fromDiff(call, verb, dir, current);
     if (refused) block(refused);
   }
 
@@ -186,24 +193,24 @@ try {
    * another repository, or fed its selector by `xargs`, it cannot be read by number
    * here, and fails open like any other unreadable pull request.
    */
-  function fromCall(call, verb) {
+  function fromCall(call, verb, dir) {
     if (call.flags.has('--repo') || call.flags.has('-R')) return null;
     if (call.env.GH_REPO !== undefined || call.appended) return null;
-    return fromPullRequest(call.positionals.slice(0, 1), `Refusing ${verb}`);
+    return fromPullRequest(call.positionals.slice(0, 1), `Refusing ${verb}`, dir);
   }
 
   /** Reads the pull request `selector` names and judges the files GitHub lists for it. */
-  function fromPullRequest(selector, action) {
-    const details = prDetails(selector, { cwd: DIR });
+  function fromPullRequest(selector, action, dir = DIR) {
+    const details = prDetails(selector, { cwd: dir });
     // A release pull request: see `fromDiff`.
     if (!details.ok || details.pr.baseRefName === production) return null;
-    const files = prFiles(details.pr, { cwd: DIR });
+    const files = prFiles(details.pr, { cwd: dir });
     if (!files.ok) return null;
     return refusal(files.paths, `${action}: pull request #${details.pr.number}`);
   }
 
   /** A `gh pr` subcommand judged on the branch diff from git. */
-  function fromDiff(call, verb) {
+  function fromDiff(call, verb, dir, current) {
     /**
      * `--base` and `--head` as the command actually gave them, in any spelling gh
      * takes: `-B`, `--base=main`, `--base "main"`.
@@ -257,10 +264,11 @@ try {
      * against it, which is exactly the behaviour this had before the fetch existed.
      */
     const budget = Math.min(10_000, remaining() - 3_000);
-    if (!fetched.has(baseBranch) && budget > 0) {
-      fetched.add(baseBranch);
+    const key = `${dir}\0${baseBranch}`;
+    if (!fetched.has(key) && budget > 0) {
+      fetched.add(key);
       try {
-        execFileSync('git', ['-C', DIR, 'fetch', '--quiet', 'origin', baseBranch], {
+        execFileSync('git', ['-C', dir, 'fetch', '--quiet', 'origin', baseBranch], {
           stdio: 'ignore',
           timeout: budget,
           // No terminal prompt for credentials: a hook must never wait on input nobody can
@@ -277,7 +285,7 @@ try {
     //
     // `head` is compared as a ref rather than as `HEAD`, so a pull request opened for
     // another branch is judged by that branch's contents.
-    const diff = git('diff', '--name-only', `origin/${baseBranch}...${head ?? 'HEAD'}`);
+    const diff = git(dir, 'diff', '--name-only', `origin/${baseBranch}...${head ?? 'HEAD'}`);
     if (diff === null) return null;
 
     return refusal(diff.split('\n').filter(Boolean), `Refusing ${verb}: \`${branch}\``);

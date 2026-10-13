@@ -341,6 +341,17 @@ describe('require-canon on a gh command', () => {
       // The same change in another repository is refused there, and not from this project.
       expect(create(other.dir, other.dir)).toBe(2);
       expect(create(other.dir)).toBe(0);
+
+      // A cd in the command moves the judgement with it, both ways.
+      const createIn = (to, cwd = repo.dir) =>
+        run('require-canon.mjs', `cd ${to} && gh pr create --fill`, 'exit 1', {
+          cwd,
+          project: repo.dir,
+        }).status;
+      expect(createIn('.wt')).toBe(2);
+      expect(createIn(tree)).toBe(2);
+      expect(createIn(repo.dir, tree)).toBe(0);
+      expect(createIn(other.dir)).toBe(0);
     } finally {
       repo.git('worktree', 'remove', '--force', tree);
       rmSync(repo.dir, { recursive: true, force: true });

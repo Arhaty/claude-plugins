@@ -998,6 +998,19 @@ describe('prCalls', () => {
     const [call] = prCalls('ALLOW_UNDECIDED_MERGE=1 gh pr create --fill', ['create']);
     expect(call?.env.ALLOW_UNDECIDED_MERGE).toBe('1');
   });
+
+  it('follows a cd earlier in the command', () => {
+    const dir = (command) => prCalls(command, ['create']).map((call) => call.dir);
+    expect(dir('gh pr create --fill')).toEqual([null]);
+    expect(dir('cd ../other && gh pr create --fill')).toEqual(['../other']);
+    expect(dir('cd a; cd b && gh pr create')).toEqual(['a/b']);
+    expect(dir('cd a && cd /abs && gh pr create')).toEqual(['/abs']);
+    expect(dir('cd -P a && gh pr create')).toEqual(['a']);
+    // A cd this cannot follow goes back to the call's own directory.
+    for (const cd of ['cd', 'cd -', 'cd ~/x', 'cd $DIR', 'cd a && cd']) {
+      expect(dir(`${cd} && gh pr create`), cd).toEqual([null]);
+    }
+  });
 });
 
 describe('chained merges', () => {
