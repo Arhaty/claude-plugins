@@ -1190,14 +1190,21 @@ export function mergesIn(payload) {
 
 /**
  * When every `gh` read this hook makes has to be done: 15 seconds from start,
- * inside the 20 the hooks get in `.claude/settings.json`. A hook that runs past
+ * inside the 20 the hooks get in `hooks/hooks.json`. A hook that runs past
  * its timeout is treated as non-blocking, so a hung `gh` would let the merge
  * through `protect-merge.mjs`. Killed here, the read throws and each hook gives
  * its own answer to an unreadable pull request. One deadline rather than one
  * timeout per read, so a chained merge cannot add them up past 20.
  */
 const DEADLINE = Date.now() + 15_000;
-const timeout = () => Math.max(1, DEADLINE - Date.now());
+
+/**
+ * Milliseconds left before the deadline, never below 1. Exported so
+ * `require-canon.mjs` bounds its own git reads and its fetch by the same clock
+ * rather than adding a timeout of its own per call.
+ */
+export const remaining = () => Math.max(1, DEADLINE - Date.now());
+const timeout = remaining;
 
 /** The fields both merge hooks read, renamed to the shape they were written against. */
 const PR_FIELDS = '{baseRefName: .base.ref, number, url: .html_url}';

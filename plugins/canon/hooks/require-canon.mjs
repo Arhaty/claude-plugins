@@ -69,7 +69,9 @@ const block = (message) => {
 if (process.env.ALLOW_UNDECIDED_MERGE === '1') allow();
 
 try {
-  const { mergesIn, prCalls, prDetails, prFiles } = await import('./lib/merge-command.mjs');
+  const { mergesIn, prCalls, prDetails, prFiles, remaining } = await import(
+    './lib/merge-command.mjs'
+  );
   const { DOMAINS_PATH, canonical, configProblem, loadConfig, projectRoot, readPayload } =
     await import('./lib/config.mjs');
 
@@ -115,6 +117,7 @@ try {
           {
             encoding: 'utf8',
             stdio: ['ignore', 'pipe', 'ignore'],
+            timeout: remaining(),
           }
         ).trim()
       );
@@ -149,11 +152,15 @@ try {
       return execFileSync('git', ['-C', DIR, ...args], {
         encoding: 'utf8',
         stdio: ['ignore', 'pipe', 'ignore'],
+        timeout: remaining(),
       });
     } catch {
       return null;
     }
   };
+
+  /** The bases already fetched in this call. */
+  const fetched = new Set();
 
   const current = git('rev-parse', '--abbrev-ref', 'HEAD')?.trim() ?? null;
   const protectedBranch = current === integration || current === production;
@@ -242,22 +249,27 @@ try {
      * **Bounded, because this runs in front of a tool call.** An unbounded fetch in a
      * PreToolUse hook is a hook that can hang: a slow network, a credential prompt or an
      * unreachable remote would stall every `gh pr create` for as long as git is willing
-     * to wait, with nothing on screen explaining why. Ten seconds is longer than this
-     * fetch takes and shorter than anyone's patience.
+     * to wait, with nothing on screen explaining why. It gets what is left of the shared
+     * deadline less three seconds kept for the reads after it, never more than ten, and
+     * a command that opens two pull requests against one base fetches it once.
      *
      * Failing is fine and silent. The old tracking ref stays in place and the check runs
      * against it, which is exactly the behaviour this had before the fetch existed.
      */
-    try {
-      execFileSync('git', ['-C', DIR, 'fetch', '--quiet', 'origin', baseBranch], {
-        stdio: 'ignore',
-        timeout: 10_000,
-        // No terminal prompt for credentials: a hook must never wait on input nobody can
-        // see it asking for.
-        env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
-      });
-    } catch {
-      // Stale ref, and the diff below is computed against it.
+    const budget = Math.min(10_000, remaining() - 3_000);
+    if (!fetched.has(baseBranch) && budget > 0) {
+      fetched.add(baseBranch);
+      try {
+        execFileSync('git', ['-C', DIR, 'fetch', '--quiet', 'origin', baseBranch], {
+          stdio: 'ignore',
+          timeout: budget,
+          // No terminal prompt for credentials: a hook must never wait on input nobody can
+          // see it asking for.
+          env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
+        });
+      } catch {
+        // Stale ref, and the diff below is computed against it.
+      }
     }
 
     // Three dots: what this branch changed, ignoring what landed on the base since it

@@ -271,6 +271,26 @@ describe('require-canon on a gh command', () => {
     expect(check('gh pr merge --merge', governed, 'staging')).toBe(2);
   });
 
+  it('judges every call in one command inside the hook timeout when the fetch hangs', () => {
+    // Clean against the integration branch, governed against `dev`, so the calls before
+    // the last one pass and each would fetch again.
+    const hung =
+      'case "$*" in *fetch*) exec sleep 30;; *rev-parse*) echo feature;; ' +
+      '*origin/dev...*) echo src/lib/content.ts;; *) exit 0;; esac';
+    const started = Date.now();
+    const status = runHook(
+      'require-canon.mjs',
+      'gh pr create --fill && gh pr ready && gh pr create -B dev --fill',
+      'exit 1',
+      undefined,
+      hung
+    );
+    expect(status).toBe(2);
+    // One fetch per base, all inside the shared 15-second deadline. The hook gets 20;
+    // past that, Claude Code lets the call through.
+    expect(Date.now() - started).toBeLessThan(17_000);
+  }, 60_000);
+
   it('fails open on a merge aimed at another repository', () => {
     const migrations = pr('staging', ['supabase/migrations/0005_x.sql']);
     expect(runHook('require-canon.mjs', 'gh pr merge 5 --repo o/r', migrations)).toBe(0);
