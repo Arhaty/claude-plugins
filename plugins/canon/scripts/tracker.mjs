@@ -229,7 +229,12 @@ export async function main(argv, { cwd = process.cwd(), env = process.env, fetch
 
   const provider = await import(`./tracker/${tracker.provider}.mjs`);
   const client = provider.createClient({
-    apiKey: resolveKey({ root, tracker, variable: provider.KEY_VARIABLE, env }),
+    // A provider with no key variable, the fixture, reads no key.
+    apiKey:
+      provider.KEY_VARIABLE === null
+        ? null
+        : resolveKey({ root, tracker, variable: provider.KEY_VARIABLE, env }),
+    root,
     team: tracker.team,
     ...(fetch ? { fetch } : {}),
   });

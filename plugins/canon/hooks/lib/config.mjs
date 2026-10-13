@@ -46,8 +46,11 @@ const TOP = [
 const BRANCHES = ['integration', 'production', 'prefixes'];
 const TRACKER = ['provider', 'team', 'statuses', 'labelPrefix', 'apiKeyCommand'];
 
-/** The issue trackers a `tracker` block may name. One module each in `scripts/tracker/`. */
-export const PROVIDERS = ['linear'];
+/**
+ * The issue trackers a `tracker` block may name. One module each in `scripts/tracker/`.
+ * `fixture` is a tracker held in a file in the project, for tests and evals.
+ */
+export const PROVIDERS = ['linear', 'fixture'];
 
 /**
  * canon's lifecycle roles, which `tracker.statuses` maps to the team's own status

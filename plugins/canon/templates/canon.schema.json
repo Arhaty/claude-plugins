@@ -108,8 +108,8 @@
       "description": "Optional. When set, the issue tracker is the record and the gate: each command reads and sets the issue's status, and the spec's **Status:** line mirrors it. Leave it out to gate on the spec file alone.",
       "properties": {
         "provider": {
-          "enum": ["linear"],
-          "description": "The tracker. Only \"linear\" is supported."
+          "enum": ["linear", "fixture"],
+          "description": "The tracker: \"linear\". \"fixture\" is a tracker held in .claude/tracker-fixture.json, for tests and evals; it needs no key and reaches no network, and /canon:setup does not offer it."
         },
         "team": {
           "type": "string",

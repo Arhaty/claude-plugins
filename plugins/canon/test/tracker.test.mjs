@@ -4,7 +4,7 @@
  */
 
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -478,5 +478,62 @@ describe('the API key', () => {
     expect(envFileValue('LINEAR_API_KEY=bare # note', 'LINEAR_API_KEY')).toBe('bare');
     expect(envFileValue('LINEAR_API_KEY=', 'LINEAR_API_KEY')).toBeNull();
     expect(envFileValue('NOT_IT=1', 'LINEAR_API_KEY')).toBeNull();
+  });
+});
+
+describe('the fixture tracker', () => {
+  let project;
+  let savedProjectDir;
+  const fixture = () =>
+    JSON.parse(readFileSync(join(project, '.claude/tracker-fixture.json'), 'utf8'));
+  const run = (argv, options = {}) => main(argv, { cwd: project, env: {}, ...options });
+
+  beforeEach(() => {
+    savedProjectDir = process.env.CLAUDE_PROJECT_DIR;
+    delete process.env.CLAUDE_PROJECT_DIR;
+    project = makeProject({ config: { ...CONFIG, tracker: { ...TRACKER, provider: 'fixture' } } });
+    writeFileSync(
+      join(project, '.claude/tracker-fixture.json'),
+      JSON.stringify({
+        states: Object.values(TRACKER.statuses),
+        labels: ['domain-auth'],
+        issues: { 'ABC-7': { title: 'Rate-limit resets', state: 'In Progress' } },
+      })
+    );
+  });
+  afterEach(() => {
+    if (savedProjectDir !== undefined) process.env.CLAUDE_PROJECT_DIR = savedProjectDir;
+    rmSync(project, { recursive: true, force: true });
+  });
+
+  it('reads and moves an issue with no key and no network', async () => {
+    expect(await run(['issue', 'ABC-7'])).toMatchObject({ state: 'In Progress', role: 'building' });
+    await run(['set-state', 'ABC-7', 'blocked']);
+    expect(fixture().issues['ABC-7'].state).toBe('Blocked');
+    await rejects(() => run(['set-state', 'ABC-7', 'production']), /Refusing to set production/);
+  });
+
+  it('keeps comments and labels in the file, marked as the client marks them', async () => {
+    await run(['comment', 'ABC-7', '--blocked'], { stdin: 'Which limit?' });
+    expect((await run(['comments', 'ABC-7'])).blocked).toMatchObject({ answers: [] });
+    expect(await run(['label', 'ABC-7', '+domain-auth,+domain-typo'])).toEqual({
+      labels: ['domain-auth'],
+      missing: ['domain-typo'],
+    });
+    expect(fixture().issues['ABC-7'].comments[0].body).toBe('canon: blocked\n\nWhich limit?');
+  });
+
+  it('refuses a missing issue, another team, and a symlinked file', async () => {
+    await rejects(() => run(['issue', 'ABC-99']), /No issue ABC-99/);
+    await rejects(() => run(['issue', 'XYZ-7']), /belongs to team XYZ/);
+    const elsewhere = join(tmpdir(), `canon-fixture-${process.pid}.json`);
+    writeFileSync(elsewhere, readFileSync(join(project, '.claude/tracker-fixture.json')));
+    rmSync(join(project, '.claude/tracker-fixture.json'));
+    symlinkSync(elsewhere, join(project, '.claude/tracker-fixture.json'));
+    try {
+      await rejects(() => run(['issue', 'ABC-7']), /is a symlink/);
+    } finally {
+      rmSync(elsewhere, { force: true });
+    }
   });
 });
