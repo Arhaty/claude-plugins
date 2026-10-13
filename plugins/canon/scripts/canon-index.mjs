@@ -66,11 +66,15 @@ const CLAIM_OPENS = /^[ \t]*(?:[-*] )?\*\*/;
 /** `***` and its kin are a horizontal rule, which `CLAIM_OPENS` would otherwise read as a claim. */
 const THEMATIC_BREAK = /^\s*(?:\*\s*){3,}$/;
 
-/** What ends a paragraph: a blank line, a heading, a new list item, or a table. */
-const ENDS_CLAIM = /^\s*$|^#|^[ \t]*[-*] |^\|/;
+/** What ends a paragraph: a blank line, a heading, a new list item, a table, or a code fence. */
+const ENDS_CLAIM = /^\s*$|^#|^[ \t]*[-*] |^\||^\s*(?:```|~~~)/;
 
-/** A line that opens or closes a code fence. */
-const FENCE = /^\s*(?:```|~~~)/;
+/**
+ * A code fence line: its run of backticks or tildes, and what follows. A fence closes
+ * only on the character it opened with, at least as many of them, and nothing after,
+ * so a shorter fence inside a longer one is part of the example.
+ */
+const FENCE = /^\s*(`{3,}|~{3,})(.*)$/;
 
 /** `|---|---|` is a table's underline, not a row of it. */
 const SEPARATOR_ROW = /^\|[\s:|-]+\|$/;
@@ -91,17 +95,26 @@ export function domainFiles(canon) {
 export function extract(name, source) {
   const lines = source.split('\n');
   const out = [];
-  let fenced = false;
+  let fence = null;
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i] ?? '';
 
     // An example inside a code fence is illustration, never a rule or a row of reference data.
-    if (FENCE.test(line)) {
-      fenced = !fenced;
+    const marker = FENCE.exec(line);
+    if (fence === null && marker) {
+      fence = marker[1];
       continue;
     }
-    if (fenced) continue;
+    if (fence !== null) {
+      const closes =
+        marker &&
+        marker[1][0] === fence[0] &&
+        marker[1].length >= fence.length &&
+        marker[2].trim() === '';
+      if (closes) fence = null;
+      continue;
+    }
 
     if (line.startsWith('|')) {
       if (!SEPARATOR_ROW.test(line)) out.push(`${name}: ${line}`);

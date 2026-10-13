@@ -25,6 +25,28 @@ describe('extract', () => {
     expect(extract('x.md', source)).toEqual(['x.md: **A claim.** Why.']);
   });
 
+  it('keeps a shorter or different fence inside a longer one as part of the example', () => {
+    const source = [
+      '````md',
+      '```',
+      '**Inside.** Not a rule.',
+      '```',
+      '| a | b |',
+      '````',
+      '~~~',
+      '```js',
+      '**Also inside.**',
+      '~~~',
+      '**After.** A rule.',
+    ].join('\n');
+    expect(extract('x.md', source)).toEqual(['x.md: **After.** A rule.']);
+  });
+
+  it('ends an unclosed claim at a fence rather than swallowing it', () => {
+    const source = '**Open claim\n```\n**Example.**\n```\n**After.** A rule.\n';
+    expect(extract('x.md', source)).toEqual(['x.md: **Open claim', 'x.md: **After.** A rule.']);
+  });
+
   it('reads claims again after a fence closes', () => {
     const source = '**Before.**\n```js\nconst a = 1;\n```\n**After.**\n';
     expect(extract('x.md', source)).toEqual(['x.md: **Before.**', 'x.md: **After.**']);
