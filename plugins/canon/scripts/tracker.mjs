@@ -27,12 +27,15 @@
  *
  * **Behind a proxy**, as in a cloud session where the key is a placeholder that an
  * egress proxy swaps for the real one, Node's `fetch` goes direct unless
- * `NODE_USE_ENV_PROXY=1` was set at startup. When `HTTPS_PROXY` is set and the flag
- * is not, this script re-runs itself once with it.
+ * `NODE_USE_ENV_PROXY=1` was set at startup. When a proxy is set and the flag is
+ * not, a provider that makes requests turns the proxy on in-process where Node can
+ * (`http.setGlobalProxyFromEnv`, 24.14 and later), and otherwise re-runs this script
+ * once with the flag.
  */
 
 import { execFileSync, spawnSync } from 'node:child_process';
 import { existsSync, readFileSync, realpathSync } from 'node:fs';
+import http from 'node:http';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -47,7 +50,6 @@ import {
   projectRoot,
   validate,
 } from '../hooks/lib/config.mjs';
-import { ENDPOINT } from './tracker/linear.mjs';
 
 /** The roles a skill may set. The rest belong to the owner or to the GitHub integration. */
 export const SETTABLE = ['spec', 'approved', 'building', 'blocked'];
@@ -87,67 +89,62 @@ export function blockedState(comments) {
   };
 }
 
-/** The host the requests go to, for matching `NO_PROXY`. */
-const HOST = new URL(ENDPOINT).hostname;
+/**
+ * The proxy Node's `fetch` would use for an https URL, read as undici reads it: the
+ * lower-case variable first, an empty one still counting as set, and the http proxy
+ * when there is no https one.
+ */
+export function httpsProxy(env) {
+  return (env.https_proxy ?? env.HTTPS_PROXY) || (env.http_proxy ?? env.HTTP_PROXY) || null;
+}
 
-/** Can this Node send `fetch` through `HTTPS_PROXY`? From 22.21 and 24.5, with the flag. */
+/** Can this Node send `fetch` through the proxy, given `NODE_USE_ENV_PROXY=1`? */
 export function nodeHasEnvProxy(version = process.versions.node) {
   const [major, minor] = version.split('.').map(Number);
-  return major >= 25 || (major === 24 && minor >= 5) || (major === 22 && minor >= 21);
+  return major >= 24 || (major === 22 && minor >= 21);
 }
 
 /**
- * Does `NO_PROXY` send `host` direct? Node's rules: `*`, the host, or a domain it
- * is under, each with an optional port.
+ * Does `NO_PROXY` send `host` direct? Undici's rules: `*` for everything, a leading
+ * `.` or `*.` for a domain and everything under it, a bare name for that host alone,
+ * each with an optional port.
  */
 export function noProxyCovers(host, noProxy = '') {
   return noProxy
+    .toLowerCase()
     .split(/[\s,]+/)
     .filter(Boolean)
     .some((entry) => {
       if (entry === '*') return true;
-      const [name, port] = entry.toLowerCase().split(':');
+      const [name, port] = entry.split(':');
       if (port && port !== '443') return false;
-      const domain = name.replace(/^\*?\./, '');
-      return host === domain || host.endsWith(`.${domain}`);
+      if (!/^\*?\./.test(name)) return host === name;
+      const domain = name.replace(/^\*/, '');
+      return host.endsWith(domain);
     });
 }
 
 /**
- * How a request to the tracker would leave: `none` with no proxy set, `on` through
- * it, and otherwise why not: `exempt` by `NO_PROXY`, `unsupported` by this Node, or
+ * How a request to `host` would leave: `none` with no proxy set, `on` through it,
+ * and otherwise why not: `exempt` by `NO_PROXY`, `unsupported` by this Node, or
  * `off` for want of `NODE_USE_ENV_PROXY=1`.
  */
-export function proxyRoute(env, version = process.versions.node) {
-  if (!(env.HTTPS_PROXY || env.https_proxy)) return 'none';
-  if (noProxyCovers(HOST, env.NO_PROXY ?? env.no_proxy)) return 'exempt';
+export function proxyRoute(host, env, version = process.versions.node) {
+  if (!httpsProxy(env)) return 'none';
+  if (noProxyCovers(host, env.no_proxy ?? env.NO_PROXY)) return 'exempt';
   if (!nodeHasEnvProxy(version)) return 'unsupported';
   return env.NODE_USE_ENV_PROXY === '1' ? 'on' : 'off';
 }
 
-/**
- * Re-run this script through the proxy when Node would skip it, and return the
- * child's exit status; `null` means carry on here. The flag is read only at
- * startup, so nothing in-process can turn it on. Any value of it already set,
- * including the child's own, means no second run.
- */
-export function relaunchThroughProxy(
-  argv,
-  { env = process.env, version = process.versions.node, spawn = spawnSync, script = self } = {}
-) {
-  if (env.NODE_USE_ENV_PROXY !== undefined || proxyRoute(env, version) !== 'off') return null;
-  const child = spawn(
-    process.execPath,
-    // The proxy agent is experimental on some versions, and says so on every run.
-    [...process.execArgv, '--disable-warning=UNDICI-EHPA', script, ...argv],
-    { env: { ...env, NODE_USE_ENV_PROXY: '1' }, stdio: 'inherit' }
-  );
-  if (child.error)
-    throw new TrackerError(`could not re-run through the proxy: ${child.error.message}`);
-  return child.status ?? 1;
+/** What `main` returns when it re-ran itself: the child's exit status or signal. */
+export class Relaunched {
+  constructor(status, signal) {
+    this.status = status;
+    this.signal = signal;
+  }
 }
 
-/** Where each key source is, and what to change there. */
+/** Where each key source is. */
 const KEY_SOURCES = {
   env: 'the environment',
   file: '.env.local at the project root',
@@ -158,23 +155,27 @@ const KEY_SOURCES = {
  * Why the tracker answered 401, from where the key came from and how the request
  * left. Names the source, never the key.
  */
-export function unauthorized({ variable, source, placeholder, env, version }) {
-  const route = proxyRoute(env, version);
-  if (placeholder && !['none', 'on'].includes(route)) {
-    const fix = {
-      off: 'Run it with NODE_USE_ENV_PROXY=1 set.',
-      exempt: `NO_PROXY covers ${HOST}: take it out.`,
-      unsupported: `Node ${version} cannot: use Node 22.21, 24.5 or later.`,
-    }[route];
+export function unauthorized({ name, variable, source, placeholder, route, host, version }) {
+  const status = `${name} returned HTTP 401`;
+  if (placeholder && route === 'on') {
     return (
-      `Linear returned HTTP 401: ${variable} is a placeholder the HTTPS proxy replaces on ` +
-      `the way out, and Node is not sending the request through the proxy. ${fix}`
+      `${status}: ${variable} is a placeholder and the request went through the HTTPS ` +
+      "proxy, so the credential the proxy put in its place was rejected. Fix it in the proxy's " +
+      'credentials; the placeholder needs no change.'
     );
   }
-  return (
-    `Linear returned HTTP 401: it rejected the ${variable} from ${KEY_SOURCES[source]}. ` +
-    'Change it there.'
-  );
+  if (placeholder && route !== 'none') {
+    const fix = {
+      off: 'Set NODE_USE_ENV_PROXY=1.',
+      exempt: `NO_PROXY sends ${host} direct: take that entry out.`,
+      unsupported: `Node ${version} cannot: use Node 22.21, 24 or later.`,
+    }[route];
+    return (
+      `${status}: ${variable} is a placeholder the HTTPS proxy replaces on the way out, ` +
+      `and Node is not sending the request through the proxy. ${fix}`
+    );
+  }
+  return `${status}: it rejected the ${variable} from ${KEY_SOURCES[source]}. Change it there.`;
 }
 
 /** The value of one key in a dotenv file, or `null`. Reads that key and nothing else. */
@@ -327,6 +328,23 @@ async function readStdin() {
   return Buffer.concat(chunks).toString('utf8').trim();
 }
 
+/**
+ * Run this script again with `NODE_USE_ENV_PROXY=1`, which Node reads only at
+ * startup, and pass on how the child ended.
+ */
+function relaunch(argv, env, spawn) {
+  const child = spawn(
+    process.execPath,
+    // The proxy agent is experimental on some versions, and says so on every run.
+    [...process.execArgv, '--disable-warning=UNDICI-EHPA', self, ...argv],
+    { env: { ...env, NODE_USE_ENV_PROXY: '1' }, stdio: 'inherit' }
+  );
+  if (child.error) {
+    throw new TrackerError(`could not re-run through the proxy: ${child.error.message}`);
+  }
+  return new Relaunched(child.status, child.signal);
+}
+
 /** `client` with every method's failure passed through `explain`. */
 function explainUnauthorized(client, explain) {
   return Object.fromEntries(
@@ -343,7 +361,15 @@ function explainUnauthorized(client, explain) {
 /** Run one command and return what to print. */
 export async function main(
   argv,
-  { cwd = process.cwd(), env = process.env, fetch, stdin, version = process.versions.node } = {}
+  {
+    cwd = process.cwd(),
+    env = process.env,
+    fetch,
+    stdin,
+    version = process.versions.node,
+    setGlobalProxy = http.setGlobalProxyFromEnv,
+    spawn = spawnSync,
+  } = {}
 ) {
   const args = [...argv];
   let configFile = null;
@@ -389,6 +415,18 @@ export async function main(
   }
 
   const provider = await import(`./tracker/${tracker.provider}.mjs`);
+
+  // Only a provider that makes requests needs the proxy, and only once argv is sound
+  // and before a key command runs, so a second run repeats none of that.
+  const host = provider.ENDPOINT ? new URL(provider.ENDPOINT).hostname : null;
+  let route = host ? proxyRoute(host, env, version) : 'none';
+  // Any value of the flag already set is the owner's choice, or this is the second run.
+  if (route === 'off' && env.NODE_USE_ENV_PROXY === undefined) {
+    if (!setGlobalProxy) return relaunch(argv, env, spawn);
+    setGlobalProxy(env);
+    route = 'on';
+  }
+
   // A provider with no key variable, the fixture, reads no key.
   const variable = provider.KEY_VARIABLE;
   const found = variable === null ? null : findKey({ root, tracker, variable, env });
@@ -403,8 +441,10 @@ export async function main(
     (error) => {
       if (error?.status !== 401 || !found) return error;
       const placeholder = provider.looksLikeKey?.(found.key) === false;
+      const { NAME: name } = provider;
+      const { source } = found;
       return new TrackerError(
-        unauthorized({ variable, source: found.source, placeholder, env, version })
+        unauthorized({ name, variable, source, placeholder, route, host, version })
       );
     }
   );
@@ -468,10 +508,16 @@ export async function main(
 
 const self = realpathSync(fileURLToPath(import.meta.url));
 if (process.argv[1] && realpathSync(resolve(process.argv[1])) === self) {
-  const status = relaunchThroughProxy(process.argv.slice(2));
-  if (status !== null) process.exit(status);
   main(process.argv.slice(2))
-    .then((result) => process.stdout.write(`${JSON.stringify(result, null, 2)}\n`))
+    .then((result) => {
+      if (!(result instanceof Relaunched)) {
+        process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+      } else if (result.signal) {
+        process.kill(process.pid, result.signal);
+      } else {
+        process.exitCode = result.status;
+      }
+    })
     .catch((error) => {
       process.stderr.write(`tracker: ${error?.message ?? error}\n`);
       process.exitCode = error instanceof TrackerError ? error.code : 1;

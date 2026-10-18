@@ -15,9 +15,11 @@ import {
   BLOCKED_MARKER,
   blockedState,
   envFileValue,
+  Relaunched,
+  httpsProxy,
   main,
+  noProxyCovers,
   nodeHasEnvProxy,
-  relaunchThroughProxy,
   resolveKey,
 } from '../scripts/tracker.mjs';
 import { LinearError, createClient, parseIdentifier } from '../scripts/tracker/linear.mjs';
@@ -428,116 +430,198 @@ describe('tracker.mjs', () => {
 describe('behind a proxy', () => {
   const PROXY = { HTTPS_PROXY: 'http://proxy.internal:3128' };
   const NODE = '24.12.0';
-  const relaunch = (env, version = NODE) => {
-    const calls = [];
-    const status = relaunchThroughProxy(['issue', 'ABC-1'], {
-      env,
-      version,
-      script: '/plugin/scripts/tracker.mjs',
-      spawn: (...args) => {
-        calls.push(args);
-        return { status: 3 };
-      },
-    });
-    return { status, calls };
+  let project;
+  let home;
+  let restoreHome;
+  let savedProjectDir;
+  let state;
+  let spawned;
+  let globals;
+  const fakeSpawn = (...args) => {
+    spawned.push(args);
+    return { status: 3, signal: null };
   };
+  const run = (env, options = {}) =>
+    main(options.argv ?? ['issue', 'ABC-1'], {
+      cwd: project,
+      env: { LINEAR_API_KEY: 'placeholder', ...env },
+      version: NODE,
+      fetch: fakeLinear(state),
+      setGlobalProxy: null,
+      spawn: fakeSpawn,
+      ...options,
+    });
 
-  it('re-runs once through the proxy when the flag is unset', () => {
-    for (const env of [PROXY, { https_proxy: PROXY.HTTPS_PROXY }]) {
-      const { status, calls } = relaunch(env);
-      expect(status).toBe(3);
-      expect(calls.length).toBe(1);
-      const [execPath, args, options] = calls[0];
+  beforeEach(() => {
+    savedProjectDir = process.env.CLAUDE_PROJECT_DIR;
+    delete process.env.CLAUDE_PROJECT_DIR;
+    home = mkdtempSync(join(tmpdir(), 'canon-home-'));
+    restoreHome = fakeHome(home);
+    project = makeProject({ config: { ...CONFIG, tracker: TRACKER } });
+    state = linearState({ key: 'placeholder' });
+    spawned = [];
+    globals = [];
+  });
+  afterEach(() => {
+    restoreHome();
+    if (savedProjectDir !== undefined) process.env.CLAUDE_PROJECT_DIR = savedProjectDir;
+    rmSync(project, { recursive: true, force: true });
+    rmSync(home, { recursive: true, force: true });
+  });
+
+  it('re-runs once with the flag when the proxy is set and the flag is not, sending nothing', async () => {
+    for (const env of [
+      PROXY,
+      { https_proxy: PROXY.HTTPS_PROXY },
+      { HTTP_PROXY: PROXY.HTTPS_PROXY },
+    ]) {
+      spawned = [];
+      const result = await run(env, { argv: ['--config', '.claude/canon.json', 'issue', 'ABC-1'] });
+      expect(result).toEqual(new Relaunched(3, null));
+      expect(spawned.length).toBe(1);
+      const [execPath, args, options] = spawned[0];
       expect(execPath).toBe(process.execPath);
-      expect(args.slice(-4)).toEqual([
+      expect(args.slice(-6)).toEqual([
         '--disable-warning=UNDICI-EHPA',
-        '/plugin/scripts/tracker.mjs',
+        join(ROOT, 'scripts/tracker.mjs'),
+        '--config',
+        '.claude/canon.json',
         'issue',
         'ABC-1',
       ]);
-      expect(options).toEqual({ env: { ...env, NODE_USE_ENV_PROXY: '1' }, stdio: 'inherit' });
-    }
-  });
-
-  it('does nothing when the flag is already set, which is also the second run', () => {
-    for (const value of ['1', '0', '']) {
-      expect(relaunch({ ...PROXY, NODE_USE_ENV_PROXY: value })).toEqual({
-        status: null,
-        calls: [],
+      expect(options).toEqual({
+        env: { LINEAR_API_KEY: 'placeholder', ...env, NODE_USE_ENV_PROXY: '1' },
+        stdio: 'inherit',
       });
     }
+    expect(state.requests).toEqual([]);
   });
 
-  it('does nothing with no proxy, a NO_PROXY that covers Linear, or a Node without the flag', () => {
+  it('turns the proxy on in-process instead, where Node can', async () => {
+    const setGlobalProxy = (env) => globals.push(env);
+    expect(await run(PROXY, { setGlobalProxy })).toMatchObject({ identifier: 'ABC-1' });
+    expect(globals).toEqual([{ LINEAR_API_KEY: 'placeholder', ...PROXY }]);
+    expect(spawned).toEqual([]);
+  });
+
+  it('passes on a signal, and reports a child that would not start', async () => {
+    const killed = await run(PROXY, { spawn: () => ({ status: null, signal: 'SIGINT' }) });
+    expect(killed).toEqual(new Relaunched(null, 'SIGINT'));
+    const error = await rejects(
+      () => run(PROXY, { spawn: () => ({ error: new Error('spawnSync node EAGAIN') }) }),
+      /could not re-run/
+    );
+    expect(error.message).toBe('could not re-run through the proxy: spawnSync node EAGAIN');
+  });
+
+  it('does nothing when the flag is already set, which is also the second run', async () => {
+    for (const value of ['1', '0', '']) {
+      await run({ ...PROXY, NODE_USE_ENV_PROXY: value });
+    }
+    expect(spawned).toEqual([]);
+    expect(state.requests.length).toBe(3);
+  });
+
+  it('does nothing with no proxy, a NO_PROXY that covers Linear, or a Node without the flag', async () => {
     for (const env of [
       {},
       { ...PROXY, NO_PROXY: 'localhost,api.linear.app' },
       { ...PROXY, no_proxy: '.linear.app' },
       { ...PROXY, NO_PROXY: '*' },
+      { https_proxy: '', HTTPS_PROXY: PROXY.HTTPS_PROXY },
     ]) {
-      expect(relaunch(env), JSON.stringify(env)).toEqual({ status: null, calls: [] });
+      await run(env);
     }
-    for (const version of ['20.19.0', '22.20.0', '23.11.0', '24.4.1']) {
-      expect(relaunch(PROXY, version), version).toEqual({ status: null, calls: [] });
+    for (const version of ['20.19.0', '22.20.0', '23.11.0']) await run(PROXY, { version });
+    expect(spawned).toEqual([]);
+  });
+
+  it('does nothing before argv is sound, or for a provider that sends no request', async () => {
+    await rejects(() => run(PROXY, { argv: ['frobnicate'] }), /unknown command/);
+    await rejects(() => run(PROXY, { argv: ['set-state', 'ABC-1'] }), /needs a role/);
+    const fixture = makeProject({
+      config: { ...CONFIG, tracker: { ...TRACKER, provider: 'fixture' } },
+    });
+    try {
+      await rejects(() => run(PROXY, { cwd: fixture }), /tracker-fixture\.json does not exist/);
+    } finally {
+      rmSync(fixture, { recursive: true, force: true });
     }
-    for (const version of ['22.21.0', '24.5.0', '25.0.0'])
-      expect(nodeHasEnvProxy(version)).toBe(true);
-    expect(relaunch({ ...PROXY, NO_PROXY: 'linear.app:8443,example.com' }).calls.length).toBe(1);
+    expect(spawned).toEqual([]);
+  });
+
+  it('reads the variables as Node does', () => {
+    expect(httpsProxy({ https_proxy: 'a', HTTPS_PROXY: 'b' })).toBe('a');
+    expect(httpsProxy({ https_proxy: '', HTTPS_PROXY: 'b' })).toBeNull();
+    expect(httpsProxy({ HTTPS_PROXY: '', HTTP_PROXY: 'c' })).toBe('c');
+    expect(httpsProxy({ http_proxy: '', HTTP_PROXY: 'c' })).toBeNull();
+    const host = 'api.linear.app';
+    for (const entry of [
+      '.linear.app',
+      '*.linear.app',
+      'API.LINEAR.APP',
+      'x.com api.linear.app:443',
+      '.app',
+      '*',
+    ]) {
+      expect(noProxyCovers(host, entry), entry).toBe(true);
+    }
+    for (const entry of ['linear.app', 'api.linear.app:8443', 'xapi.linear.app', '']) {
+      expect(noProxyCovers(host, entry), entry).toBe(false);
+    }
+    for (const version of ['22.21.0', '24.0.0', '24.4.1', '25.0.0']) {
+      expect(nodeHasEnvProxy(version), version).toBe(true);
+    }
+    for (const version of ['20.19.0', '22.20.0', '23.11.0']) {
+      expect(nodeHasEnvProxy(version), version).toBe(false);
+    }
   });
 
   describe('a 401', () => {
-    let project;
-    let home;
-    let restoreHome;
-    let savedProjectDir;
-    let state;
-    const run = (env, version = NODE) =>
-      main(['issue', 'ABC-1'], { cwd: project, env, version, fetch: fakeLinear(state) });
-
     beforeEach(() => {
-      savedProjectDir = process.env.CLAUDE_PROJECT_DIR;
-      delete process.env.CLAUDE_PROJECT_DIR;
-      home = mkdtempSync(join(tmpdir(), 'canon-home-'));
-      restoreHome = fakeHome(home);
-      project = makeProject({ config: { ...CONFIG, tracker: TRACKER } });
-      state = linearState({ fail: 401 });
-    });
-    afterEach(() => {
-      restoreHome();
-      if (savedProjectDir !== undefined) process.env.CLAUDE_PROJECT_DIR = savedProjectDir;
-      rmSync(project, { recursive: true, force: true });
-      rmSync(home, { recursive: true, force: true });
+      state.fail = 401;
     });
 
     it('with a placeholder key and an unused proxy, says Node skipped the proxy', async () => {
-      const placeholder = { ...PROXY, LINEAR_API_KEY: 'placeholder' };
-      let error = await rejects(() => run(placeholder), /HTTP 401/);
+      let error = await rejects(() => run({ ...PROXY, NODE_USE_ENV_PROXY: '0' }), /HTTP 401/);
       expect(error.message).toBe(
         'Linear returned HTTP 401: LINEAR_API_KEY is a placeholder the HTTPS proxy replaces ' +
           'on the way out, and Node is not sending the request through the proxy. ' +
-          'Run it with NODE_USE_ENV_PROXY=1 set.'
+          'Set NODE_USE_ENV_PROXY=1.'
       );
-      error = await rejects(() => run(placeholder, '20.19.0'), /HTTP 401/);
+      error = await rejects(() => run(PROXY, { version: '20.19.0' }), /HTTP 401/);
       expect(error.message).toMatch(
-        /through the proxy\. Node 20\.19\.0 cannot: use Node 22\.21, 24\.5 or later\.$/
+        /through the proxy\. Node 20\.19\.0 cannot: use Node 22\.21, 24 or later\.$/
       );
-      error = await rejects(() => run({ ...placeholder, NO_PROXY: 'api.linear.app' }), /HTTP 401/);
+      error = await rejects(() => run({ ...PROXY, NO_PROXY: 'api.linear.app' }), /HTTP 401/);
       expect(error.message).toMatch(
-        /through the proxy\. NO_PROXY covers api\.linear\.app: take it out\.$/
+        /through the proxy\. NO_PROXY sends api\.linear\.app direct: take that entry out\.$/
+      );
+    });
+
+    it("with a placeholder key through the proxy, blames the proxy's credential", async () => {
+      const error = await rejects(() => run({ ...PROXY, NODE_USE_ENV_PROXY: '1' }), /HTTP 401/);
+      expect(error.message).toBe(
+        'Linear returned HTTP 401: LINEAR_API_KEY is a placeholder and the request went ' +
+          "through the HTTPS proxy, so the credential the proxy put in its place was rejected. Fix it in the proxy's " +
+          'credentials; the placeholder needs no change.'
       );
     });
 
     it('with a real-looking key, or no proxy, names where the key was read from', async () => {
-      let error = await rejects(() => run({ ...PROXY, LINEAR_API_KEY: state.key }), /HTTP 401/);
+      let error = await rejects(
+        () => run({ ...PROXY, NODE_USE_ENV_PROXY: '0', LINEAR_API_KEY: 'lin_api_x' }),
+        /HTTP 401/
+      );
       expect(error.message).toBe(
         'Linear returned HTTP 401: it rejected the LINEAR_API_KEY from the environment. ' +
           'Change it there.'
       );
-      error = await rejects(() => run({ LINEAR_API_KEY: 'placeholder' }), /HTTP 401/);
+      error = await rejects(() => run({}), /HTTP 401/);
       expect(error.message).toMatch(/from the environment\. Change it there\.$/);
 
       writeFileSync(join(project, '.env.local'), 'LINEAR_API_KEY=lin_api_old\n');
-      error = await rejects(() => run({}), /HTTP 401/);
+      error = await rejects(() => run({}, { env: {} }), /HTTP 401/);
       expect(error.message).toBe(
         'Linear returned HTTP 401: it rejected the LINEAR_API_KEY from .env.local at the ' +
           'project root. Change it there.'
@@ -545,7 +629,7 @@ describe('behind a proxy', () => {
       expect(error.message).not.toContain('lin_api_old');
 
       state.fail = 500;
-      await rejects(() => run({ LINEAR_API_KEY: 'placeholder' }), /^Linear returned HTTP 500$/);
+      await rejects(() => run({}), /^Linear returned HTTP 500$/);
     });
   });
 

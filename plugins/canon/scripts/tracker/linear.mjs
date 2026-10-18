@@ -14,6 +14,8 @@
  * does not have, and two clients would drift.
  */
 
+export const NAME = 'Linear';
+
 export const KEY_VARIABLE = 'LINEAR_API_KEY';
 
 export const ENDPOINT = 'https://api.linear.app/graphql';
