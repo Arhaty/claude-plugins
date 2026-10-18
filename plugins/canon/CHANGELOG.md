@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.2](https://github.com/Arhaty/claude-plugins/compare/canon-v0.4.1...canon-v0.4.2) (2026-10-18)
+
+
+### Bug Fixes
+
+* watch every commit a command starts a ci run on in canon ([#34](https://github.com/Arhaty/claude-plugins/issues/34)) ([0079761](https://github.com/Arhaty/claude-plugins/commit/007976127261b0912d772a454323e0462887f324))
+
 ## [0.4.1](https://github.com/Arhaty/claude-plugins/compare/canon-v0.4.0...canon-v0.4.1) (2026-10-18)
 
 
