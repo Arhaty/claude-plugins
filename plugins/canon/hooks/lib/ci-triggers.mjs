@@ -1,16 +1,15 @@
 /**
  * Which commands start a CI run in this project?
  *
- * `ci-watch.sh` asks this before it polls. Once `.claude/canon.json` has a `ci` block, it reads
- * the `on:` triggers of every workflow in the checkout's `.github/workflows/`, not only the one
- * `ci.workflow` names: the watcher reports a failure in any run on the commit, so a lint
- * workflow left on the default types still counts when `ci.yml` has trimmed them. It prints the
- * union as words: `push` when a push to the branch starts a run, `push-tag` when a tag push
- * does, then the activity types of `pull_request`. `decide` turns them
- * into what the command started.
+ * `ci-watch.sh` asks this before it polls, and it answers with the commits to watch. It reads
+ * the `on:` triggers of every workflow in the checkout's `.github/workflows/`, with or without a
+ * `ci` block in `.claude/canon.json`: projects trim the `pull_request` types whether or not
+ * `/canon:staging` dispatches their CI, and the watcher reports a failure in any run on the
+ * commit, so a lint workflow left on the default types still counts when `ci.yml` has trimmed
+ * them. `decide` weighs the command against the union.
  *
- * GitHub's defaults, `opened synchronize reopened`, stand in for what it cannot read: no `ci`
- * block, no `ci.workflow` file, or a file in a shape this narrow reader does not know. A wrong
+ * GitHub's defaults, `opened synchronize reopened`, stand in for what it cannot read: no
+ * workflow directory, or a file in a shape this narrow reader does not know. A wrong
  * guess there costs a quiet minute of polling; guessing "nothing" would leave a red run
  * unwatched. A file it reads that runs on other events only, such as a release on `push: tags`
  * or a `workflow_dispatch`, adds nothing, unless no file has a push or pull request trigger at
@@ -33,12 +32,14 @@
  *         - opened
  */
 
+import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync, readdirSync, realpathSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { CONFIG_PATH, loadConfig } from './config.mjs';
+import { CONFIG_PATH } from './config.mjs';
 import { prCalls } from './merge-command.mjs';
+import { pushTargets } from './push-command.mjs';
 
 export const DEFAULT_TYPES = Object.freeze(['opened', 'synchronize', 'reopened']);
 
@@ -234,24 +235,19 @@ export function tagStarts(filters) {
 }
 
 /**
- * The words for a push of `branch` from the checkout `checkout`, with the config read from the
- * first of `roots` that has one: `push` when a branch push starts a run, `push-tag` when a tag
- * push does, then the pull request types. The workflows come from the checkout the command ran
- * in when it has them: GitHub runs the branch's own files. A `gh pr ready 12` for a pull request
- * whose branch carries other workflow files is still read from the checkout's.
+ * The triggers of every workflow file in the first of `dirs` that has a `.github/workflows/`,
+ * as `parseTriggers` reads them: the checkout the command ran in when it has them, since GitHub
+ * runs the branch's own files, else the project's. A `gh pr ready 12` for a pull request whose
+ * branch carries other workflow files is still read from the checkout's. No directory, or no
+ * file with a push or pull request trigger, is `[DEFAULTS]`.
  */
-export function triggersFor({ checkout, roots, branch }) {
-  const fallback = [...DEFAULT_TYPES];
+export function workflowsIn(dirs) {
   try {
-    const root = roots.find((dir) => dir && existsSync(join(dir, CONFIG_PATH)));
-    if (!root) return fallback;
-    const state = loadConfig(root);
-    if (state.status !== 'ok' || !state.config.ci) return fallback;
-    const dir = [checkout, root]
+    const dir = dirs
       .filter(Boolean)
       .map((base) => join(base, '.github/workflows'))
-      .find((path) => existsSync(join(path, state.config.ci.workflow)));
-    if (!dir) return fallback;
+      .find((path) => existsSync(path));
+    if (!dir) return [DEFAULTS];
     const parsed = readdirSync(dir)
       .filter((name) => /\.ya?ml$/.test(name))
       .map((name) => {
@@ -263,93 +259,357 @@ export function triggersFor({ checkout, roots, branch }) {
         }
         return parseTriggers(text);
       });
-    if (!parsed.some((file) => file.any)) return fallback;
-    const out = new Set();
-    if (parsed.some((file) => pushStarts(file.push, branch))) out.add('push');
-    if (parsed.some((file) => tagStarts(file.push))) out.add('push-tag');
-    for (const file of parsed) for (const type of file.types) out.add(type);
-    return [...out];
+    return parsed.some((file) => file.any) ? parsed : [DEFAULTS];
   } catch {
-    return fallback;
+    return [DEFAULTS];
   }
 }
 
 /** `--undo` and `--undo=true` mark the pull request a draft again; `--undo=false` does not. */
 const undoes = (flags) => [true, 'true'].includes(flags.get('--undo'));
 
+/** The report's name for a push from a detached `HEAD`, which has no branch to name. */
+const DETACHED = 'detached HEAD';
+
 /**
- * What this command starts, read through `prCalls` so `gh pr -R o/r ready 12`, quoting and a
- * second line are read as the shell reads them. `push` is whether a push started a run, `opened`
- * whether `gh pr create` did, and `pr` the `gh pr ready` or `gh pr reopen` that did, with the
- * selector and repository to read its head from. A push is still matched on text, as it always
- * was: a mention costs a quiet lookup.
- *
- * `tags` is what the hook read from git's ref lines: `none`, `only` when the push sent tags and
- * no branch, or `also` when it sent both. A tag push starts no pull request event and no
- * branch-filtered push, so only `push-tag` speaks for it.
- *
- * A ready or reopen in another repository (`--repo`) is counted whatever the local workflows
- * say: they are not that repository's.
+ * The repository a `gh pr` call names. pflag reads `-R=o/r` as `o/r`, so a short flag's `=` is
+ * not part of the value; `--repo==o/r` keeps it, as gh does.
  */
-export function decide({ command, upToDate, tags = 'none', found }) {
-  const has = (word) => found.includes(word);
-  const text = String(command ?? '');
-  const starts =
-    tags === 'only'
-      ? has('push-tag')
-      : has('push') || has('synchronize') || (tags === 'also' && has('push-tag'));
-  const push = text.includes('git push') && !upToDate && starts;
-  const calls = prCalls(text, ['create', 'ready', 'reopen']);
-  const opened = has('opened') && calls.some((call) => call.subcommand === 'create');
-  const repoOf = (call) => {
-    const repo = call.flags.get('--repo') ?? call.flags.get('-R');
-    return typeof repo === 'string' ? repo : '';
-  };
-  const pr =
-    calls.find((call) => {
-      // gh refuses `--repo` without a selector, so that command changed nothing.
-      if (repoOf(call) && call.positionals.length === 0) return false;
-      if (call.subcommand === 'ready') {
-        return !undoes(call.flags) && (has('ready_for_review') || repoOf(call) !== '');
-      }
-      return call.subcommand === 'reopen' && (has('reopened') || repoOf(call) !== '');
-    }) ?? null;
-  return {
-    push,
-    opened,
-    pr: pr && {
-      subcommand: pr.subcommand,
-      selector: pr.positionals[0] ?? '',
-      repo: repoOf(pr),
-    },
-  };
+function repoOf(call) {
+  const long = call.flags.get('--repo');
+  if (typeof long === 'string') return long;
+  const short = call.flags.get('-R');
+  return typeof short === 'string' ? short.replace(/^=/, '') : '';
 }
 
 /**
- * `node ci-triggers.mjs <checkout> <project> <branch> <up-to-date> <tags>`, with the hook's
- * payload on stdin. Prints `ok`, then one line each: `1` if a push started a run, `1` if `gh pr create`
- * did, and the `gh pr` subcommand, selector and repository of a ready or reopen that did. No
- * `ok` means this failed, and the hook falls back to the default types.
+ * What this command starts, read through `prCalls` so `gh pr -R o/r ready 12`, quoting and a
+ * second line are read as the shell reads them. A push is still matched on text, as it always
+ * was: a mention costs a quiet lookup.
+ *
+ * `refs` are what the pushes sent, each `{ sha, name, tag }` with `sha` empty when this checkout
+ * cannot resolve it and `name` empty for a detached `HEAD`. Each is weighed on its own: a branch
+ * by `synchronize` or the push triggers' branch filters, a tag by tag filters alone, since a tag
+ * push starts no pull request event. `--follow-tags` can send a tag on another commit that only
+ * a release workflow runs on.
+ *
+ * Returns `targets`, the commits to watch with the name the report gives them and the
+ * repository they are in when a `gh pr create --repo` named another, and `prs`, every
+ * `gh pr ready` or `gh pr reopen` that started a run, whose heads the caller looks up. A ready
+ * or reopen in another repository is counted whatever the local workflows say: they are not
+ * that repository's.
+ */
+export function decide({ command, refs = [], head, files }) {
+  const text = String(command ?? '');
+  const types = new Set(files.flatMap((file) => file.types));
+  const branchStarts = (name) =>
+    types.has('synchronize') || files.some((file) => pushStarts(file.push, name));
+  const tagStarts_ = files.some((file) => tagStarts(file.push));
+
+  const targets = [];
+  for (const ref of refs) {
+    if (ref.sha && (ref.tag ? tagStarts_ : branchStarts(ref.name))) {
+      targets.push({ sha: ref.sha, label: ref.name || DETACHED, repo: '' });
+    }
+  }
+
+  // A pull request opened for `--head <branch>` runs on that branch, not on `HEAD`; the caller
+  // resolves it. Like a ready, one opened in another repository counts whatever the local
+  // workflows say.
+  const calls = prCalls(text, ['create', 'ready', 'reopen']);
+  const creates = calls
+    .filter((call) => call.subcommand === 'create' && (types.has('opened') || repoOf(call)))
+    .map((call) => {
+      const branch = call.flags.get('--head') ?? call.flags.get('-H');
+      return {
+        // `owner:branch` names a fork's branch; the part after the colon is the branch.
+        branch: typeof branch === 'string' ? branch.slice(branch.indexOf(':') + 1) : '',
+        repo: repoOf(call),
+      };
+    });
+  for (const { branch, repo } of creates) {
+    if (!branch && head.sha) targets.push({ sha: head.sha, label: head.name || DETACHED, repo });
+  }
+  const prs = calls
+    .filter((call) => {
+      // gh refuses `--repo` without a selector, so that command changed nothing.
+      if (repoOf(call) && call.positionals.length === 0) return false;
+      if (call.subcommand === 'ready') {
+        return !undoes(call.flags) && (types.has('ready_for_review') || repoOf(call) !== '');
+      }
+      return call.subcommand === 'reopen' && (types.has('reopened') || repoOf(call) !== '');
+    })
+    .map((call) => ({ selector: call.positionals[0] ?? '', repo: repoOf(call) }));
+  return { targets, prs, heads: creates.filter(({ branch }) => branch) };
+}
+
+// A ref line as git prints it, read from the JSON-encoded output, so a newline is a backslash:
+// the commit it sent (`old..new  src -> dst`, none for a `[new ...]` line), whether git called
+// it a new tag, its source ref and the ref it wrote.
+const REF_LINE =
+  /(?:\b[0-9a-f]{7,40}\.\.\.?([0-9a-f]{7,40})|\[new (branch|tag)\])\s+([^\s\\]+) -> ([^\s\\]+)/g;
+
+const strip = (ref, prefix) => (ref.startsWith(prefix) ? ref.slice(prefix.length) : ref);
+
+/**
+ * What a push sent when git printed no ref line (`git push -q`), as ref lines: each refspec's
+ * source and destination, read from the command. A bare push, or one that writes every branch,
+ * sent the current branch at least. A push run in another directory (`-C`, or after a `cd`) is
+ * left out: its sources are not this checkout's.
+ */
+function quietLines(command, head) {
+  const lines = [];
+  for (const push of pushTargets(command)?.pushes ?? []) {
+    if (push.dir !== null || !push.dirKnown || push.unresolved) continue;
+    if (push.bare || push.everyBranch) lines.push({ sent: '', src: 'HEAD', dst: head.name });
+    for (const { src, dst } of push.sent) {
+      lines.push({ sent: '', src, dst: dst === 'HEAD' ? head.name : dst });
+    }
+  }
+  return lines;
+}
+
+/**
+ * The commits the hook's payload started a run on, each `{ sha, label, repo }`, and the
+ * checkout the command ran in. Empty outside a canon project, for a command that starts nothing,
+ * and when the checkout cannot be read: the hook then exits quietly. Past that, a failure falls
+ * back to `textTargets`.
+ */
+export function watchTargets(payload, project) {
+  try {
+    return targetsOf(payload, project);
+  } catch {
+    return { targets: [] };
+  }
+}
+
+function targetsOf(payload, project) {
+  const command = String(payload?.tool_input?.command ?? '');
+  if (!command.includes('git push') && !command.includes('gh pr')) return { targets: [] };
+  const output = JSON.stringify(payload?.tool_response ?? '');
+  // The directory the command ran in, which may be a worktree or another checkout: reading
+  // `HEAD` in the project directory watched a commit nobody pushed.
+  const cwd = payload?.cwd || project || '.';
+  const run = (program, args, options = {}) =>
+    execFileSync(program, args, {
+      cwd,
+      encoding: 'utf8',
+      stdio: ['pipe', 'pipe', 'ignore'],
+      timeout: 30000,
+      ...options,
+    });
+  const quiet = (...args) => {
+    try {
+      return run(...args);
+    } catch {
+      return '';
+    }
+  };
+
+  const [top, common, headSha, headRef] = run('git', [
+    'rev-parse',
+    '--show-toplevel',
+    '--path-format=absolute',
+    '--git-common-dir',
+    'HEAD',
+    '--symbolic-full-name',
+    'HEAD',
+  ]).split('\n');
+  // A canon project: the checkout has the config, or it is a worktree of the session's project,
+  // which does (a worktree cut from a branch that predates the config). A push from any other
+  // repository is not this project's CI.
+  const canon =
+    existsSync(join(top, CONFIG_PATH)) ||
+    (Boolean(project) &&
+      existsSync(join(project, CONFIG_PATH)) &&
+      quiet('git', [
+        '-C',
+        project,
+        'rev-parse',
+        '--path-format=absolute',
+        '--git-common-dir',
+      ]).trim() === common);
+  if (!canon) return { targets: [] };
+  // `--symbolic-full-name` prints plain `HEAD` when it is detached: no branch to name or filter.
+  const head = {
+    sha: headSha,
+    name: headRef.startsWith('refs/heads/') ? headRef.slice('refs/heads/'.length) : '',
+  };
+
+  // Anything below that throws falls back to the plain reading the hook had before it read
+  // workflows, rather than to watching nothing.
+  let targets;
+  try {
+    targets = weigh();
+  } catch {
+    targets = textTargets(command, output, head);
+  }
+
+  // One commit is watched once. A `--repo` that names the checkout's own repository is the same
+  // runs as no `--repo`, so when it shares a SHA with another target, ask gh which repository
+  // the checkout is: one call, and only then.
+  let own;
+  const ownRepo = () =>
+    (own ??= quiet('gh', ['repo', 'view', '--json', 'nameWithOwner', '--jq', '.nameWithOwner'])
+      .trim()
+      .toLowerCase());
+  const shared = (sha) => targets.filter((target) => target.sha === sha).length > 1;
+  const seen = new Set();
+  return {
+    dir: top,
+    targets: targets
+      .map((target) =>
+        target.repo && shared(target.sha) && target.repo.toLowerCase() === ownRepo()
+          ? { ...target, repo: '' }
+          : target
+      )
+      .filter(({ sha, repo }) => {
+        const key = `${sha} ${repo.toLowerCase()}`;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      }),
+  };
+
+  function weigh() {
+    // What the pushes sent: git's ref lines, or with none, the refspecs in the command. "Everything
+    // up-to-date" counts only when git printed no ref line: `git push origin x && git push
+    // upstream x` prints one of each, and the first push still started a run. Nor does a push git
+    // refused, which prints its refs as `! [rejected]` lines that are no ref lines at all.
+    let lines = [];
+    if (command.includes('git push')) {
+      lines = [...output.matchAll(REF_LINE)].map((m) => ({
+        sent: m[1] ?? '',
+        newTag: m[2] === 'tag',
+        src: m[3],
+        dst: m[4],
+      }));
+      if (lines.length === 0 && !NOTHING_SENT.test(output)) {
+        lines = quietLines(command, head);
+      }
+    }
+
+    // Which lines are tags. git says `[new tag]` for a new one and nothing for one it updated
+    // (`+ a...b v1 -> v1 (forced update)`), which reads like a branch: a source that is a tag here
+    // and not a branch is one too. A commit this checkout cannot resolve was pushed from somewhere
+    // else (`cd ../other && git push`): it is left out rather than guessed at. Either lookup
+    // failing leaves the push out, not the pull requests beside it.
+    let refs = [];
+    if (lines.length > 0) {
+      const tags = new Set();
+      const heads = new Set();
+      const known = quiet('git', [
+        'for-each-ref',
+        '--format=%(refname)',
+        'refs/heads',
+        'refs/tags',
+      ]);
+      for (const ref of known.split('\n')) {
+        if (ref.startsWith('refs/tags/')) tags.add(ref.slice(10));
+        else if (ref.startsWith('refs/heads/')) heads.add(ref.slice(11));
+      }
+      // A new branch prints no range, so its source ref names the commit.
+      const resolved = quiet('git', ['cat-file', '--batch-check=%(objectname)'], {
+        input: lines.map((line) => `${line.sent || line.src}^{commit}\n`).join(''),
+      }).split('\n');
+      refs = lines.map((line, i) => {
+        const tag =
+          line.newTag ||
+          line.dst.startsWith('refs/tags/') ||
+          (tags.has(strip(line.src, 'refs/tags/')) && !heads.has(strip(line.src, 'refs/heads/')));
+        return {
+          sha: /^[0-9a-f]{40,64}$/.test(resolved[i] ?? '') ? resolved[i] : '',
+          name: strip(line.dst, tag ? 'refs/tags/' : 'refs/heads/'),
+          tag,
+        };
+      });
+    }
+
+    const { targets, prs, heads } = decide({
+      command,
+      refs,
+      head,
+      files: workflowsIn([top, project]),
+    });
+
+    // `gh pr create --head feature`: the local branch, or what the remote has of it.
+    for (const { branch, repo } of heads) {
+      const sha =
+        quiet('git', ['rev-parse', '--verify', '-q', `refs/heads/${branch}^{commit}`]).trim() ||
+        quiet('git', [
+          'rev-parse',
+          '--verify',
+          '-q',
+          `refs/remotes/origin/${branch}^{commit}`,
+        ]).trim();
+      if (/^[0-9a-f]{40,64}$/.test(sha)) targets.push({ sha, label: branch, repo });
+    }
+
+    // A pull request marked ready or reopened runs on its own head, which need not be `HEAD`:
+    // `gh pr ready 12` from another branch, or with commits not pushed yet, or in another
+    // repository. A named pull request gh cannot read is left out: `HEAD` may be another pull
+    // request's. Only a bare `gh pr ready`, which is about the current branch's, falls back to it.
+    for (const pr of prs) {
+      const view = quiet('gh', [
+        'pr',
+        'view',
+        ...(pr.selector ? [pr.selector] : []),
+        ...(pr.repo ? ['--repo', pr.repo] : []),
+        '--json',
+        'headRefOid,headRefName',
+        '--jq',
+        '.headRefOid + " " + .headRefName',
+      ]);
+      const found = /^([0-9a-f]{7,64}) (\S+)/.exec(view);
+      if (found) targets.push({ sha: found[1], label: found[2], repo: pr.repo });
+      else if (!pr.selector && head.sha) {
+        targets.push({ sha: head.sha, label: head.name || DETACHED, repo: '' });
+      }
+    }
+    return targets;
+  }
+}
+
+/** A push git refused or that changed nothing: no ref line in its output started a run. */
+const NOTHING_SENT = /Everything up-to-date|\[(?:remote )?rejected\]|error: failed to push/;
+
+/**
+ * The plain reading, for when the full one throws: GitHub's default types, under which a push
+ * that sent something and a `gh pr create` start a run on `HEAD`, matched on text.
+ */
+export function textTargets(command, output, head) {
+  if (!head.sha) return [];
+  const pushed = command.includes('git push') && !NOTHING_SENT.test(output);
+  return pushed || command.includes('gh pr create')
+    ? [{ sha: head.sha, label: head.name || DETACHED, repo: '' }]
+    : [];
+}
+
+/**
+ * `node ci-triggers.mjs <start>`, with the hook's payload on stdin, `CLAUDE_PROJECT_DIR` in the
+ * environment, and `start` the epoch second the hook started. Prints nothing when there is
+ * nothing to watch; otherwise the checkout to run `gh` in and the cutoff for a run's
+ * `createdAt`, a minute before `start`, then one line per commit: its SHA, the name the report
+ * gives it and the repository it is in when not the checkout's, all tab-separated.
  */
 const self = realpathSync(fileURLToPath(import.meta.url));
 if (process.argv[1] && realpathSync(resolve(process.argv[1])) === self) {
-  const [checkout, project, branch, upToDate, tags] = process.argv.slice(2);
-  const payload = JSON.parse(readFileSync(0, 'utf8'));
-  const { push, opened, pr } = decide({
-    command: payload?.tool_input?.command,
-    upToDate: upToDate === '1',
-    tags,
-    found: triggersFor({ checkout, roots: [checkout, project], branch }),
-  });
   const one = (value) => String(value).replace(/\s+/g, ' ');
-  process.stdout.write(
-    [
-      'ok',
-      push ? 1 : 0,
-      opened ? 1 : 0,
-      one(pr?.subcommand ?? ''),
-      one(pr?.selector ?? ''),
-      one(pr?.repo ?? ''),
-    ].join('\n')
-  );
+  const start = Number(process.argv[2]) * 1000 || Date.now();
+  const since = new Date(start - 60000).toISOString().replace(/\.\d+Z$/, 'Z');
+  let payload = null;
+  try {
+    payload = JSON.parse(readFileSync(0, 'utf8'));
+  } catch {
+    // Not a payload: nothing to watch.
+  }
+  const { dir, targets } = watchTargets(payload, process.env.CLAUDE_PROJECT_DIR ?? '');
+  if (targets.length > 0) {
+    process.stdout.write(
+      [
+        `${dir}\t${since}`,
+        ...targets.map((t) => [t.sha, one(t.label), one(t.repo)].join('\t')),
+      ].join('\n')
+    );
+  }
 }
