@@ -16,5 +16,9 @@
     "git",
     "hooks",
     "code-review"
-  ]
+  ],
+  "metadata": {
+    "requires": "Claude Code, macOS or Linux, Node 20 or later, the GitHub CLI signed in, and a GitHub repository with an integration branch and a production branch",
+    "setupCommand": "/canon:setup"
+  }
 }
