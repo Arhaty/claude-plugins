@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.3](https://github.com/Arhaty/claude-plugins/compare/canon-v0.4.2...canon-v0.4.3) (2026-10-18)
+
+
+### Bug Fixes
+
+* harden ci-watch's shutdown and quiet-push reading in canon ([#36](https://github.com/Arhaty/claude-plugins/issues/36)) ([6015028](https://github.com/Arhaty/claude-plugins/commit/6015028c582c1a6b67275c2936ed9bacde857836))
+
 ## [0.4.2](https://github.com/Arhaty/claude-plugins/compare/canon-v0.4.1...canon-v0.4.2) (2026-10-18)
 
 
