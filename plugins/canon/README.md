@@ -223,7 +223,13 @@ yours, and `/canon:setup` offers your team's real names:
    the command may not name the repository's own path anywhere: an approval covers the command
    line, and anything the repository holds could change under it.
 
-The key is never printed, and an API error reports its HTTP status, not the response body.
+The key is never printed, and an API error reports its HTTP status, not the response body. A 401
+names where the key was read from, so you know which one to change.
+
+Behind an egress proxy, as in a cloud session where `LINEAR_API_KEY` is a placeholder the proxy
+swaps for the real key, the request has to go through `HTTPS_PROXY`. Node's `fetch` does that only
+with `NODE_USE_ENV_PROXY=1` set at startup (Node 22.21, 24.5 or later), so when a proxy is set and
+the flag is not, the script re-runs itself once with it. `NO_PROXY` is respected.
 
 ### Linear's GitHub integration
 

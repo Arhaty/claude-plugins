@@ -3,8 +3,9 @@
  * own, then `scripts/tracker.mjs` as the skills run it. No test reaches the network.
  */
 
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -15,6 +16,8 @@ import {
   blockedState,
   envFileValue,
   main,
+  nodeHasEnvProxy,
+  relaunchThroughProxy,
   resolveKey,
 } from '../scripts/tracker.mjs';
 import { LinearError, createClient, parseIdentifier } from '../scripts/tracker/linear.mjs';
@@ -419,6 +422,179 @@ describe('tracker.mjs', () => {
     expect(refused.status).toBe(1);
     expect(refused.stderr).toMatch(/^tracker: Refusing to set production/);
     expect(cli(['set-state', 'ABC-1']).status).toBe(2);
+  });
+});
+
+describe('behind a proxy', () => {
+  const PROXY = { HTTPS_PROXY: 'http://proxy.internal:3128' };
+  const NODE = '24.12.0';
+  const relaunch = (env, version = NODE) => {
+    const calls = [];
+    const status = relaunchThroughProxy(['issue', 'ABC-1'], {
+      env,
+      version,
+      script: '/plugin/scripts/tracker.mjs',
+      spawn: (...args) => {
+        calls.push(args);
+        return { status: 3 };
+      },
+    });
+    return { status, calls };
+  };
+
+  it('re-runs once through the proxy when the flag is unset', () => {
+    for (const env of [PROXY, { https_proxy: PROXY.HTTPS_PROXY }]) {
+      const { status, calls } = relaunch(env);
+      expect(status).toBe(3);
+      expect(calls.length).toBe(1);
+      const [execPath, args, options] = calls[0];
+      expect(execPath).toBe(process.execPath);
+      expect(args.slice(-4)).toEqual([
+        '--disable-warning=UNDICI-EHPA',
+        '/plugin/scripts/tracker.mjs',
+        'issue',
+        'ABC-1',
+      ]);
+      expect(options).toEqual({ env: { ...env, NODE_USE_ENV_PROXY: '1' }, stdio: 'inherit' });
+    }
+  });
+
+  it('does nothing when the flag is already set, which is also the second run', () => {
+    for (const value of ['1', '0', '']) {
+      expect(relaunch({ ...PROXY, NODE_USE_ENV_PROXY: value })).toEqual({
+        status: null,
+        calls: [],
+      });
+    }
+  });
+
+  it('does nothing with no proxy, a NO_PROXY that covers Linear, or a Node without the flag', () => {
+    for (const env of [
+      {},
+      { ...PROXY, NO_PROXY: 'localhost,api.linear.app' },
+      { ...PROXY, no_proxy: '.linear.app' },
+      { ...PROXY, NO_PROXY: '*' },
+    ]) {
+      expect(relaunch(env), JSON.stringify(env)).toEqual({ status: null, calls: [] });
+    }
+    for (const version of ['20.19.0', '22.20.0', '23.11.0', '24.4.1']) {
+      expect(relaunch(PROXY, version), version).toEqual({ status: null, calls: [] });
+    }
+    for (const version of ['22.21.0', '24.5.0', '25.0.0'])
+      expect(nodeHasEnvProxy(version)).toBe(true);
+    expect(relaunch({ ...PROXY, NO_PROXY: 'linear.app:8443,example.com' }).calls.length).toBe(1);
+  });
+
+  describe('a 401', () => {
+    let project;
+    let home;
+    let restoreHome;
+    let savedProjectDir;
+    let state;
+    const run = (env, version = NODE) =>
+      main(['issue', 'ABC-1'], { cwd: project, env, version, fetch: fakeLinear(state) });
+
+    beforeEach(() => {
+      savedProjectDir = process.env.CLAUDE_PROJECT_DIR;
+      delete process.env.CLAUDE_PROJECT_DIR;
+      home = mkdtempSync(join(tmpdir(), 'canon-home-'));
+      restoreHome = fakeHome(home);
+      project = makeProject({ config: { ...CONFIG, tracker: TRACKER } });
+      state = linearState({ fail: 401 });
+    });
+    afterEach(() => {
+      restoreHome();
+      if (savedProjectDir !== undefined) process.env.CLAUDE_PROJECT_DIR = savedProjectDir;
+      rmSync(project, { recursive: true, force: true });
+      rmSync(home, { recursive: true, force: true });
+    });
+
+    it('with a placeholder key and an unused proxy, says Node skipped the proxy', async () => {
+      const placeholder = { ...PROXY, LINEAR_API_KEY: 'placeholder' };
+      let error = await rejects(() => run(placeholder), /HTTP 401/);
+      expect(error.message).toBe(
+        'Linear returned HTTP 401: LINEAR_API_KEY is a placeholder the HTTPS proxy replaces ' +
+          'on the way out, and Node is not sending the request through the proxy. ' +
+          'Run it with NODE_USE_ENV_PROXY=1 set.'
+      );
+      error = await rejects(() => run(placeholder, '20.19.0'), /HTTP 401/);
+      expect(error.message).toMatch(
+        /through the proxy\. Node 20\.19\.0 cannot: use Node 22\.21, 24\.5 or later\.$/
+      );
+      error = await rejects(() => run({ ...placeholder, NO_PROXY: 'api.linear.app' }), /HTTP 401/);
+      expect(error.message).toMatch(
+        /through the proxy\. NO_PROXY covers api\.linear\.app: take it out\.$/
+      );
+    });
+
+    it('with a real-looking key, or no proxy, names where the key was read from', async () => {
+      let error = await rejects(() => run({ ...PROXY, LINEAR_API_KEY: state.key }), /HTTP 401/);
+      expect(error.message).toBe(
+        'Linear returned HTTP 401: it rejected the LINEAR_API_KEY from the environment. ' +
+          'Change it there.'
+      );
+      error = await rejects(() => run({ LINEAR_API_KEY: 'placeholder' }), /HTTP 401/);
+      expect(error.message).toMatch(/from the environment\. Change it there\.$/);
+
+      writeFileSync(join(project, '.env.local'), 'LINEAR_API_KEY=lin_api_old\n');
+      error = await rejects(() => run({}), /HTTP 401/);
+      expect(error.message).toBe(
+        'Linear returned HTTP 401: it rejected the LINEAR_API_KEY from .env.local at the ' +
+          'project root. Change it there.'
+      );
+      expect(error.message).not.toContain('lin_api_old');
+
+      state.fail = 500;
+      await rejects(() => run({ LINEAR_API_KEY: 'placeholder' }), /^Linear returned HTTP 500$/);
+    });
+  });
+
+  it('sends the request through the proxy, with no warning, when run as a skill would', async () => {
+    // Node 20 and early 22 have no proxy support for fetch: there is nothing to test.
+    if (!nodeHasEnvProxy()) return;
+    const seen = [];
+    const proxy = createServer((socket) => {
+      socket.once('data', (chunk) => {
+        seen.push(chunk.toString('latin1').split('\r\n')[0]);
+        socket.end('HTTP/1.1 502 Bad Gateway\r\n\r\n');
+      });
+    });
+    await new Promise((done) => proxy.listen(0, '127.0.0.1', done));
+    const home = mkdtempSync(join(tmpdir(), 'canon-home-'));
+    const project = makeProject({ config: { ...CONFIG, tracker: TRACKER } });
+    try {
+      const env = { ...process.env };
+      for (const name of [
+        'NODE_USE_ENV_PROXY',
+        'NODE_OPTIONS',
+        'https_proxy',
+        'NO_PROXY',
+        'no_proxy',
+      ]) {
+        delete env[name];
+      }
+      const child = spawn(process.execPath, [join(ROOT, 'scripts/tracker.mjs'), 'issue', 'ABC-1'], {
+        cwd: project,
+        env: {
+          ...env,
+          HOME: home,
+          CLAUDE_PROJECT_DIR: project,
+          LINEAR_API_KEY: 'placeholder',
+          HTTPS_PROXY: `http://127.0.0.1:${proxy.address().port}`,
+        },
+      });
+      let stderr = '';
+      child.stderr.on('data', (chunk) => (stderr += chunk));
+      const status = await new Promise((done) => child.on('close', done));
+      expect(status, stderr).toBe(1);
+      expect(seen).toEqual(['CONNECT api.linear.app:443 HTTP/1.1']);
+      expect(stderr).not.toMatch(/Warning/);
+      expect(stderr.match(/^tracker:/gm)?.length, stderr).toBe(1);
+    } finally {
+      proxy.close();
+      rmSync(project, { recursive: true, force: true });
+      rmSync(home, { recursive: true, force: true });
+    }
   });
 });
 

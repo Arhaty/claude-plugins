@@ -16,7 +16,7 @@
 
 export const KEY_VARIABLE = 'LINEAR_API_KEY';
 
-const ENDPOINT = 'https://api.linear.app/graphql';
+export const ENDPOINT = 'https://api.linear.app/graphql';
 
 /**
  * Long enough for any query here, short enough that a hung connection fails the
@@ -24,7 +24,19 @@ const ENDPOINT = 'https://api.linear.app/graphql';
  */
 const TIMEOUT_MS = 30_000;
 
-export class LinearError extends Error {}
+export class LinearError extends Error {
+  constructor(message, status = null) {
+    super(message);
+    this.status = status;
+  }
+}
+
+/**
+ * Whether `key` could be a personal API key at all. Every one starts `lin_api_`; a
+ * key that does not is a stand-in, such as the `placeholder` a cloud session's
+ * egress proxy swaps for the real credential.
+ */
+export const looksLikeKey = (key) => /^lin_api_\S+$/.test(key ?? '');
 
 const ISSUE_FIELDS = `
   id
@@ -68,7 +80,9 @@ export function createClient({ apiKey, team, fetch: fetchImpl = fetch, timeoutMs
     }).catch(timedOut);
 
     // The body can echo request headers back, so only the status is safe to show.
-    if (!response.ok) throw new LinearError(`Linear returned HTTP ${response.status}`);
+    if (!response.ok) {
+      throw new LinearError(`Linear returned HTTP ${response.status}`, response.status);
+    }
     const payload = await response.json().catch(timedOut);
     if (payload?.errors?.length) {
       const reasons = payload.errors.map((error) => error?.message ?? 'unknown').join('; ');
