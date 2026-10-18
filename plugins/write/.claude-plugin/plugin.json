@@ -15,5 +15,9 @@
     "tone-of-voice",
     "editing",
     "copy"
-  ]
+  ],
+  "metadata": {
+    "requires": "Claude Code, macOS or Linux, and Node 20 or later, with setup optional",
+    "setupCommand": "/write:setup"
+  }
 }
