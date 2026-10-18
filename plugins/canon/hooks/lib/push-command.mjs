@@ -109,6 +109,12 @@ function readPush({ argv, env, appended, dirKnown: known = true }) {
   let dir = null;
   let dirKnown = known;
   const config = commandConfig(env);
+  // The same, word for word, for `ci-watch` to hand back to git: `config` lowercases the whole
+  // key, and reads a `-c key` with no value as empty where git reads it as true.
+  const configArgs = Object.entries(env).flatMap(([name, key]) => {
+    const index = /^GIT_CONFIG_KEY_(\d+)$/.exec(name)?.[1];
+    return index === undefined ? [] : [`${key}=${env[`GIT_CONFIG_VALUE_${index}`] ?? ''}`];
+  });
 
   let i = 1;
   while (i < argv.length && argv[i].startsWith('-')) {
@@ -122,6 +128,7 @@ function readPush({ argv, env, appended, dirKnown: known = true }) {
       if (name === '-c') {
         const [key, ...value] = (argv[i + 1] ?? '').split('=');
         config[key.toLowerCase()] = value.join('=');
+        configArgs.push(argv[i + 1] ?? '');
       }
       i += 1;
     }
@@ -133,6 +140,8 @@ function readPush({ argv, env, appended, dirKnown: known = true }) {
   let everyBranch = false;
   let deleting = false;
   let tagsOnly = false;
+  // `true` or `false` when the command says, `null` to leave it to `push.followTags`.
+  let followTags = null;
   // `echo HEAD:main | xargs git push origin` pushes a refspec nothing here can read.
   let unresolved = appended;
   const rest = [];
@@ -164,6 +173,8 @@ function readPush({ argv, env, appended, dirKnown: known = true }) {
     // `--tags` with no refspec writes tags and no branch. `--follow-tags` is not
     // this: it pushes whatever a bare push would, and the tags beside it.
     if (name === '--tags') tagsOnly = true;
+    if (name === '--follow-tags') followTags = true;
+    if (name === '--no-follow-tags') followTags = false;
   }
 
   // With `--repo`, git reads every positional as a refspec rather than the first
@@ -193,7 +204,20 @@ function readPush({ argv, env, appended, dirKnown: known = true }) {
   const bare = refspecs.length === 0 && !everyBranch && !tagsOnly;
   if (bare && config['push.default'] === 'matching') everyBranch = true;
 
-  return { dir, dirKnown, config, remote, targets, sent, bare, everyBranch, force, unresolved };
+  return {
+    dir,
+    dirKnown,
+    config,
+    configArgs,
+    remote,
+    targets,
+    sent,
+    bare,
+    everyBranch,
+    followTags,
+    force,
+    unresolved,
+  };
 }
 
 /**
