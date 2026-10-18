@@ -12,6 +12,7 @@ import {
   readFileSync,
   realpathSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -989,7 +990,8 @@ describe('ci-watch.sh', () => {
    * Run the hook with a stub `gh` that logs every call and lists `runs` for any
    * commit, each with its conclusion; `conclusion` alone is one run, 42. `sleep` is
    * stubbed too, so the waits cost nothing. `project` is `$CLAUDE_PROJECT_DIR`, which
-   * the payload's `cwd` overrides.
+   * the payload's `cwd` overrides. `prHead` is what `gh pr view` prints: `<sha> <branch>`;
+   * `script` is the hook's path, which a test runs through a symlink.
    */
   function watch({
     command,
@@ -998,6 +1000,8 @@ describe('ci-watch.sh', () => {
     project = repo.dir,
     conclusion,
     runs = { 42: conclusion },
+    prHead = '',
+    script = join(HOOKS, 'ci-watch.sh'),
   }) {
     const of = Object.entries(runs)
       .map(([id, result]) => `${id}) echo ${result} ;;`)
@@ -1010,6 +1014,7 @@ describe('ci-watch.sh', () => {
         `result() { case "$1" in ${of} esac; }`,
         'case "$1 $2" in',
         `  "run list") printf '%s\\n' ${Object.keys(runs).join(' ')} ;;`,
+        `  "pr view") echo '${prHead}' ;;`,
         '  "run watch") [ "$(result "$3")" = success ] ;;',
         '  "run view") case "$*" in *--log-failed*) echo log ;; *) result "$3" ;; esac ;;',
         'esac',
@@ -1017,7 +1022,7 @@ describe('ci-watch.sh', () => {
       { mode: 0o755 }
     );
     writeFileSync(join(bin, 'sleep'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
-    const result = spawnSync('bash', [join(HOOKS, 'ci-watch.sh')], {
+    const result = spawnSync('bash', [script], {
       input: JSON.stringify({
         tool_name: 'Bash',
         tool_input: { command },
@@ -1247,5 +1252,384 @@ describe('ci-watch.sh', () => {
     const result = watch({ command: 'git push -u origin HEAD', conclusion: 'failure' });
     expect(result.status).toBe(0);
     expect(result.calls).toBe('');
+  });
+
+  describe('which commands start a run', () => {
+    /** Point `ci.workflow` at `ci.yml` and write it with `on` as its triggers. */
+    function workflow(on) {
+      writeFileSync(
+        join(repo.dir, '.claude/canon.json'),
+        JSON.stringify({ ...CONFIG, ci: { workflow: 'ci.yml', baseInput: null } })
+      );
+      mkdirSync(join(repo.dir, '.github/workflows'), { recursive: true });
+      writeFileSync(
+        join(repo.dir, '.github/workflows/ci.yml'),
+        `name: CI\n${on}\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - run: true\n`
+      );
+    }
+
+    const PUSH = 'git push -u origin HEAD';
+    const CREATE = 'gh pr create --fill';
+    const READY = 'gh pr ready 12';
+    const watched = (command) => watch({ command, conclusion: 'failure' });
+
+    /** Watched means it polled and reported the red run; ignored means it never called gh. */
+    function expectWatched(command) {
+      const result = watched(command);
+      expect(result.status, command).toBe(2);
+      expect(result.calls, command).toContain('run list');
+      expect(result.stderr, command).toContain('CI failed on feature');
+    }
+    function expectIgnored(command) {
+      const result = watched(command);
+      expect(result.status, command).toBe(0);
+      expect(result.calls, command).toBe('');
+      expect(result.stderr, command).toBe('');
+    }
+
+    it("uses GitHub's default types with no ci block, so marking a draft ready is ignored", () => {
+      expectWatched(PUSH);
+      expectWatched(CREATE);
+      expectIgnored(READY);
+    });
+
+    it('uses the default types when the named workflow file is missing', () => {
+      workflow('on: pull_request');
+      rmSync(join(repo.dir, '.github/workflows/ci.yml'));
+      expectWatched(PUSH);
+      expectIgnored(READY);
+    });
+
+    it('watches ready_for_review and ignores a push when the types leave out synchronize', () => {
+      workflow(
+        'on:\n  pull_request:\n    types: [opened, reopened, ready_for_review]\n  workflow_dispatch:'
+      );
+      expectWatched(READY);
+      expectWatched(CREATE);
+      expectIgnored(PUSH);
+    });
+
+    it('reads types written as a block list, at either indent', () => {
+      workflow('on:\n  pull_request:\n    types:\n      - opened\n      - ready_for_review');
+      expectWatched(READY);
+      expectIgnored(PUSH);
+      workflow('on:\n  pull_request:\n    types:\n    - "ready_for_review"   # drafts');
+      expectWatched(READY);
+      expectIgnored(CREATE);
+    });
+
+    it('takes a pull_request key with no types as the defaults', () => {
+      workflow('on:\n  pull_request:\n    branches: [staging]');
+      expectWatched(PUSH);
+      expectIgnored(READY);
+    });
+
+    it('watches a push when push is a trigger', () => {
+      workflow('on: [push, pull_request]');
+      expectWatched(PUSH);
+      expectIgnored(READY);
+      workflow('on: push');
+      expectWatched(PUSH);
+      expectIgnored(CREATE);
+      workflow('on:\n  push:\n    branches: [feature]\n  pull_request:\n    types: [opened]');
+      expectWatched(PUSH);
+    });
+
+    it('still skips an up-to-date push under a push trigger', () => {
+      workflow('on: [push]');
+      const result = watch({ command: 'git push', output: 'Everything up-to-date\n' });
+      expect(result.status).toBe(0);
+      expect(result.calls).toBe('');
+    });
+
+    /** Another workflow file beside `ci.yml`, in `dir`'s `.github/workflows/`. */
+    function another(name, on, dir = repo.dir) {
+      mkdirSync(join(dir, '.github/workflows'), { recursive: true });
+      writeFileSync(join(dir, '.github/workflows', name), `${on}\njobs: {}\n`);
+    }
+    const TRIMMED = 'on:\n  pull_request:\n    types: [opened, reopened, ready_for_review]';
+
+    it('watches a push when another workflow keeps the synchronize type ci.yml trimmed', () => {
+      workflow(TRIMMED);
+      another('lint.yml', 'on: pull_request');
+      expectWatched(PUSH);
+    });
+
+    it('ignores a workflow on other events only, such as a release on tags', () => {
+      workflow(TRIMMED);
+      another('release.yml', "on:\n  push:\n    tags: ['v*']\n  release: {types: [published]}");
+      another(
+        'dispatch.yml',
+        'on:\n  workflow_dispatch:\n    inputs:\n      base:\n        type: string'
+      );
+      expectIgnored(PUSH);
+      expectWatched(READY);
+    });
+
+    it('leaves out pull_request_target, whose runs are on the base commit', () => {
+      workflow('on:\n  pull_request:\n    types: [opened]');
+      another('target.yml', 'on:\n  pull_request_target:\n    types: [ready_for_review]');
+      expectIgnored(READY);
+    });
+
+    it('keeps a quoted # in a filter, which is not a comment', () => {
+      workflow(`${TRIMMED}\n  push:\n    branches-ignore: ['feature', 'hotfix #1']  # not these`);
+      expectIgnored(PUSH);
+    });
+
+    it('ignores gh pr ready --repo with no selector, which gh refuses', () => {
+      workflow(TRIMMED);
+      expectIgnored('gh pr ready -R o/r');
+      expectIgnored('gh pr -R o/r ready');
+    });
+
+    it('lets other gh pr commands through without a lookup', () => {
+      workflow(TRIMMED);
+      expectIgnored('gh pr view 12');
+      expectIgnored('gh pr checks 12');
+    });
+
+    it("honours a push trigger's branch filters", () => {
+      workflow(`${TRIMMED}\n  push:\n    branches: [staging, 'release/**']`);
+      expectIgnored(PUSH);
+      workflow(`${TRIMMED}\n  push:\n    branches:\n      - 'feat*'`);
+      expectWatched(PUSH);
+      workflow(`${TRIMMED}\n  push:\n    branches-ignore: [feature]`);
+      expectIgnored(PUSH);
+      workflow(`${TRIMMED}\n  push:\n    branches-ignore: [main]`);
+      expectWatched(PUSH);
+    });
+
+    it('ignores gh pr ready --undo, which converts the pull request to a draft', () => {
+      workflow(TRIMMED);
+      expectIgnored('gh pr ready 12 --undo');
+      expectIgnored('gh pr ready --undo');
+    });
+
+    it('watches gh pr reopen when reopened is a type, and only then', () => {
+      expectWatched('gh pr reopen 12');
+      workflow('on:\n  pull_request:\n    types: [opened]');
+      expectIgnored('gh pr reopen 12');
+    });
+
+    it('watches the head of the pull request marked ready, not HEAD', () => {
+      workflow(TRIMMED);
+      const head = 'abc1234abc1234abc1234abc1234abc1234abcd';
+      const result = watch({
+        command: 'gh pr ready -R o/r 12',
+        conclusion: 'failure',
+        prHead: `${head} other-branch`,
+      });
+      expect(result.status).toBe(2);
+      expect(result.calls).toContain('pr view 12 --repo o/r --json');
+      expect(result.calls).toContain(`run list --commit ${head}`);
+      expect(result.stderr).toContain(`CI failed on other-branch at ${head}.`);
+      // The group flag before the subcommand, as gh takes it.
+      const group = watch({ command: 'gh pr -R o/r ready 12', conclusion: 'failure' });
+      expect(group.status).toBe(2);
+      expect(group.calls).toContain('pr view 12 --repo o/r --json');
+    });
+
+    it('reads the selector from the ready command alone, not the next line', () => {
+      workflow(TRIMMED);
+      const result = watch({ command: 'gh pr ready\necho done', conclusion: 'failure' });
+      expect(result.status).toBe(2);
+      expect(result.calls).toContain('pr view --json');
+      expect(
+        watch({ command: 'gh pr ready\ngit stash --undo', conclusion: 'failure' }).status
+      ).toBe(2);
+    });
+
+    it('reads --undo=true as an undo and --undo=false as a ready', () => {
+      workflow(TRIMMED);
+      expectIgnored('gh pr ready 12 --undo=true');
+      expectWatched('gh pr ready 12 --undo=false');
+    });
+
+    it('keeps watching a push when a branches-ignore pattern is one it cannot read', () => {
+      workflow(`${TRIMMED}\n  push:\n    branches-ignore: ['release/[0-9]*']`);
+      expectWatched(PUSH);
+    });
+
+    it('watches a tag push when a workflow runs on tags', () => {
+      workflow(TRIMMED);
+      another('release.yml', "on:\n  push:\n    tags: ['v*']");
+      repo.git('tag', 'v1.2.0');
+      const output = ' * [new tag]         v1.2.0 -> v1.2.0\n';
+      const tagged = watch({ command: 'git push origin v1.2.0', output, conclusion: 'failure' });
+      expect(tagged.status).toBe(2);
+      expect(tagged.stderr).toContain(`CI failed on v1.2.0 at ${sha('v1.2.0')}.`);
+      // A branch push under the same files starts nothing.
+      expectIgnored(PUSH);
+    });
+
+    it('decides a tag push by tag triggers alone', () => {
+      repo.git('tag', 'v1.2.0');
+      const output = ' * [new tag]         v1.2.0 -> v1.2.0\n';
+      const tagPush = () =>
+        watch({ command: 'git push origin v1.2.0', output, conclusion: 'failure' });
+      // The default types start nothing for a tag.
+      expect(tagPush().calls).toBe('');
+      workflow(`${TRIMMED}\n  push:\n    branches: [feature]`);
+      expect(tagPush().calls).toBe('');
+    });
+
+    it('reads a file whose run script has a tab, outside on:', () => {
+      workflow(TRIMMED);
+      another(
+        'release.yml',
+        "on:\n  push:\n    tags: ['v*']\njobs:\n  r:\n    steps:\n      - run: |\n\t\tmake release"
+      );
+      repo.git('tag', 'v1.2.0');
+      const output = ' * [new tag]         v1.2.0 -> v1.2.0\n';
+      expect(
+        watch({ command: 'git push origin v1.2.0', output, conclusion: 'failure' }).status
+      ).toBe(2);
+    });
+
+    it('reads a forced tag update as a tag push', () => {
+      workflow(TRIMMED);
+      another('release.yml', "on:\n  push:\n    tags: ['v*']");
+      repo.git('tag', 'v1');
+      const old = sha('HEAD').slice(0, 7);
+      repo.git(
+        '-c',
+        'user.name=t',
+        '-c',
+        'user.email=t@t',
+        'commit',
+        '-q',
+        '--allow-empty',
+        '-m',
+        'y'
+      );
+      repo.git('tag', '-f', 'v1');
+      const now = sha('HEAD').slice(0, 7);
+      const result = watch({
+        command: 'git push -f origin v1',
+        output: ` + ${old}...${now} v1 -> v1 (forced update)\n`,
+        conclusion: 'failure',
+      });
+      expect(result.status).toBe(2);
+      expect(result.stderr).toContain(`CI failed on v1 at ${sha('HEAD')}.`);
+    });
+
+    it('counts no tag push for --follow-tags that sent no tag', () => {
+      workflow(TRIMMED);
+      another('release.yml', "on:\n  push:\n    tags: ['v*']");
+      const result = watch({
+        command: 'git push --follow-tags',
+        output: `   ${sha('HEAD').slice(0, 7)}..${sha('HEAD').slice(0, 7)}  feature -> feature\n`,
+        conclusion: 'failure',
+      });
+      expect(result.calls).toBe('');
+    });
+
+    it('watches a ready in another repository whatever the local workflows say', () => {
+      workflow('on:\n  pull_request:\n    types: [opened]');
+      const result = watched('gh pr ready 7 --repo org/other');
+      expect(result.status).toBe(2);
+      expect(result.calls).toContain('pr view 7 --repo org/other --json');
+    });
+
+    it('watches the branch a push sent, not a tag it carried', () => {
+      workflow(TRIMMED);
+      another('release.yml', "on:\n  push:\n    branches: [feature]\n    tags: ['v*']");
+      repo.git('tag', 'v1.0');
+      repo.git(
+        '-c',
+        'user.name=t',
+        '-c',
+        'user.email=t@t',
+        'commit',
+        '-q',
+        '--allow-empty',
+        '-m',
+        'y'
+      );
+      const old = sha('HEAD~1').slice(0, 7);
+      const now = sha('HEAD').slice(0, 7);
+      const result = watch({
+        command: 'git push --follow-tags origin feature',
+        output: `   ${old}..${now}  feature -> feature\n * [new tag]         v1.0 -> v1.0\n`,
+        conclusion: 'failure',
+      });
+      expect(result.status).toBe(2);
+      expect(result.calls).toContain(`run list --commit ${sha('HEAD')}`);
+      expect(result.stderr).toContain(`CI failed on feature at ${sha('HEAD')}.`);
+    });
+
+    it('falls back to the default types when the trigger reader fails', () => {
+      workflow(TRIMMED);
+      writeFileSync(
+        join(bin, 'node'),
+        `#!/bin/sh\ncase "$1" in *ci-triggers.mjs) exit 1 ;; esac\nexec '${process.execPath}' "$@"\n`,
+        { mode: 0o755 }
+      );
+      expectWatched(PUSH);
+      expectWatched(CREATE);
+      expectIgnored(READY);
+      // The reopen names its pull request; the current branch's is someone else's.
+      expect(watched('gh pr reopen 42').calls).toContain('pr view 42 --json');
+    });
+
+    it('reads the triggers when the plugin is reached through a symlink', () => {
+      workflow(TRIMMED);
+      const link = join(mkdtempSync(join(tmpdir(), 'canon-link-')), 'hooks');
+      symlinkSync(HOOKS, link);
+      try {
+        const result = watch({
+          command: READY,
+          conclusion: 'failure',
+          script: join(link, 'ci-watch.sh'),
+        });
+        expect(result.status).toBe(2);
+        expect(watch({ command: PUSH, script: join(link, 'ci-watch.sh') }).calls).toBe('');
+      } finally {
+        rmSync(join(link, '..'), { recursive: true, force: true });
+      }
+    });
+
+    it('watches gh pr ready after an up-to-date push in the same call', () => {
+      workflow(TRIMMED);
+      const result = watch({
+        command: 'git push && gh pr ready',
+        output: 'Everything up-to-date\n',
+        conclusion: 'failure',
+      });
+      expect(result.status).toBe(2);
+      expect(result.calls).toContain('pr view --json');
+    });
+
+    it("reads a worktree's own workflows, with the config from the project", () => {
+      workflow('on:\n  pull_request:\n    types: [opened]');
+      const tree = mkdtempSync(join(tmpdir(), 'canon-tree-'));
+      rmSync(tree, { recursive: true });
+      repo.git('worktree', 'add', '-q', '--detach', tree, 'HEAD');
+      try {
+        rmSync(join(tree, '.claude/canon.json'), { force: true });
+        another('ci.yml', TRIMMED, tree);
+        const result = watch({ command: READY, cwd: tree, conclusion: 'failure' });
+        expect(result.status).toBe(2);
+      } finally {
+        repo.git('worktree', 'remove', '--force', tree);
+      }
+    });
+
+    it('falls back to the defaults for a workflow it cannot read, never to watching nothing', () => {
+      for (const on of [
+        'on: {pull_request: {types: [ready_for_review]}}',
+        'on:\n  pull_request: {types: [ready_for_review]}',
+        'on:\n  pull_request:\n    types: [ready_for_review, &anchor]',
+        'on:\n  workflow_dispatch:',
+        'triggers: nonsense',
+        'on:\n\tpull_request:',
+      ]) {
+        workflow(on);
+        expectWatched(PUSH);
+        expectWatched(CREATE);
+        expectIgnored(READY);
+      }
+    });
   });
 });
