@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.4.0](https://github.com/Arhaty/claude-plugins/compare/canon-v0.3.0...canon-v0.4.0) (2026-10-18)
+
+
+### Features
+
+* push the draft spec on every define round ([#22](https://github.com/Arhaty/claude-plugins/issues/22)) ([d08353f](https://github.com/Arhaty/claude-plugins/commit/d08353f2b2bb822272afb9d7eb5bcf923e68b5c9))
+
+
+### Bug Fixes
+
+* scope canon's pre-approved tools to what each skill needs ([#23](https://github.com/Arhaty/claude-plugins/issues/23)) ([0f8ed18](https://github.com/Arhaty/claude-plugins/commit/0f8ed18ef0c417a91bd1ccecaad73784a2034f35))
+* send canon's tracker requests through HTTPS_PROXY ([#25](https://github.com/Arhaty/claude-plugins/issues/25)) ([833ea92](https://github.com/Arhaty/claude-plugins/commit/833ea927a7f6ff80ad91b04606d6cd8838a6e250))
+
 ## [0.3.0](https://github.com/Arhaty/claude-plugins/compare/canon-v0.2.0...canon-v0.3.0) (2026-10-13)
 
 
