@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.1](https://github.com/Arhaty/claude-plugins/compare/canon-v0.4.0...canon-v0.4.1) (2026-10-18)
+
+
+### Bug Fixes
+
+* watch ci runs by the workflow's own triggers in canon ([#31](https://github.com/Arhaty/claude-plugins/issues/31)) ([32ceca7](https://github.com/Arhaty/claude-plugins/commit/32ceca71c69d5e29f9d31c2179f9bae4aa786f48))
+
 ## [0.4.0](https://github.com/Arhaty/claude-plugins/compare/canon-v0.3.0...canon-v0.4.0) (2026-10-18)
 
 
