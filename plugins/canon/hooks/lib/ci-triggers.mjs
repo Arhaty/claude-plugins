@@ -284,8 +284,7 @@ function repoOf(call) {
 
 /**
  * What this command starts, read through `prCalls` so `gh pr -R o/r ready 12`, quoting and a
- * second line are read as the shell reads them. A push is still matched on text, as it always
- * was: a mention costs a quiet lookup.
+ * second line are read as the shell reads them. Pushes arrive as `refs`, read by the caller.
  *
  * `refs` are what the pushes sent, each `{ sha, name, tag }` with `sha` empty when this checkout
  * cannot resolve it and `name` empty for a detached `HEAD`. Each is weighed on its own: a branch
@@ -352,18 +351,81 @@ const REF_LINE =
 const strip = (ref, prefix) => (ref.startsWith(prefix) ? ref.slice(prefix.length) : ref);
 
 /**
- * What a push sent when git printed no ref line (`git push -q`), as ref lines: each refspec's
- * source and destination, read from the command. A bare push, or one that writes every branch,
- * sent the current branch at least. A push run in another directory (`-C`, or after a `cd`) is
- * left out: its sources are not this checkout's.
+ * The command's pushes, read once and as the push guard reads them, so
+ * `git -c push.default=current push` and `git --no-pager push` count. A command the reader
+ * cannot parse falls back to the text, with no push to read.
  */
-function quietLines(command, head) {
+function readPushes(command) {
+  try {
+    const read = pushTargets(command);
+    return { pushing: read !== null, pushes: read?.pushes ?? [] };
+  } catch {
+    return { pushing: command.includes('git push'), pushes: [] };
+  }
+}
+
+/**
+ * What the pushes sent when git printed no ref line (`git push -q`), as ref lines: each
+ * refspec's source and destination, read from the command. A bare push sent the current branch
+ * to where git pushes it, which `push.default=upstream` makes its upstream's name; one that
+ * writes every branch sent the current branch under its own name, at least. When `tags` (a
+ * workflow runs on tags), a push with `--follow-tags`, or `push.followTags`, sent the annotated
+ * tags on those commits too; a tag on an older commit that the remote lacked is not seen. A push
+ * run in another directory (`-C`, or after a `cd`) is left out: its sources are not this
+ * checkout's. `git` runs git here and returns '' on a failure.
+ */
+function quietLines(pushes, head, git, tags) {
   const lines = [];
-  for (const push of pushTargets(command)?.pushes ?? []) {
+  const followed = [];
+  for (const push of pushes) {
     if (push.dir !== null || !push.dirKnown || push.unresolved) continue;
-    if (push.bare || push.everyBranch) lines.push({ sent: '', src: 'HEAD', dst: head.name });
-    for (const { src, dst } of push.sent) {
-      lines.push({ sent: '', src, dst: dst === 'HEAD' ? head.name : dst });
+    // As the command gave it: git reads `-c push.followTags` as true and `branch.Wip.merge` as
+    // branch `Wip`'s, where the guard's lowercased reading would not.
+    const config = push.configArgs.flatMap((arg) => ['-c', arg]);
+    const sent = [];
+    if (push.bare && !push.everyBranch) {
+      // `%(push)` is the remote-tracking ref of where it goes, `refs/remotes/<remote>/<branch>`;
+      // `%(push:remoteref)` would name the branch outright, but git leaves it empty unless the
+      // remote has a push refspec. Empty is a push git refuses.
+      const [remote = '', to = ''] = head.name
+        ? git([
+            ...config,
+            'for-each-ref',
+            '--format=%(push:remotename) %(push)',
+            `refs/heads/${head.name}`,
+          ])
+            .replace(/\n$/, '')
+            .split(' ')
+        : [];
+      const branch = remote
+        ? strip(to, `refs/remotes/${remote}/`)
+        : to.replace(/^refs\/remotes\/[^/]+\//, '');
+      sent.push({ src: 'HEAD', dst: branch || head.name });
+    } else if (push.everyBranch) {
+      sent.push({ src: 'HEAD', dst: head.name });
+    }
+    for (const { src, dst } of push.sent) sent.push({ src, dst: dst === 'HEAD' ? head.name : dst });
+    lines.push(...sent.map((line) => ({ sent: '', ...line })));
+
+    if (!tags) continue;
+    const follows =
+      push.followTags ??
+      git([...config, 'config', '--type=bool', 'push.followTags']).trim() === 'true';
+    if (follows) {
+      followed.push(
+        ...sent.filter(({ dst }) => !dst.startsWith('refs/tags/')).map(({ src }) => src)
+      );
+    }
+  }
+  if (followed.length > 0) {
+    const found = git([
+      'for-each-ref',
+      ...followed.map((src) => `--points-at=${src}`),
+      '--format=%(objecttype) %(refname)',
+      'refs/tags',
+    ]);
+    for (const [type, ref] of found.split('\n').map((line) => line.split(' '))) {
+      if (type === 'tag' && ref) lines.push({ sent: '', src: ref, dst: ref });
     }
   }
   return lines;
@@ -385,7 +447,8 @@ export function watchTargets(payload, project) {
 
 function targetsOf(payload, project) {
   const command = String(payload?.tool_input?.command ?? '');
-  if (!command.includes('git push') && !command.includes('gh pr')) return { targets: [] };
+  const read = readPushes(command);
+  if (!read.pushing && !command.includes('gh pr')) return { targets: [] };
   const output = JSON.stringify(payload?.tool_response ?? '');
   // The directory the command ran in, which may be a worktree or another checkout: reading
   // `HEAD` in the project directory watched a commit nobody pushed.
@@ -442,7 +505,7 @@ function targetsOf(payload, project) {
   try {
     targets = weigh();
   } catch {
-    targets = textTargets(command, output, head);
+    targets = textTargets(command, output, head, read);
   }
 
   // One commit is watched once. A `--repo` that names the checkout's own repository is the same
@@ -476,49 +539,52 @@ function targetsOf(payload, project) {
     // up-to-date" counts only when git printed no ref line: `git push origin x && git push
     // upstream x` prints one of each, and the first push still started a run. Nor does a push git
     // refused, which prints its refs as `! [rejected]` lines that are no ref lines at all.
+    const files = workflowsIn([top, project]);
     let lines = [];
-    if (command.includes('git push')) {
+    if (read.pushing) {
       lines = [...output.matchAll(REF_LINE)].map((m) => ({
         sent: m[1] ?? '',
         newTag: m[2] === 'tag',
         src: m[3],
         dst: m[4],
       }));
-      if (lines.length === 0 && !NOTHING_SENT.test(output)) {
-        lines = quietLines(command, head);
+      if (lines.length === 0 && !sentNothing(output, read)) {
+        lines = quietLines(
+          read.pushes,
+          head,
+          (args) => quiet('git', args),
+          files.some((file) => tagStarts(file.push))
+        );
       }
     }
 
     // Which lines are tags. git says `[new tag]` for a new one and nothing for one it updated
     // (`+ a...b v1 -> v1 (forced update)`), which reads like a branch: a source that is a tag here
     // and not a branch is one too. A commit this checkout cannot resolve was pushed from somewhere
-    // else (`cd ../other && git push`): it is left out rather than guessed at. Either lookup
-    // failing leaves the push out, not the pull requests beside it.
+    // else (`cd ../other && git push`): it is left out rather than guessed at. The lookup failing
+    // leaves the push out, not the pull requests beside it. One `cat-file` answers all three
+    // questions for every line, and only for the names the push sent: listing every ref cost a
+    // repository with a long release history its whole tag list on each push.
     let refs = [];
     if (lines.length > 0) {
-      const tags = new Set();
-      const heads = new Set();
-      const known = quiet('git', [
-        'for-each-ref',
-        '--format=%(refname)',
-        'refs/heads',
-        'refs/tags',
-      ]);
-      for (const ref of known.split('\n')) {
-        if (ref.startsWith('refs/tags/')) tags.add(ref.slice(10));
-        else if (ref.startsWith('refs/heads/')) heads.add(ref.slice(11));
-      }
+      const object = /^[0-9a-f]{40,64}$/;
       // A new branch prints no range, so its source ref names the commit.
-      const resolved = quiet('git', ['cat-file', '--batch-check=%(objectname)'], {
-        input: lines.map((line) => `${line.sent || line.src}^{commit}\n`).join(''),
+      const found = quiet('git', ['cat-file', '--batch-check=%(objectname)'], {
+        input: lines
+          .map(
+            (line) =>
+              `${line.sent || line.src}^{commit}\nrefs/tags/${strip(line.src, 'refs/tags/')}\n` +
+              `refs/heads/${strip(line.src, 'refs/heads/')}\n`
+          )
+          .join(''),
       }).split('\n');
       refs = lines.map((line, i) => {
-        const tag =
-          line.newTag ||
-          line.dst.startsWith('refs/tags/') ||
-          (tags.has(strip(line.src, 'refs/tags/')) && !heads.has(strip(line.src, 'refs/heads/')));
+        const [commit, isTag, isBranch] = found
+          .slice(i * 3, i * 3 + 3)
+          .map((out) => object.test(out ?? ''));
+        const tag = line.newTag || line.dst.startsWith('refs/tags/') || (isTag && !isBranch);
         return {
-          sha: /^[0-9a-f]{40,64}$/.test(resolved[i] ?? '') ? resolved[i] : '',
+          sha: commit ? found[i * 3] : '',
           name: strip(line.dst, tag ? 'refs/tags/' : 'refs/heads/'),
           tag,
         };
@@ -529,7 +595,7 @@ function targetsOf(payload, project) {
       command,
       refs,
       head,
-      files: workflowsIn([top, project]),
+      files,
     });
 
     // `gh pr create --head feature`: the local branch, or what the remote has of it.
@@ -570,16 +636,47 @@ function targetsOf(payload, project) {
   }
 }
 
-/** A push git refused or that changed nothing: no ref line in its output started a run. */
-const NOTHING_SENT = /Everything up-to-date|\[(?:remote )?rejected\]|error: failed to push/;
+/**
+ * Git's own words for a push that changed nothing, that the remote refused, or that failed
+ * before it sent anything. Only these: any `error:` line counted the compiler's in
+ * `git push -q && cargo build` as the push's.
+ */
+const NOTHING_SENT = new RegExp(
+  [
+    'Everything up-to-date',
+    String.raw`\[(?:remote )?rejected\]`,
+    'error: failed to push some refs',
+    'error: src refspec .{1,200}? does not match any',
+    'error: unable to push to unqualified destination',
+    'fatal: The current branch .{1,200}? has no upstream branch',
+    'fatal: The upstream branch of your current branch does not match',
+    'fatal: You are not currently on a branch',
+    'fatal: No configured push destination',
+    'fatal: invalid refspec',
+    'does not appear to be a git repository',
+    'fatal: Could not read from remote repository',
+    'fatal: unable to access',
+    'fatal: Authentication failed',
+  ].join('|')
+);
+
+/**
+ * Did the push in this output send nothing? Asked only when git printed no ref line. With more
+ * than one push the words cannot be pinned on one of them, so `git push -q origin main &&
+ * git push -q origin nope` still sent `main`: watching a push that sent nothing costs a quiet
+ * minute of polling, and missing one that sent something costs the red run.
+ */
+function sentNothing(output, read) {
+  return read.pushes.length <= 1 && NOTHING_SENT.test(output);
+}
 
 /**
  * The plain reading, for when the full one throws: GitHub's default types, under which a push
  * that sent something and a `gh pr create` start a run on `HEAD`, matched on text.
  */
-export function textTargets(command, output, head) {
+export function textTargets(command, output, head, read = readPushes(command)) {
   if (!head.sha) return [];
-  const pushed = command.includes('git push') && !NOTHING_SENT.test(output);
+  const pushed = read.pushing && !sentNothing(output, read);
   return pushed || command.includes('gh pr create')
     ? [{ sha: head.sha, label: head.name || DETACHED, repo: '' }]
     : [];

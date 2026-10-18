@@ -993,7 +993,9 @@ describe('ci-watch.sh', () => {
    * stubbed too, so the waits cost nothing. `project` is `$CLAUDE_PROJECT_DIR`, which
    * the payload's `cwd` overrides. `prHead` is what `gh pr view` prints: `<sha> <branch>`;
    * `ownRepo` what `gh repo view` does; `script` is the hook's path, which a test runs through
-   * a symlink. A call made with `GH_REPO` set is logged as `[<repo>] <args>`.
+   * a symlink. A call made with `GH_REPO` set is logged as `[<repo>] <args>`. A run whose
+   * conclusion is `hang` never finishes, one that is `stall` fails and never prints its log, and
+   * with no runs at all the listing itself never answers. `env` adds to the hook's environment.
    */
   function watch({
     command,
@@ -1005,6 +1007,7 @@ describe('ci-watch.sh', () => {
     prHead = '',
     ownRepo = '',
     script = join(HOOKS, 'ci-watch.sh'),
+    env = {},
   }) {
     const of = Object.entries(runs)
       .map(([id, result]) => `${id}) echo ${result} ;;`)
@@ -1016,11 +1019,13 @@ describe('ci-watch.sh', () => {
         `echo "\${GH_REPO:+[$GH_REPO] }$*" >> '${log}'`,
         `result() { case "$1" in ${of} esac; }`,
         'case "$1 $2" in',
-        `  "run list") printf '%s\\n' ${Object.keys(runs).join(' ')} ;;`,
+        Object.keys(runs).length > 0
+          ? `  "run list") printf '%s\\n' ${Object.keys(runs).join(' ')} ;;`
+          : '  "run list") exec /bin/sleep 60 ;;',
         `  "pr view") echo '${prHead}' ;;`,
         `  "repo view") echo '${ownRepo}' ;;`,
-        '  "run watch") [ "$(result "$3")" = success ] ;;',
-        '  "run view") case "$*" in *--log-failed*) echo log ;; *) result "$3" ;; esac ;;',
+        '  "run watch") r=$(result "$3"); [ "$r" = hang ] && exec /bin/sleep 60; [ "$r" = success ] ;;',
+        '  "run view") case "$*" in *--log-failed*) [ "$(result "$3")" = stall ] && exec /bin/sleep 60; echo log ;; *) result "$3" ;; esac ;;',
         'esac',
       ].join('\n'),
       { mode: 0o755 }
@@ -1038,7 +1043,9 @@ describe('ci-watch.sh', () => {
         ...process.env,
         PATH: `${bin}:${process.env.PATH ?? ''}`,
         CLAUDE_PROJECT_DIR: project,
+        ...env,
       },
+      timeout: 30000,
     });
     const calls = existsSync(log) ? readFileSync(log, 'utf8') : '';
     rmSync(log, { force: true });
@@ -1249,6 +1256,147 @@ describe('ci-watch.sh', () => {
       conclusion: 'failure',
     });
     expect(opened.status).toBe(2);
+  });
+
+  it('names each commit once, however many of its runs failed', () => {
+    const result = watch({
+      command: 'git push -u origin HEAD',
+      runs: { 41: 'failure', 42: 'failure' },
+    });
+    expect(result.status).toBe(2);
+    expect(result.stderr.match(/CI failed on/g).length).toBe(1);
+    expect(result.stderr).toContain('Run 41:');
+    expect(result.stderr).toContain('Run 42:');
+  });
+
+  it('reports what it found and what was still running when the watch runs out of time', () => {
+    const started = Date.now();
+    const result = watch({
+      command: 'git push -u origin HEAD',
+      runs: { 42: 'failure', 43: 'hang' },
+      env: { CANON_CI_WATCH_BUDGET: '2' },
+    });
+    expect(Date.now() - started).toBeLessThan(20000);
+    expect(result.status).toBe(2);
+    expect(result.stderr).toContain('Run 42:');
+    expect(result.stderr).toContain(`CI had not finished run 43 on feature at ${sha('HEAD')}`);
+    expect(result.stderr).not.toContain('run 42 on');
+    // The watcher dies with the watch it waited on, so it never goes on to read the run.
+    expect(result.calls).not.toContain('run view 43');
+    expect(result.stderr).not.toContain('Terminated');
+  });
+
+  it('keeps a failure whose report the cutoff interrupted', () => {
+    const result = watch({
+      command: 'git push -u origin HEAD',
+      runs: { 42: 'stall' },
+      env: { CANON_CI_WATCH_BUDGET: '2' },
+    });
+    expect(result.status).toBe(2);
+    expect(result.stderr).toContain(`CI failed on feature at ${sha('HEAD')}.`);
+    expect(result.stderr).toContain('Run 42:');
+    expect(result.stderr).not.toContain('had not finished');
+  });
+
+  it('says so when the cutoff comes before any run was listed', () => {
+    const result = watch({
+      command: 'git push -u origin HEAD',
+      runs: {},
+      env: { CANON_CI_WATCH_BUDGET: '2' },
+    });
+    expect(result.status).toBe(2);
+    expect(result.stderr).toContain(`No CI run had registered on feature at ${sha('HEAD')}`);
+  });
+
+  it('names the repository in what it says to run for a run elsewhere', () => {
+    const result = watch({
+      command: 'gh pr create --repo up/r --fill',
+      runs: { 43: 'hang' },
+      env: { CANON_CI_WATCH_BUDGET: '2' },
+    });
+    expect(result.stderr).toContain('gh run watch 43 --exit-status -R up/r');
+  });
+
+  it('watches nothing for a quiet push that failed before it sent anything', () => {
+    for (const output of [
+      'fatal: The current branch feature has no upstream branch.\n',
+      "fatal: 'nowhere' does not appear to be a git repository\n",
+      'error: src refspec nope does not match any\n',
+    ]) {
+      const result = watch({ command: 'git push -q', output, conclusion: 'failure' });
+      expect(result.calls, output).toBe('');
+    }
+    // Another command's error is not the push's, and nor is a remote's.
+    for (const [command, output] of [
+      ['git push -q', 'remote: error: something minor\n'],
+      ['git push -q && cargo build', 'error: could not compile `app`\n'],
+      ['git push -q && make', 'fatal: something else entirely\n'],
+    ]) {
+      expect(watch({ command, output, conclusion: 'failure' }).status, command).toBe(2);
+    }
+    // With two pushes the words cannot be pinned on one, so the one that sent is watched.
+    const two = watch({
+      command: 'git push -q origin feature && git push -q origin nope',
+      output: 'error: src refspec nope does not match any\nerror: failed to push some refs\n',
+      conclusion: 'failure',
+    });
+    expect(two.status).toBe(2);
+    expect(two.stderr).toContain(`CI failed on feature at ${sha('HEAD')}.`);
+  });
+
+  it('watches a push with git options before the subcommand', () => {
+    for (const command of ['git -c push.default=current push -q', 'git --no-pager push -q']) {
+      const result = watch({ command, conclusion: 'failure' });
+      expect(result.status, command).toBe(2);
+      expect(result.stderr, command).toContain('CI failed on feature at');
+    }
+  });
+
+  it('names the branch a quiet bare push wrote under push.default=upstream', () => {
+    repo.git('remote', 'add', 'origin', join(repo.dir, 'nowhere.git'));
+    repo.git('switch', '-q', '-c', 'wip');
+    repo.git('config', 'branch.wip.remote', 'origin');
+    repo.git('config', 'branch.wip.merge', 'refs/heads/feature');
+    const result = watch({
+      command: 'git -c push.default=upstream push -q',
+      conclusion: 'failure',
+    });
+    expect(result.stderr).toContain('CI failed on feature at');
+    expect(watch({ command: 'git push -q', conclusion: 'failure' }).stderr).toContain(
+      'CI failed on wip at'
+    );
+    // Config given on the command is handed back to git as written: lowercased, `branch.Topic`
+    // would not be `Topic`'s.
+    repo.git('switch', '-q', '-c', 'Topic');
+    const cased = watch({
+      command:
+        'git -c push.default=upstream -c branch.Topic.remote=origin -c branch.Topic.merge=refs/heads/feature push -q',
+      conclusion: 'failure',
+    });
+    expect(cased.stderr).toContain('CI failed on feature at');
+  });
+
+  it('starts no Node for a command that only mentions push beside a path with git in it', () => {
+    const nodes = join(bin, 'node.log');
+    writeFileSync(join(bin, 'node'), `#!/bin/sh\necho "$1" >> '${nodes}'\nexit 0\n`, {
+      mode: 0o755,
+    });
+    for (const command of ['pushd sub', 'npm run push-docs', 'echo push']) {
+      const result = spawnSync('bash', [join(HOOKS, 'ci-watch.sh')], {
+        input: JSON.stringify({
+          session_id: 's',
+          transcript_path: '/home/me/git/app/t.jsonl',
+          cwd: '/home/me/git/app',
+          tool_name: 'Bash',
+          tool_input: { command, description: 'push it' },
+          tool_response: { stdout: '' },
+        }),
+        encoding: 'utf8',
+        env: { ...process.env, PATH: `${bin}:${process.env.PATH ?? ''}` },
+      });
+      expect(result.status, command).toBe(0);
+    }
+    expect(existsSync(nodes)).toBe(false);
   });
 
   it('stays silent outside a canon project', () => {
@@ -1769,6 +1917,39 @@ describe('ci-watch.sh', () => {
       expect(result.stderr).toContain(`CI failed on feature at ${sha('HEAD')}.`);
       expect(result.calls).toContain(`run list --commit ${sha('v1.0')}`);
       expect(result.stderr).toContain(`CI failed on v1.0 at ${sha('v1.0')}.`);
+    });
+
+    it('watches the annotated tag a quiet --follow-tags push sent', () => {
+      workflow(TRIMMED);
+      another('release.yml', "on:\n  push:\n    tags: ['v*']");
+      repo.git('-c', 'user.name=t', '-c', 'user.email=t@t', 'tag', '-a', 'v1.2', '-m', 'v1.2');
+      for (const command of ['git push -q --follow-tags', 'git -c push.followTags=true push -q']) {
+        const result = watch({ command, conclusion: 'failure' });
+        expect(result.status, command).toBe(2);
+        expect(result.stderr, command).toContain(`CI failed on v1.2 at ${sha('HEAD')}.`);
+      }
+      // A -c with no value is true to git.
+      expect(
+        watch({ command: 'git -c push.followTags push -q', conclusion: 'failure' }).status
+      ).toBe(2);
+      // Without it, with the flag that turns it off whatever the config says, or with the config
+      // set false, nothing.
+      for (const command of [
+        'git push -q',
+        'git -c push.followTags=true push -q --no-follow-tags',
+        'git -c push.followTags=false push -q',
+      ]) {
+        expect(watch({ command, conclusion: 'failure' }).calls, command).toBe('');
+      }
+      repo.git('config', 'push.followTags', 'true');
+      expect(watch({ command: 'git push -q --no-follow-tags', conclusion: 'failure' }).calls).toBe(
+        ''
+      );
+      expect(watch({ command: 'git push -q', conclusion: 'failure' }).status).toBe(2);
+      repo.git('config', '--unset', 'push.followTags');
+      repo.git('tag', '-d', 'v1.2');
+      repo.git('tag', 'v1.3');
+      expect(watch({ command: 'git push -q --follow-tags', conclusion: 'failure' }).calls).toBe('');
     });
 
     it('stays quiet when the reader fails, and starts no Node for other commands', () => {
