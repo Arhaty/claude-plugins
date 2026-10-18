@@ -18,6 +18,7 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+import { textTargets, watchTargets } from '../hooks/lib/ci-triggers.mjs';
 import { commandDigest, trustKey } from '../hooks/lib/config.mjs';
 import {
   CONFIG,
@@ -991,7 +992,8 @@ describe('ci-watch.sh', () => {
    * commit, each with its conclusion; `conclusion` alone is one run, 42. `sleep` is
    * stubbed too, so the waits cost nothing. `project` is `$CLAUDE_PROJECT_DIR`, which
    * the payload's `cwd` overrides. `prHead` is what `gh pr view` prints: `<sha> <branch>`;
-   * `script` is the hook's path, which a test runs through a symlink.
+   * `ownRepo` what `gh repo view` does; `script` is the hook's path, which a test runs through
+   * a symlink. A call made with `GH_REPO` set is logged as `[<repo>] <args>`.
    */
   function watch({
     command,
@@ -1001,6 +1003,7 @@ describe('ci-watch.sh', () => {
     conclusion,
     runs = { 42: conclusion },
     prHead = '',
+    ownRepo = '',
     script = join(HOOKS, 'ci-watch.sh'),
   }) {
     const of = Object.entries(runs)
@@ -1010,11 +1013,12 @@ describe('ci-watch.sh', () => {
       join(bin, 'gh'),
       [
         '#!/bin/sh',
-        `echo "$*" >> '${log}'`,
+        `echo "\${GH_REPO:+[$GH_REPO] }$*" >> '${log}'`,
         `result() { case "$1" in ${of} esac; }`,
         'case "$1 $2" in',
         `  "run list") printf '%s\\n' ${Object.keys(runs).join(' ')} ;;`,
         `  "pr view") echo '${prHead}' ;;`,
+        `  "repo view") echo '${ownRepo}' ;;`,
         '  "run watch") [ "$(result "$3")" = success ] ;;',
         '  "run view") case "$*" in *--log-failed*) echo log ;; *) result "$3" ;; esac ;;',
         'esac',
@@ -1255,11 +1259,11 @@ describe('ci-watch.sh', () => {
   });
 
   describe('which commands start a run', () => {
-    /** Point `ci.workflow` at `ci.yml` and write it with `on` as its triggers. */
-    function workflow(on) {
+    /** Write `ci.yml` with `on` as its triggers, and point `ci.workflow` at it unless `ci` is false. */
+    function workflow(on, { ci = true } = {}) {
       writeFileSync(
         join(repo.dir, '.claude/canon.json'),
-        JSON.stringify({ ...CONFIG, ci: { workflow: 'ci.yml', baseInput: null } })
+        JSON.stringify(ci ? { ...CONFIG, ci: { workflow: 'ci.yml', baseInput: null } } : CONFIG)
       );
       mkdirSync(join(repo.dir, '.github/workflows'), { recursive: true });
       writeFileSync(
@@ -1271,7 +1275,9 @@ describe('ci-watch.sh', () => {
     const PUSH = 'git push -u origin HEAD';
     const CREATE = 'gh pr create --fill';
     const READY = 'gh pr ready 12';
-    const watched = (command) => watch({ command, conclusion: 'failure' });
+    // A pull request named by number is watched only when gh can read its head.
+    const watched = (command) =>
+      watch({ command, conclusion: 'failure', prHead: `${sha('HEAD')} feature` });
 
     /** Watched means it polled and reported the red run; ignored means it never called gh. */
     function expectWatched(command) {
@@ -1293,11 +1299,17 @@ describe('ci-watch.sh', () => {
       expectIgnored(READY);
     });
 
-    it('uses the default types when the named workflow file is missing', () => {
+    it('uses the default types when no workflow is there to read', () => {
       workflow('on: pull_request');
       rmSync(join(repo.dir, '.github/workflows/ci.yml'));
       expectWatched(PUSH);
       expectIgnored(READY);
+    });
+
+    it('reads the workflows without a ci block', () => {
+      workflow('on:\n  pull_request:\n    types: [opened, ready_for_review]', { ci: false });
+      expectWatched(READY);
+      expectIgnored(PUSH);
     });
 
     it('watches ready_for_review and ignores a push when the types leave out synchronize', () => {
@@ -1425,9 +1437,181 @@ describe('ci-watch.sh', () => {
       expect(result.calls).toContain(`run list --commit ${head}`);
       expect(result.stderr).toContain(`CI failed on other-branch at ${head}.`);
       // The group flag before the subcommand, as gh takes it.
-      const group = watch({ command: 'gh pr -R o/r ready 12', conclusion: 'failure' });
+      const group = watch({
+        command: 'gh pr -R o/r ready 12',
+        conclusion: 'failure',
+        prHead: `${head} other-branch`,
+      });
       expect(group.status).toBe(2);
       expect(group.calls).toContain('pr view 12 --repo o/r --json');
+      // pflag reads `-R=o/r` as `o/r`.
+      const equals = watch({
+        command: 'gh pr ready -R=o/r 12',
+        conclusion: 'failure',
+        prHead: `${head} other-branch`,
+      });
+      expect(equals.calls).toContain('pr view 12 --repo o/r --json');
+    });
+
+    it('stays quiet when gh cannot read the pull request a ready names', () => {
+      workflow(TRIMMED);
+      const result = watch({ command: 'gh pr ready 12', conclusion: 'failure', prHead: '' });
+      expect(result.status).toBe(0);
+      expect(result.calls).toContain('pr view 12');
+      expect(result.calls).not.toContain('run list');
+    });
+
+    it('watches both the push and the pull request marked ready in the same call', () => {
+      workflow(TRIMMED);
+      another('push.yml', 'on:\n  push:\n    branches: [feature]');
+      const head = 'abc1234abc1234abc1234abc1234abc1234abcd';
+      const result = watch({
+        command: 'git push origin feature && gh pr ready 12',
+        output: `   0000000..${sha('HEAD').slice(0, 7)}  feature -> feature\n`,
+        conclusion: 'failure',
+        prHead: `${head} other`,
+      });
+      expect(result.status).toBe(2);
+      expect(result.calls).toContain(`run list --commit ${sha('HEAD')}`);
+      expect(result.calls).toContain(`run list --commit ${head}`);
+      expect(result.stderr).toContain(`CI failed on other at ${head}.`);
+    });
+
+    it('reads a push with no ref line from its refspec, not the branch checked out', () => {
+      workflow(`${TRIMMED}\n  push:\n    branches: [main]`);
+      repo.git('checkout', '-q', '--detach');
+      const detached = watch({ command: 'git push -q origin HEAD:main', conclusion: 'failure' });
+      expect(detached.status).toBe(2);
+      expect(detached.stderr).toContain(`CI failed on main at ${sha('HEAD')}.`);
+      repo.git('checkout', '-q', 'feature');
+      repo.git(
+        '-c',
+        'user.name=t',
+        '-c',
+        'user.email=t@t',
+        'commit',
+        '-q',
+        '--allow-empty',
+        '-m',
+        'y'
+      );
+      repo.git('branch', 'other', 'HEAD~1');
+      workflow(`${TRIMMED}\n  push:\n    branches: [other]`);
+      const other = watch({ command: 'git push -q origin other', conclusion: 'failure' });
+      expect(other.calls).toContain(`run list --commit ${sha('other')}`);
+      expect(other.calls).not.toContain(`run list --commit ${sha('HEAD')}`);
+      expect(other.stderr).toContain(`CI failed on other at ${sha('other')}.`);
+      // A refspec that names a branch the filters leave out starts nothing.
+      expect(watch({ command: 'git push -q origin HEAD:main', conclusion: 'failure' }).calls).toBe(
+        ''
+      );
+    });
+
+    it('watches a push beside another that was up to date', () => {
+      workflow(`${TRIMMED}\n  push:\n    branches: [feature]`);
+      const result = watch({
+        command: 'git push origin feature && git push upstream feature',
+        output: `   0000000..${sha('HEAD').slice(0, 7)}  feature -> feature\nEverything up-to-date\n`,
+        conclusion: 'failure',
+      });
+      expect(result.status).toBe(2);
+      expect(result.calls).toContain(`run list --commit ${sha('HEAD')}`);
+    });
+
+    it('looks up every pull request marked ready in one call', () => {
+      workflow(TRIMMED);
+      const result = watched('gh pr ready 12 && gh pr ready 13');
+      expect(result.calls).toContain('pr view 12 --json');
+      expect(result.calls).toContain('pr view 13 --json');
+    });
+
+    it('watches gh pr create --repo in the repository it names', () => {
+      const result = watched('gh pr create --repo up/r --fill');
+      expect(result.status).toBe(2);
+      expect(result.calls).toContain(`[up/r] run list --commit ${sha('HEAD')}`);
+    });
+
+    it('watches a commit once when --repo names the checkout itself', () => {
+      workflow(`${TRIMMED}\n  push:\n    branches: [feature]`);
+      const result = watch({
+        command: 'git push && gh pr ready --repo Me/This 12',
+        output: `   0000000..${sha('HEAD').slice(0, 7)}  feature -> feature\n`,
+        conclusion: 'failure',
+        prHead: `${sha('HEAD')} feature`,
+        ownRepo: 'me/this',
+      });
+      expect(result.status).toBe(2);
+      // One look and one for the stragglers, for one commit.
+      expect(result.calls.match(/run list/g).length).toBe(2);
+      expect(result.stderr.match(/CI failed/g).length).toBe(1);
+    });
+
+    it('keeps the pull request when the push lookups fail', () => {
+      const git = spawnSync('sh', ['-c', 'command -v git'], { encoding: 'utf8' }).stdout.trim();
+      writeFileSync(
+        join(bin, 'git'),
+        `#!/bin/sh\ncase "$*" in *cat-file*|*for-each-ref*) exit 1 ;; esac\nexec '${git}' "$@"\n`,
+        { mode: 0o755 }
+      );
+      const result = watch({
+        command: 'git push origin feature && gh pr create --fill',
+        output: `   0000000..${sha('HEAD').slice(0, 7)}  feature -> feature\n`,
+        conclusion: 'failure',
+      });
+      expect(result.status).toBe(2);
+      expect(result.calls).toContain(`run list --commit ${sha('HEAD')}`);
+    });
+
+    it('watches nothing for a push git rejected', () => {
+      workflow(`${TRIMMED}\n  push:\n    branches: [main]`);
+      for (const output of [
+        ' ! [rejected]        main -> main (non-fetch first)\nerror: failed to push some refs\n',
+        ' ! [remote rejected] main -> main (protected branch hook declined)\n',
+      ]) {
+        const result = watch({ command: 'git push -q origin HEAD:main', output });
+        expect(result.calls, output).toBe('');
+      }
+    });
+
+    it('watches the branch gh pr create --head names, not HEAD', () => {
+      repo.git(
+        '-c',
+        'user.name=t',
+        '-c',
+        'user.email=t@t',
+        'commit',
+        '-q',
+        '--allow-empty',
+        '-m',
+        'y'
+      );
+      repo.git('branch', 'other', 'HEAD~1');
+      const result = watched('gh pr create --head owner:other --base staging --fill');
+      expect(result.calls).toContain(`run list --commit ${sha('other')}`);
+      expect(result.calls).not.toContain(`run list --commit ${sha('HEAD')}`);
+      expect(result.stderr).toContain(`CI failed on other at ${sha('other')}.`);
+    });
+
+    it('watches gh pr create --repo whatever the local types say, as a ready does', () => {
+      workflow('on:\n  pull_request:\n    types: [ready_for_review]');
+      expectIgnored(CREATE);
+      expect(watched('gh pr create --repo up/x --fill').calls).toContain('[up/x] run list');
+    });
+
+    it('falls back to the plain reading when the full one fails', () => {
+      const head = { sha: 'a'.repeat(40), name: 'feature' };
+      const on = { sha: head.sha, label: 'feature', repo: '' };
+      expect(textTargets('git push', '', head)).toEqual([on]);
+      expect(textTargets('gh pr create --fill', '', head)).toEqual([on]);
+      expect(textTargets('git push', 'Everything up-to-date', head)).toEqual([]);
+      expect(textTargets('git push', ' ! [rejected] main -> main', head)).toEqual([]);
+      expect(textTargets('gh pr ready 12', '', head)).toEqual([]);
+    });
+
+    it('returns no targets, never throws, for a directory that is not a repository', () => {
+      const command = { tool_input: { command: 'git push' } };
+      expect(watchTargets({ ...command, cwd: tmpdir() }, '').targets).toEqual([]);
+      expect(watchTargets(null, '').targets).toEqual([]);
     });
 
     it('reads the selector from the ready command alone, not the next line', () => {
@@ -1532,7 +1716,33 @@ describe('ci-watch.sh', () => {
       expect(result.calls).toContain('pr view 7 --repo org/other --json');
     });
 
-    it('watches the branch a push sent, not a tag it carried', () => {
+    it('watches the tag --follow-tags sent on another commit when only tags start a run', () => {
+      workflow(TRIMMED);
+      another('release.yml', "on:\n  push:\n    tags: ['v*']");
+      repo.git('tag', 'v1.2');
+      repo.git(
+        '-c',
+        'user.name=t',
+        '-c',
+        'user.email=t@t',
+        'commit',
+        '-q',
+        '--allow-empty',
+        '-m',
+        'y'
+      );
+      const result = watch({
+        command: 'git push --follow-tags origin feature',
+        output: `   ${sha('HEAD~1').slice(0, 7)}..${sha('HEAD').slice(0, 7)}  feature -> feature\n * [new tag]         v1.2 -> v1.2\n`,
+        conclusion: 'failure',
+      });
+      expect(result.status).toBe(2);
+      expect(result.calls).toContain(`run list --commit ${sha('v1.2')}`);
+      expect(result.calls).not.toContain(`run list --commit ${sha('HEAD')}`);
+      expect(result.stderr).toContain(`CI failed on v1.2 at ${sha('v1.2')}.`);
+    });
+
+    it('watches the branch a push sent and the tag it carried, each on its own commit', () => {
       workflow(TRIMMED);
       another('release.yml', "on:\n  push:\n    branches: [feature]\n    tags: ['v*']");
       repo.git('tag', 'v1.0');
@@ -1557,20 +1767,26 @@ describe('ci-watch.sh', () => {
       expect(result.status).toBe(2);
       expect(result.calls).toContain(`run list --commit ${sha('HEAD')}`);
       expect(result.stderr).toContain(`CI failed on feature at ${sha('HEAD')}.`);
+      expect(result.calls).toContain(`run list --commit ${sha('v1.0')}`);
+      expect(result.stderr).toContain(`CI failed on v1.0 at ${sha('v1.0')}.`);
     });
 
-    it('falls back to the default types when the trigger reader fails', () => {
+    it('stays quiet when the reader fails, and starts no Node for other commands', () => {
       workflow(TRIMMED);
+      const nodes = join(bin, 'node.log');
       writeFileSync(
         join(bin, 'node'),
-        `#!/bin/sh\ncase "$1" in *ci-triggers.mjs) exit 1 ;; esac\nexec '${process.execPath}' "$@"\n`,
+        `#!/bin/sh\necho "$1" >> '${nodes}'\ncase "$1" in *ci-triggers.mjs) exit 1 ;; esac\nexec '${process.execPath}' "$@"\n`,
         { mode: 0o755 }
       );
-      expectWatched(PUSH);
-      expectWatched(CREATE);
-      expectIgnored(READY);
-      // The reopen names its pull request; the current branch's is someone else's.
-      expect(watched('gh pr reopen 42').calls).toContain('pr view 42 --json');
+      for (const command of [PUSH, CREATE, READY]) expectIgnored(command);
+      rmSync(nodes, { force: true });
+      expectIgnored('git status');
+      // Output that mentions one is not one, and neither is another gh pr command.
+      watch({ command: 'git log', output: 'gh pr ready 12, then git push\n' });
+      expectIgnored('gh pr view 12');
+      expectIgnored('gh pr checks 12');
+      expect(existsSync(nodes)).toBe(false);
     });
 
     it('reads the triggers when the plugin is reached through a symlink', () => {
@@ -1581,6 +1797,7 @@ describe('ci-watch.sh', () => {
         const result = watch({
           command: READY,
           conclusion: 'failure',
+          prHead: `${sha('HEAD')} feature`,
           script: join(link, 'ci-watch.sh'),
         });
         expect(result.status).toBe(2);
@@ -1609,7 +1826,12 @@ describe('ci-watch.sh', () => {
       try {
         rmSync(join(tree, '.claude/canon.json'), { force: true });
         another('ci.yml', TRIMMED, tree);
-        const result = watch({ command: READY, cwd: tree, conclusion: 'failure' });
+        const result = watch({
+          command: READY,
+          cwd: tree,
+          conclusion: 'failure',
+          prHead: `${sha('HEAD')} feature`,
+        });
         expect(result.status).toBe(2);
       } finally {
         repo.git('worktree', 'remove', '--force', tree);

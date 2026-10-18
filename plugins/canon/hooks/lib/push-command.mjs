@@ -77,11 +77,12 @@ export function readRefspec(refspec, { deleting = false } = {}) {
   if (deleting) return { target: branchName(spec), force, everyBranch: false };
 
   // `src:dst` lands on `dst`, `:dst` deletes it, and a lone `name` lands on the
-  // branch of that name.
+  // branch of that name. `source` is what it sends, empty for a delete.
   const colon = spec.indexOf(':');
   const named = colon === -1 ? spec : spec.slice(colon + 1) || spec.slice(0, colon);
   const target = named === 'HEAD' || named === '@' ? 'HEAD' : branchName(named);
-  return { target, force, everyBranch: false };
+  const source = colon === -1 ? spec : spec.slice(0, colon);
+  return { target, source, force, everyBranch: false };
 }
 
 /**
@@ -173,6 +174,8 @@ function readPush({ argv, env, appended, dirKnown: known = true }) {
   const remote = typeof repo === 'string' ? repo : (positionals[0] ?? null);
 
   const targets = [];
+  // What each refspec sends and where, for `ci-watch` to resolve when git printed no ref line.
+  const sent = [];
   for (const refspec of refspecs) {
     // A target naming a shell variable cannot be compared against the protected
     // set, and comparing it anyway silently answers "not protected". Braces are the
@@ -184,12 +187,13 @@ function readPush({ argv, env, appended, dirKnown: known = true }) {
     force ||= read.force;
     everyBranch ||= read.everyBranch;
     if (read.target !== null) targets.push(read.target);
+    if (read.source) sent.push({ src: read.source, dst: read.target });
   }
 
   const bare = refspecs.length === 0 && !everyBranch && !tagsOnly;
   if (bare && config['push.default'] === 'matching') everyBranch = true;
 
-  return { dir, dirKnown, config, remote, targets, bare, everyBranch, force, unresolved };
+  return { dir, dirKnown, config, remote, targets, sent, bare, everyBranch, force, unresolved };
 }
 
 /**
