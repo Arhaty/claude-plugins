@@ -2,7 +2,14 @@
 name: review
 description: Check a branch, spec or paths against this project's canon, rule files and spec. Complements /code-review
 argument-hint: <spec number (optionally with a sha range), paths, globs, or a git range; nothing reviews the branch>
-allowed-tools: Bash, Read, Grep, Glob
+allowed-tools:
+  - Bash(node "${CLAUDE_PLUGIN_ROOT}/scripts/config.mjs")
+  - Bash(node "${CLAUDE_PLUGIN_ROOT}/scripts/canon-index.mjs" --check)
+  - Bash(git diff *)
+  - Bash(git log *)
+  - Read
+  - Grep
+  - Glob
 ---
 
 # Check a diff against this project's own rules

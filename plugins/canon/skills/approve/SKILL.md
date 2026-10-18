@@ -3,7 +3,25 @@ name: approve
 description: Approve the spec on the current branch. Checks it, sets its status to approved, commits and pushes it
 argument-hint: (none, works on the current branch)
 disable-model-invocation: true
-allowed-tools: Bash, Read, Grep, Glob, Edit
+allowed-tools:
+  - Bash(node "${CLAUDE_PLUGIN_ROOT}/scripts/config.mjs")
+  - Bash(node "${CLAUDE_PLUGIN_ROOT}/scripts/tracker.mjs" *)
+  - Bash(git ls-tree *)
+  - Bash(git ls-files *)
+  - Bash(git diff *)
+  - Bash(sort -u)
+  - Bash(git branch --show-current)
+  - Bash(git status --porcelain *)
+  - Bash(git for-each-ref --format='%(refname)' refs/remotes/origin)
+  - Bash(git for-each-ref --format='%(refname:short)' refs/remotes/origin)
+  - Bash(git merge-base --is-ancestor *)
+  - Bash(git rev-parse --verify --quiet *)
+  - Bash(git fetch --quiet --prune origin)
+  - Bash(git push -u origin HEAD)
+  - Read
+  - Grep
+  - Glob
+  - Edit(./docs/specs/**)
 ---
 
 # Approve the spec on the current branch

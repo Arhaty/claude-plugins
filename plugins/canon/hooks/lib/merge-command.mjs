@@ -23,7 +23,7 @@
  *
  * **This is a tripwire, not a boundary.** It catches a merge or a push made by
  * mistake, or one an agent was talked into, in any spelling a shell reads the
- * usual way. `curl` with `GH_TOKEN`, an inline `python3` script, or a command
+ * usual way. A raw API call with `GH_TOKEN`, an inline `python3` script, or a command
  * assembled in a variable walks past any string matcher, and nothing here tries
  * to follow them. The boundary is branch protection on GitHub: see the README.
  */
@@ -644,7 +644,7 @@ export function invocations(command, depth = 0, inherited = {}, moved = { cd: fa
 /**
  * What a command on the left of a pipe prints, when it is one whose output can
  * be read off the line: `cat` with a heredoc or here-string, `echo`, `printf`.
- * Anything else, `curl ... | bash` included, is `null`: not followed.
+ * Anything else, a download piped to a shell included, is `null`: not followed.
  */
 function printed(command) {
   if (!command) return null;
