@@ -80,7 +80,11 @@ for a new spec is a stop: ask for the issue.
      words, naming the change.
 
    **A revision round revises, it does not redraft.** The brief is the newest feedback. If there
-   is none, ask what to revise and stop. Address exactly what it raised and do not re-run research
+   is none, the round may still owe the last one's commit or push: the spec, or a `docs/canon/`
+   edit beside it, has changes no commit holds, or the branch has commits `origin/$branch` lacks
+   (or there is no `origin/$branch`). Then the round is only step 5's commit and push: commit what
+   is there, push, and stop. `/canon:approve` refuses an uncommitted spec. If there is none and
+   everything is pushed, ask what to revise and stop. Address exactly what it raised and do not re-run research
    it did not question. If the status is `approved`, set it back to `draft`: the approval was for
    text that no longer exists. If it is `in-progress` or later, stop: a build is running against
    it, and changing the contract under it is the owner's call.
@@ -112,17 +116,28 @@ for a new spec is a stop: ask for the issue.
    git checkout -b "$branch" --no-track origin/<integration>
    ```
 
-   `--no-track` leaves the branch with no upstream until `/canon:approve` pushes it with
+   `--no-track` leaves the branch with no upstream until the round's push sets the upstream with
    `git push -u origin HEAD`. Tracking `origin/<integration>` would make a bare `git push` aim at
    `<integration>`, which the push hook refuses.
 
    **Revision round:** find the branch that holds the spec (`git branch -a --list '*/<slug>'`),
-   check it out and bring `<integration>` in:
+   check it out and bring `<integration>` in. Every round pushed it, so another session or
+   container picks it up from `origin/$branch`:
 
    ```bash
-   git checkout -B "$branch" "origin/$branch" 2>/dev/null || git checkout "$branch"
+   git fetch --prune origin
+   git checkout "$branch"
+   if git rev-parse --verify --quiet "origin/$branch" >/dev/null; then
+     git merge --ff-only "origin/$branch"
+   fi
    git merge --no-edit origin/<integration>
    ```
+
+   `git checkout` creates the local branch from `origin/$branch` when there is none, and keeps a
+   local one as it is: a commit whose push failed last round is still on it, and this round's push
+   sends it. Never `checkout -B`, which resets the branch to the remote and orphans that commit.
+   A branch with no remote copy, because its first push failed, skips the fast-forward. A
+   `--ff-only` that fails means the local and remote branches diverged: name both and stop.
 
    Never check out or fast-forward the local `<integration>`: the branch hook refuses a write
    while it is checked out, and the fetch gives the research everything it needs.
@@ -157,7 +172,7 @@ for a new spec is a stop: ask for the issue.
    or a technical choice that is expensive to reverse. What others got wrong is worth more
    than what they got right. Skip it for tooling and internal changes.
 
-5. **Write the spec to `docs/specs/NNN-<slug>.md` and leave it uncommitted.**
+5. **Write the spec to `docs/specs/NNN-<slug>.md`, then commit and push it.**
 
    Start from `docs/specs/_TEMPLATE.md` and fill every section in order, with
    `**Status:** draft` directly under the H1 (and `**Issue:** <ID>` under it, with a tracker) and
@@ -177,6 +192,27 @@ for a new spec is a stop: ask for the issue.
      `Claude, recommended`.
    - **`## Still open`** is everything you could not close, or `None.`
 
+   **End every round with a commit and a push**, once the spec is written and the round's answers
+   are folded in, and before you put the next questions. A draft with open questions is pushed
+   too: the owner reads it from another session or on GitHub while answering. The first commit of
+   a spec is `docs: draft spec NNN`; every later one, in this pass or a revision round, is
+   `docs: revise spec NNN`. The body is `Spec: NNN` (and `Part of <ID>` with a tracker),
+   following the project's commit conventions.
+
+   ```bash
+   spec=docs/specs/NNN-<slug>.md
+   git add -- "$spec"
+   git commit -m "docs: draft spec NNN" -m "Spec: NNN" -- "$spec"
+   git push -u origin HEAD
+   ```
+
+   The commit holds the spec alone: the pathspec after `--` leaves out anything else already
+   staged. A renumber is a `git mv`, with both paths after `--`, so the old number's deletion is
+   in the same commit; a plain write and delete leaves both files on the branch, and
+   `/canon:approve` refuses two specs. A `docs/canon/` edit the owner asked for gets its own commit
+   in the same push. Never a bare `git push`, and a push that fails is reported, never forced. The
+   status stays `draft`: pushing is not approving.
+
    Then ask, in rounds, until nothing is open. Hold the open decisions as a tree: each answer
    settles one node and exposes the decisions under it. The **frontier** is every decision whose
    prerequisites are settled. Ask the whole frontier in one message, numbered, each with your
@@ -192,7 +228,8 @@ for a new spec is a stop: ask for the issue.
    `Decisions`, and say what moved rather than restating the spec. Two to four rounds is normal.
 
 6. **Stop with the spec written, the frontier empty and the status `draft`.** Say where the file
-   is, how many decisions it holds, and that `/canon:approve` is next. With a tracker, also the
+   is, how many decisions it holds, the last commit's sha and the pushed branch, and that
+   `/canon:approve` is next. With a tracker, also the
    issue's status and any label that was missing from the workspace.
 
 ## Hard limits
@@ -205,9 +242,9 @@ for a new spec is a stop: ask for the issue.
   instruction.
 - **With a tracker, one status move: `ready` to `spec`**, or `approved` back to `spec` in a
   revision round. Never post the spec to the issue: it lives in `docs/specs/`.
-- **Never commit, push or open a pull request.**
+- **Commit and push only the spec (and an owner-requested canon edit); never open a pull request,
+  merge or force-push.**
 - **Do not edit `docs/canon/` on your own initiative.** If the owner asks for the canon edit
-  during this pass, write it to `/canon:canon`'s format and leave it uncommitted, so
-  `/canon:approve` commits it as its own change, and say it still needs their sign-off in the
-  pull request.
+  during this pass, write it to `/canon:canon`'s format and commit it on its own, apart from the
+  spec, in the round's push, and say it still needs their sign-off in the pull request.
 - **Never edit `CLAUDE.md` or `.claude/settings.json`.**
