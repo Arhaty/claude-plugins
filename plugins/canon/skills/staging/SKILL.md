@@ -3,7 +3,24 @@ name: staging
 description: Archive the branch's spec, wait for CI, and merge the branch into the integration branch
 argument-hint: (none, works on the current branch)
 disable-model-invocation: true
-allowed-tools: Bash, Read, Grep, Glob, Edit
+allowed-tools:
+  - Bash(node "${CLAUDE_PLUGIN_ROOT}/scripts/config.mjs")
+  - Bash(node "${CLAUDE_PLUGIN_ROOT}/scripts/tracker.mjs" *)
+  - Bash(git fetch --quiet --prune origin)
+  - Bash(git fetch --prune origin)
+  - Bash(git push -u origin HEAD)
+  - Bash(git pull --ff-only)
+  - Bash(git branch --show-current)
+  - Bash(git for-each-ref --format='%(refname:short)' refs/remotes/origin)
+  - Bash(git merge-base --is-ancestor *)
+  - Bash(gh pr view *)
+  - Bash(gh pr list *)
+  - Bash(gh pr checks *)
+  - Bash(gh pr ready *)
+  - Read
+  - Grep
+  - Glob
+  - Edit(./docs/specs/**)
 ---
 
 # Land the current branch on the integration branch

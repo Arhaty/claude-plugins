@@ -144,6 +144,20 @@ through a pull, a branch switch or an edit, the hook stays off until you re-run 
 approve the new one. Worktrees of one clone share its approval; another clone of the same project
 needs its own. Set `formatFile` to `null` to turn the hook off.
 
+## Permissions
+
+A command pre-approves the plugin's scripts, a short list of exact commands, read-only `gh` and
+`git` lookups that take no output file, and edits under `docs/specs/`, `docs/canon/` and
+`.claude/canon-domains.json`, the map that decides which paths the canon gates. The lookups
+include `git diff` and `git log`, whose `--output` can write a file. A compound command prompts
+unless every part of it is granted, so some of `/canon:approve`'s checks still ask. Three of those reach past the machine without a prompt:
+`git push -u origin HEAD` pushes the current branch, `gh pr ready` marks the branch's draft pull
+request ready for review (or back to draft), and the tracker script moves, labels and comments on
+Linear issues. Everything else asks, as it would without the plugin: commits,
+pull request creation and other edits, merges, the project's own checks, and any command Claude composes
+itself. To run `/canon:ship` or `/canon:staging` unattended, add allow rules for those to your own
+settings or run in a permission mode that allows them.
+
 ## Configuring Linear
 
 canon can use Linear as the record and the gate instead of the spec file. Leave the `tracker`

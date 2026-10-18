@@ -3,7 +3,7 @@
  * pin the text: rewording it is fine, and dropping the rule fails here.
  */
 
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { ROOT, describe, expect, it } from './helpers.mjs';
@@ -102,5 +102,166 @@ describe('staging starts CI on a head nothing has run on, once', () => {
 
   it('still needs the configured workflow to succeed before it merges', () => {
     expect(staging).toMatch(/the configured workflow's\s+success is required too/);
+  });
+});
+
+describe('skills pre-approve only scoped tools', () => {
+  /** Every `allowed-tools` entry, inline or a YAML list at any indent, with quotes stripped. */
+  const grants = (markdown) => {
+    const lines = markdown.split(/\n---\n/)[0].split('\n');
+    const at = lines.findIndex((line) => line.startsWith('allowed-tools:'));
+    if (at === -1) return [];
+    const inline = lines[at].slice('allowed-tools:'.length).trim();
+    const items = [];
+    if (inline) {
+      // Split on commas outside parentheses: a grant can hold `%(refname)`.
+      let depth = 0;
+      let item = '';
+      for (const char of `${inline},`) {
+        if (char === ',' && depth === 0) {
+          if (item.trim()) items.push(item.trim());
+          item = '';
+          continue;
+        }
+        if (char === '(') depth += 1;
+        if (char === ')') depth -= 1;
+        item += char;
+      }
+    } else {
+      for (const line of lines.slice(at + 1)) {
+        if (/^\s*(#.*)?$/.test(line)) continue;
+        const item = line.match(/^\s*-\s+(.*)$/);
+        if (!item) break;
+        items.push(item[1]);
+      }
+    }
+    return items.map((item) => item.trim().replace(/^(['"])(.*)\1$/, '$2'));
+  };
+
+  // A wildcard after one of these adds only arguments the command reads: no write, no upload,
+  // no command it runs. `gh pr ready` takes only `--undo` besides the number.
+  // `git diff` and `git log` take `--output=<file>`; that write is accepted for read-only skills
+  // that would otherwise prompt on every diff.
+  const READ_ONLY = [
+    'git diff ',
+    'git log ',
+    'git ls-tree ',
+    'git ls-files ',
+    'git merge-base --is-ancestor ',
+    'git rev-parse --verify --quiet ',
+    'git status --porcelain ',
+    'gh pr view ',
+    'gh pr list ',
+    'gh pr checks ',
+    'gh run list ',
+  ];
+  // Plugin scripts whose every subcommand under the wildcard only reads, or writes only to the
+  // tracker the skill is there to move. `scaffold.mjs apply` writes the project, so only `plan`.
+  // An exact command passes only from this list, so a new one is a reviewed change here, not a
+  // line that slips into a skill's frontmatter.
+  const EXACT = [
+    'git branch --show-current',
+    'git check-ignore -q .env.local',
+    'git config user.name',
+    'git fetch --prune origin',
+    'git fetch --quiet --prune origin',
+    'git fetch origin',
+    "git for-each-ref --format='%(refname)' refs/remotes/origin",
+    "git for-each-ref --format='%(refname:short)' refs/remotes/origin",
+    'git pull --ff-only',
+    'git push -u origin HEAD',
+    'sort -u',
+    'node "${CLAUDE_PLUGIN_ROOT}/scripts/canon-index.mjs"',
+    'node "${CLAUDE_PLUGIN_ROOT}/scripts/canon-index.mjs" --check',
+    'node "${CLAUDE_PLUGIN_ROOT}/scripts/config.mjs"',
+  ];
+  const SAFE_WILDCARDS = [
+    'gh pr ready *',
+    'node "${CLAUDE_PLUGIN_ROOT}/scripts/tracker.mjs" *',
+    'node "${CLAUDE_PLUGIN_ROOT}/scripts/scaffold.mjs" plan *',
+  ];
+  const PLAIN_TOOLS = ['Read', 'Grep', 'Glob', 'AskUserQuestion'];
+
+  const scoped = (grant) => {
+    if (PLAIN_TOOLS.includes(grant)) return true;
+    const bash = grant.match(/^Bash\((.+)\)$/);
+    if (bash) {
+      const command = bash[1];
+      if (command.includes('..')) return false;
+      // A second command chained after a granted prefix rides on its approval.
+      if (/[;&|`$<>\n]/.test(command.replaceAll('${CLAUDE_PLUGIN_ROOT}', ''))) return false;
+      if (EXACT.includes(command) || SAFE_WILDCARDS.includes(command)) return true;
+      return READ_ONLY.some((prefix) => command.startsWith(prefix));
+    }
+    const file = grant.match(/^(?:Edit|Write)\((.+)\)$/);
+    // Under `.claude/` only the domain map: a grant on the settings would let a skill widen its own
+    // permissions without a prompt.
+    return (
+      Boolean(file) &&
+      /^\.\/(docs\/[^*]|\.claude\/canon-domains\.json$)/.test(file[1]) &&
+      !file[1].includes('..')
+    );
+  };
+
+  it.each(
+    readdirSync(join(ROOT, 'skills'), { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => entry.name)
+  )('%s grants only listed exact commands, read-only commands and project paths', (name) => {
+    for (const grant of grants(skill(name))) expect(scoped(grant), grant).toBe(true);
+  });
+
+  it.each([
+    ['inline', 'allowed-tools: Read, Bash'],
+    ['unindented list', 'allowed-tools:\n- Read\n- Bash'],
+    ['deep list', 'allowed-tools:\n    - Read\n    - Bash'],
+    ['quoted item', 'allowed-tools:\n  - Read\n  - "Bash"'],
+    ['comment line', 'allowed-tools:\n  - Read\n  # shell\n  - Bash'],
+    ['blank line', 'allowed-tools:\n  - Read\n\n  - Bash'],
+  ])('reads a %s, so a reformatted grant is still checked', (_, front) => {
+    expect(grants(`---\nname: x\n${front}\n---\n`)).toEqual(['Read', 'Bash']);
+  });
+
+  it('keeps an inline grant whole when it holds parentheses', () => {
+    const front =
+      "allowed-tools: Read, Bash(git for-each-ref --format='%(refname)' refs/remotes/origin)";
+    expect(grants(`---\nname: x\n${front}\n---\n`)).toEqual([
+      'Read',
+      "Bash(git for-each-ref --format='%(refname)' refs/remotes/origin)",
+    ]);
+  });
+
+  it.each([
+    'Bash',
+    'Bash(*)',
+    'Bash(:*)',
+    'Bash(git *)',
+    'Bash(gh *)',
+    'Bash(gh api *)',
+    'Bash(git fetch *)',
+    'Bash(git commit *)',
+    'Bash(node *)',
+    'Bash(gh pr edit * --body-file *)',
+    'Edit',
+    'Edit(**)',
+    'Write(/**)',
+    'Write(./**)',
+    'Edit(./docs/../src/**)',
+    'Edit(./.claude/settings.json)',
+    'Write(./.claude/settings.local.json)',
+    'Bash(node "${CLAUDE_PLUGIN_ROOT}/scripts/../../x.mjs" *)',
+    'Bash(node "${CLAUDE_PLUGIN_ROOT}/scripts/../../x.mjs")',
+    'Bash(node "${CLAUDE_PLUGIN_ROOT}/scripts/scaffold.mjs" *)',
+    'Bash(node "${CLAUDE_PLUGIN_ROOT}/scripts/config.mjs" *)',
+    'Bash(node "${CLAUDE_PLUGIN_ROOT}/scripts/scaffold.mjs" apply)',
+    'Bash(git push --force origin HEAD)',
+    'Bash(git reset --hard)',
+    'Bash(gh pr merge --admin --squash)',
+    'Bash(git status --porcelain * && git push --force origin HEAD)',
+    'Bash(gh pr view *; gh pr merge --admin --squash)',
+    'Bash(gh pr list * | sh)',
+    'Bash(git ls-tree $(rm -rf .))',
+  ])('refuses %s', (grant) => {
+    expect(scoped(grant), grant).toBe(false);
   });
 });

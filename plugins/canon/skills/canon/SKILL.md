@@ -3,7 +3,16 @@ name: canon
 description: Update docs/canon for what this branch settled, committed on the branch before it merges, reported in one line
 argument-hint: <canon file, e.g. auth, or nothing to route from the diff>
 disable-model-invocation: true
-allowed-tools: Bash, Read, Grep, Glob, Edit, Write
+allowed-tools:
+  - Bash(node "${CLAUDE_PLUGIN_ROOT}/scripts/config.mjs")
+  - Bash(node "${CLAUDE_PLUGIN_ROOT}/scripts/canon-index.mjs")
+  - Bash(node "${CLAUDE_PLUGIN_ROOT}/scripts/canon-index.mjs" --check)
+  - Read
+  - Grep
+  - Glob
+  - Edit(./docs/canon/**)
+  - Write(./docs/canon/**)
+  - Edit(./.claude/canon-domains.json)
 ---
 
 # Update the canon for what this branch settled

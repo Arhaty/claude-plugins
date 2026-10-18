@@ -3,7 +3,15 @@ name: setup
 description: Set up canon in this project: write .claude/canon.json and scaffold docs/canon, docs/specs and the CLAUDE.md section, asking before changing any existing file
 argument-hint: (none)
 disable-model-invocation: true
-allowed-tools: Bash, Read, Write, Edit, Glob, Grep, AskUserQuestion
+allowed-tools:
+  - Bash(node "${CLAUDE_PLUGIN_ROOT}/scripts/tracker.mjs" *)
+  - Bash(node "${CLAUDE_PLUGIN_ROOT}/scripts/scaffold.mjs" plan *)
+  - Bash(git config user.name)
+  - Bash(git check-ignore -q .env.local)
+  - Read
+  - Grep
+  - Glob
+  - AskUserQuestion
 ---
 
 # Set up canon in this project

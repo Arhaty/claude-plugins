@@ -2,7 +2,14 @@
 name: explain
 description: Explain what is being built, specced or stuck on, in three or four short sections, so the owner can decide from it
 argument-hint: <spec number, file, path, or a question; nothing explains the work in flight>
-allowed-tools: Bash, Read, Grep, Glob
+allowed-tools:
+  - Bash(node "${CLAUDE_PLUGIN_ROOT}/scripts/config.mjs")
+  - Bash(git branch --show-current)
+  - Bash(git diff *)
+  - Bash(git log *)
+  - Read
+  - Grep
+  - Glob
 ---
 
 # Explain it, short, so a decision can be made
