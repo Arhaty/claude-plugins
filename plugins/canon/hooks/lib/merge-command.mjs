@@ -803,6 +803,7 @@ const PR_VALUES = {
     ...['--reviewer', '-r', '--template', '-T', '--recover', '--repo', '-R'],
   ]),
   ready: new Set(['--repo', '-R']),
+  reopen: new Set(['--repo', '-R', '--comment', '-c']),
   merge: PR_MERGE_VALUES,
 };
 
