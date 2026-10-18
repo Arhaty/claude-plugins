@@ -5,6 +5,7 @@
 
 import { spawn, spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import http from 'node:http';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -448,6 +449,7 @@ describe('behind a proxy', () => {
       version: NODE,
       fetch: fakeLinear(state),
       setGlobalProxy: null,
+      execArgv: [],
       spawn: fakeSpawn,
       ...options,
     });
@@ -515,11 +517,23 @@ describe('behind a proxy', () => {
   });
 
   it('does nothing when the flag is already set, which is also the second run', async () => {
-    for (const value of ['1', '0', '']) {
+    for (const value of ['1', '0']) {
       await run({ ...PROXY, NODE_USE_ENV_PROXY: value });
     }
+    await run({ ...PROXY, NODE_OPTIONS: '--use-env-proxy' });
+    await run(PROXY, { execArgv: ['--use-env-proxy'] });
     expect(spawned).toEqual([]);
-    expect(state.requests.length).toBe(3);
+    expect(state.requests.length).toBe(4);
+    // Node reads an empty flag as unset, and so does the relaunch.
+    expect(await run({ ...PROXY, NODE_USE_ENV_PROXY: '' })).toEqual(new Relaunched(3, null));
+  });
+
+  it('hands a body given to main to the child on its stdin', async () => {
+    await run(PROXY, { argv: ['comment', 'ABC-1'], stdin: 'the body' });
+    expect(spawned[0][2]).toMatchObject({
+      input: 'the body',
+      stdio: ['pipe', 'inherit', 'inherit'],
+    });
   });
 
   it('does nothing with no proxy, a NO_PROXY that covers Linear, or a Node without the flag', async () => {
@@ -608,6 +622,24 @@ describe('behind a proxy', () => {
       );
     });
 
+    it('with the proxy on by the command-line flag, blames the proxy, not the flag', async () => {
+      const error = await rejects(
+        () => run({ ...PROXY, NODE_USE_ENV_PROXY: '0', NODE_OPTIONS: '--use-env-proxy' }),
+        /HTTP 401/
+      );
+      expect(error.message).toMatch(/so the credential the proxy put in its place was rejected/);
+    });
+
+    it('with a key that is not one from a file, names the file rather than the proxy', async () => {
+      writeFileSync(join(project, '.env.local'), 'LINEAR_API_KEY=lin-api-typo\n');
+      const env = { ...PROXY, NODE_USE_ENV_PROXY: '0' };
+      const error = await rejects(() => run(PROXY, { env }), /HTTP 401/);
+      expect(error.message).toBe(
+        'Linear returned HTTP 401: it rejected the LINEAR_API_KEY from .env.local at the ' +
+          'project root. Change it there.'
+      );
+    });
+
     it('with a real-looking key, or no proxy, names where the key was read from', async () => {
       let error = await rejects(
         () => run({ ...PROXY, NODE_USE_ENV_PROXY: '0', LINEAR_API_KEY: 'lin_api_x' }),
@@ -633,9 +665,12 @@ describe('behind a proxy', () => {
     });
   });
 
-  it('sends the request through the proxy, with no warning, when run as a skill would', async () => {
-    // Node 20 and early 22 have no proxy support for fetch: there is nothing to test.
-    if (!nodeHasEnvProxy()) return;
+  it('sends the request through the proxy, with no warning, when run as a skill would', async (t) => {
+    if (!nodeHasEnvProxy()) {
+      t.skip(`Node ${process.versions.node} cannot send fetch through a proxy`);
+      return;
+    }
+    t.diagnostic(http.setGlobalProxyFromEnv ? 'in-process' : 'relaunched');
     const seen = [];
     const proxy = createServer((socket) => {
       socket.once('data', (chunk) => {
@@ -652,6 +687,8 @@ describe('behind a proxy', () => {
         'NODE_USE_ENV_PROXY',
         'NODE_OPTIONS',
         'https_proxy',
+        'http_proxy',
+        'HTTP_PROXY',
         'NO_PROXY',
         'no_proxy',
       ]) {

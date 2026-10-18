@@ -36,6 +36,7 @@
 import { execFileSync, spawnSync } from 'node:child_process';
 import { existsSync, readFileSync, realpathSync } from 'node:fs';
 import http from 'node:http';
+import { constants } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -125,15 +126,32 @@ export function noProxyCovers(host, noProxy = '') {
 }
 
 /**
+ * Did Node start with the proxy on? `--use-env-proxy`, on the command line or in
+ * `NODE_OPTIONS`, wins over the variable, and only `NODE_USE_ENV_PROXY=1` counts.
+ */
+export function startedWithProxy(env, execArgv = process.execArgv) {
+  const flags = [...(env.NODE_OPTIONS ?? '').split(/\s+/), ...execArgv].filter((flag) =>
+    ['--use-env-proxy', '--no-use-env-proxy'].includes(flag)
+  );
+  if (flags.length) return flags.at(-1) === '--use-env-proxy';
+  return env.NODE_USE_ENV_PROXY === '1';
+}
+
+/**
  * How a request to `host` would leave: `none` with no proxy set, `on` through it,
  * and otherwise why not: `exempt` by `NO_PROXY`, `unsupported` by this Node, or
  * `off` for want of `NODE_USE_ENV_PROXY=1`.
  */
-export function proxyRoute(host, env, version = process.versions.node) {
+export function proxyRoute(
+  host,
+  env,
+  version = process.versions.node,
+  execArgv = process.execArgv
+) {
   if (!httpsProxy(env)) return 'none';
   if (noProxyCovers(host, env.no_proxy ?? env.NO_PROXY)) return 'exempt';
   if (!nodeHasEnvProxy(version)) return 'unsupported';
-  return env.NODE_USE_ENV_PROXY === '1' ? 'on' : 'off';
+  return startedWithProxy(env, execArgv) ? 'on' : 'off';
 }
 
 /** What `main` returns when it re-ran itself: the child's exit status or signal. */
@@ -332,12 +350,18 @@ async function readStdin() {
  * Run this script again with `NODE_USE_ENV_PROXY=1`, which Node reads only at
  * startup, and pass on how the child ended.
  */
-function relaunch(argv, env, spawn) {
+function relaunch(argv, { env, execArgv, stdin, spawn }) {
   const child = spawn(
     process.execPath,
     // The proxy agent is experimental on some versions, and says so on every run.
-    [...process.execArgv, '--disable-warning=UNDICI-EHPA', self, ...argv],
-    { env: { ...env, NODE_USE_ENV_PROXY: '1' }, stdio: 'inherit' }
+    [...execArgv, '--disable-warning=UNDICI-EHPA', self, ...argv],
+    {
+      env: { ...env, NODE_USE_ENV_PROXY: '1' },
+      // A body handed to `main` rather than piped in goes to the child the same way.
+      ...(stdin === undefined
+        ? { stdio: 'inherit' }
+        : { input: stdin, stdio: ['pipe', 'inherit', 'inherit'] }),
+    }
   );
   if (child.error) {
     throw new TrackerError(`could not re-run through the proxy: ${child.error.message}`);
@@ -369,6 +393,7 @@ export async function main(
     version = process.versions.node,
     setGlobalProxy = http.setGlobalProxyFromEnv,
     spawn = spawnSync,
+    execArgv = process.execArgv,
   } = {}
 ) {
   const args = [...argv];
@@ -419,10 +444,11 @@ export async function main(
   // Only a provider that makes requests needs the proxy, and only once argv is sound
   // and before a key command runs, so a second run repeats none of that.
   const host = provider.ENDPOINT ? new URL(provider.ENDPOINT).hostname : null;
-  let route = host ? proxyRoute(host, env, version) : 'none';
-  // Any value of the flag already set is the owner's choice, or this is the second run.
-  if (route === 'off' && env.NODE_USE_ENV_PROXY === undefined) {
-    if (!setGlobalProxy) return relaunch(argv, env, spawn);
+  let route = host ? proxyRoute(host, env, version, execArgv) : 'none';
+  // A value of the flag already set is the owner's choice, or this is the second run.
+  // An empty one is no choice: Node reads it as unset.
+  if (route === 'off' && !env.NODE_USE_ENV_PROXY) {
+    if (!setGlobalProxy) return relaunch(argv, { env, execArgv, stdin, spawn });
     setGlobalProxy(env);
     route = 'on';
   }
@@ -440,7 +466,9 @@ export async function main(
     // Only this side knows where the key came from and how the request left.
     (error) => {
       if (error?.status !== 401 || !found) return error;
-      const placeholder = provider.looksLikeKey?.(found.key) === false;
+      // The proxy swaps only a key in the environment; one from a file or a command
+      // that does not look like a key is just a wrong key.
+      const placeholder = found.source === 'env' && provider.looksLikeKey?.(found.key) === false;
       const { NAME: name } = provider;
       const { source } = found;
       return new TrackerError(
@@ -513,6 +541,8 @@ if (process.argv[1] && realpathSync(resolve(process.argv[1])) === self) {
       if (!(result instanceof Relaunched)) {
         process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
       } else if (result.signal) {
+        // A signal Node ignores or handles here still leaves a failing status.
+        process.exitCode = 128 + (constants.signals[result.signal] ?? 0);
         process.kill(process.pid, result.signal);
       } else {
         process.exitCode = result.status;
