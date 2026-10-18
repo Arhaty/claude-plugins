@@ -8,8 +8,9 @@ allowed-tools: Bash, Read, Grep, Glob, Edit
 
 # Approve the spec on the current branch
 
-`/canon:define` writes a spec and stops. This is the deliberate step that says the owner read it
-and agrees, and the only thing that makes a spec buildable. It leaves an artefact: the spec's
+`/canon:define` writes a spec, commits and pushes it as a `draft` each round, and stops. This is
+the deliberate step that says the owner read it and agrees, and the only thing that makes a spec
+buildable. It leaves an artefact: the spec's
 `**Status:** approved` line, in a commit, on a remote branch.
 
 It takes no argument. The branch already holds the spec, and a typed number could only disagree
@@ -33,7 +34,8 @@ wrong and what would fix it.
 - **The current branch is `<integration>` or `<production>`.** Offer to move the work to a
   branch.
 - **The branch holds no spec, or more than one.** The spec is the one active
-  `docs/specs/NNN-*.md` this branch adds, committed or not:
+  `docs/specs/NNN-*.md` this branch adds. The lookup also finds a staged or untracked one, so
+  the refusal below can name it:
 
   ```bash
   { git diff --name-only --diff-filter=A --no-renames origin/<integration>...HEAD -- 'docs/specs/[0-9]*.md'
@@ -47,6 +49,12 @@ wrong and what would fix it.
   None: say so and offer `/canon:define`. Never write one: approving a spec you wrote in the same
   breath approves nothing. More than one is two concerns on one branch: name them and stop.
 
+- **The spec or anything in `docs/canon/` has changes no commit holds**, or the spec has no
+  commit at all: `git status --porcelain -- docs/specs/<NNN-slug>.md docs/canon` names them.
+  `/canon:define` commits every round, the spec and any canon edit the owner asked for, so an
+  uncommitted one is a correction that skipped it, or a draft from a define that never
+  committed: either wants a `/canon:define NNN` round, which commits and pushes it, not an
+  approval.
 - **The status is not `draft`.** `approved` means it is already approved: change nothing.
   `in-progress` or later is past this command. A missing status line wants a `/canon:define`
   pass.
@@ -98,7 +106,7 @@ origin/<integration> HEAD`, which tests freshness rather than the base.
 
   Two divergent specs need a person, not `--force-with-lease`.
 
-- **The working tree holds anything uncommitted outside `docs/specs/` and `docs/canon/`.** Code
+- **The working tree holds anything else uncommitted outside `docs/specs/`.** Code
   on an unapproved branch is a build that started early. Name the files and stop.
 
 ## Steps
@@ -107,9 +115,9 @@ origin/<integration> HEAD`, which tests freshness rather than the base.
    written, and with a tracker the issue's comments. A correction they made overrides the file:
    that is a `/canon:define` round, not an approval.
 2. **Set the status to `approved`** by editing the `**Status:**` line and nothing else.
-3. **Commit the spec as its own commit**, `docs: approve spec NNN`, body `Spec: NNN` (and
-   `Part of <ID>` with a tracker), following the project's commit conventions. A `docs/canon/` edit `/canon:define` wrote at the owner's
-   request gets its own second commit.
+3. **Commit the status-line change alone**, `docs: approve spec NNN`, body `Spec: NNN` (and
+   `Part of <ID>` with a tracker), following the project's commit conventions. The draft, and any canon edit beside it, is
+   already committed and pushed by `/canon:define`.
 4. **Push**: `git push -u origin HEAD`. Never a bare `git push`. No pull request:
    `/canon:build` opens the draft one.
 5. **With a tracker, set the issue to `approved`**: `set-state <ID> approved`. After the push and

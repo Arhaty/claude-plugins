@@ -71,5 +71,7 @@ git add -A
 git commit -q -m "chore: initial project"
 git branch staging
 git checkout -q staging
-git remote add origin "$PWD"
+# A bare origin: define pushes its draft, and a non-bare one refuses a push to its checked-out branch.
+git clone -q --bare . .git/origin.git
+git remote add origin "$PWD/.git/origin.git"
 git fetch -q origin

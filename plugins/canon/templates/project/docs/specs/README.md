@@ -12,13 +12,13 @@ an archived spec is provenance only.
 The status is the `**Status:**` line directly under the H1. Commands find it by that prefix,
 never by line number.
 
-| Status        | Set by           | Means                                                                    |
-| ------------- | ---------------- | ------------------------------------------------------------------------ |
-| `draft`       | `/canon:define`  | Being argued out. Not committed until approved.                          |
-| `approved`    | `/canon:approve` | {{owner}} read it. `Still open` is `None.`, committed and pushed.        |
-| `in-progress` | `/canon:build`   | A build has started, in its own commit.                                  |
-| `shipped`     | `/canon:staging` | Merged. Set in the commit that moves the spec to `archive/`.             |
-| `abandoned`   | {{owner}} only   | Dropped. Set from any status, in the commit that moves it to `archive/`. |
+| Status        | Set by           | Means                                                                              |
+| ------------- | ---------------- | ---------------------------------------------------------------------------------- |
+| `draft`       | `/canon:define`  | Being argued out. Committed and pushed on its branch each round; not yet approved. |
+| `approved`    | `/canon:approve` | {{owner}} read it. `Still open` is `None.`, committed and pushed.                  |
+| `in-progress` | `/canon:build`   | A build has started, in its own commit.                                            |
+| `shipped`     | `/canon:staging` | Merged. Set in the commit that moves the spec to `archive/`.                       |
+| `abandoned`   | {{owner}} only   | Dropped. Set from any status, in the commit that moves it to `archive/`.           |
 
 `/canon:approve` refuses a spec whose `## Still open` holds anything but `None.`, that has no
 `## Decisions` table, or whose `## Reuse check` is empty. `/canon:ship` builds without stopping,

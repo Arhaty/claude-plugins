@@ -78,18 +78,18 @@ through a symlink that leads outside the project or nowhere. It doesn't commit.
 
 ## Commands
 
-| Command                    | What it does                                                                                        |
-| -------------------------- | --------------------------------------------------------------------------------------------------- |
-| `/canon:setup`             | Asks the questions above and scaffolds the project files.                                           |
-| `/canon:define <idea>`     | Cuts a branch, researches, writes `docs/specs/NNN-slug.md`, and asks questions until none are open. |
-| `/canon:approve`           | Checks the spec on the current branch, sets `approved`, commits and pushes it.                      |
-| `/canon:build NNN`         | Builds an approved spec behind a draft pull request into the integration branch.                    |
-| `/canon:review [scope]`    | Checks a branch, spec or paths against the canon, the rule files and the spec. Read-only.           |
-| `/canon:canon [file]`      | Writes what the branch settled into `docs/canon/`, or says in one line that nothing did.            |
-| `/canon:staging`           | Archives the spec, waits for CI, and merges the branch into the integration branch.                 |
-| `/canon:production`        | Opens the release pull request with a manifest of what ships, and stops. The owner merges it.       |
-| `/canon:ship NNN`          | Runs build, up to three review-and-fix rounds, canon and staging, and reports in five lines.        |
-| `/canon:explain [subject]` | Explains the work in flight in three or four short sections.                                        |
+| Command                    | What it does                                                                                                              |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| `/canon:setup`             | Asks the questions above and scaffolds the project files.                                                                 |
+| `/canon:define <idea>`     | Cuts a branch, researches, writes `docs/specs/NNN-slug.md`, pushes it each round, and asks questions until none are open. |
+| `/canon:approve`           | Checks the spec on the current branch, sets `approved`, commits and pushes it.                                            |
+| `/canon:build NNN`         | Builds an approved spec behind a draft pull request into the integration branch.                                          |
+| `/canon:review [scope]`    | Checks a branch, spec or paths against the canon, the rule files and the spec. Read-only.                                 |
+| `/canon:canon [file]`      | Writes what the branch settled into `docs/canon/`, or says in one line that nothing did.                                  |
+| `/canon:staging`           | Archives the spec, waits for CI, and merges the branch into the integration branch.                                       |
+| `/canon:production`        | Opens the release pull request with a manifest of what ships, and stops. The owner merges it.                             |
+| `/canon:ship NNN`          | Runs build, up to three review-and-fix rounds, canon and staging, and reports in five lines.                              |
+| `/canon:explain [subject]` | Explains the work in flight in three or four short sections.                                                              |
 
 `/canon:review` checks project rules. Run `/code-review` beside it for correctness bugs.
 
@@ -157,7 +157,7 @@ yours, and `/canon:setup` offers your team's real names:
 | ------------ | ------------------------------------------------- | ------------------------------------------------- |
 | `ready`      | you                                               | `/canon:define` on a new spec in any other status |
 | `spec`       | `/canon:define`, when it starts                   | `/canon:approve` in any other status              |
-| `approved`   | `/canon:approve`, after it pushes the spec        | `/canon:build` in any other status but `blocked`  |
+| `approved`   | `/canon:approve`, after it pushes the approval    | `/canon:build` in any other status but `blocked`  |
 | `building`   | `/canon:build`, when it starts or resumes         |                                                   |
 | `blocked`    | `/canon:build` or `/canon:ship`, waiting on you   |                                                   |
 | `staging`    | Linear's GitHub integration, on the merge         |                                                   |
