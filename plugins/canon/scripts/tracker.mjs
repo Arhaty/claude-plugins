@@ -24,10 +24,19 @@
  * that one key in `.env.local` at the project root, then from
  * `tracker.apiKeyCommand`, which runs only once the owner has approved that exact
  * command for this repository. The key is never printed.
+ *
+ * **Behind a proxy**, as in a cloud session where the key is a placeholder that an
+ * egress proxy swaps for the real one, Node's `fetch` goes direct unless
+ * `NODE_USE_ENV_PROXY=1` was set at startup. When a proxy is set and the flag is
+ * not, a provider that makes requests turns the proxy on in-process where Node can
+ * (`http.setGlobalProxyFromEnv`, 24.14 and later), and otherwise re-runs this script
+ * once with the flag.
  */
 
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { existsSync, readFileSync, realpathSync } from 'node:fs';
+import http from 'node:http';
+import { constants } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -81,6 +90,112 @@ export function blockedState(comments) {
   };
 }
 
+/**
+ * The proxy Node's `fetch` would use for an https URL, read as undici reads it: the
+ * lower-case variable first, an empty one still counting as set, and the http proxy
+ * when there is no https one.
+ */
+export function httpsProxy(env) {
+  return (env.https_proxy ?? env.HTTPS_PROXY) || (env.http_proxy ?? env.HTTP_PROXY) || null;
+}
+
+/** Can this Node send `fetch` through the proxy, given `NODE_USE_ENV_PROXY=1`? */
+export function nodeHasEnvProxy(version = process.versions.node) {
+  const [major, minor] = version.split('.').map(Number);
+  return major >= 24 || (major === 22 && minor >= 21);
+}
+
+/**
+ * Does `NO_PROXY` send `host` direct? Undici's rules: `*` for everything, a leading
+ * `.` or `*.` for a domain and everything under it, a bare name for that host alone,
+ * each with an optional port.
+ */
+export function noProxyCovers(host, noProxy = '') {
+  return noProxy
+    .toLowerCase()
+    .split(/[\s,]+/)
+    .filter(Boolean)
+    .some((entry) => {
+      if (entry === '*') return true;
+      const [name, port] = entry.split(':');
+      if (port && port !== '443') return false;
+      if (!/^\*?\./.test(name)) return host === name;
+      const domain = name.replace(/^\*/, '');
+      return host.endsWith(domain);
+    });
+}
+
+/**
+ * Did Node start with the proxy on? `--use-env-proxy`, on the command line or in
+ * `NODE_OPTIONS`, wins over the variable, and only `NODE_USE_ENV_PROXY=1` counts.
+ */
+export function startedWithProxy(env, execArgv = process.execArgv) {
+  const flags = [...(env.NODE_OPTIONS ?? '').split(/\s+/), ...execArgv].filter((flag) =>
+    ['--use-env-proxy', '--no-use-env-proxy'].includes(flag)
+  );
+  if (flags.length) return flags.at(-1) === '--use-env-proxy';
+  return env.NODE_USE_ENV_PROXY === '1';
+}
+
+/**
+ * How a request to `host` would leave: `none` with no proxy set, `on` through it,
+ * and otherwise why not: `exempt` by `NO_PROXY`, `unsupported` by this Node, or
+ * `off` for want of `NODE_USE_ENV_PROXY=1`.
+ */
+export function proxyRoute(
+  host,
+  env,
+  version = process.versions.node,
+  execArgv = process.execArgv
+) {
+  if (!httpsProxy(env)) return 'none';
+  if (noProxyCovers(host, env.no_proxy ?? env.NO_PROXY)) return 'exempt';
+  if (!nodeHasEnvProxy(version)) return 'unsupported';
+  return startedWithProxy(env, execArgv) ? 'on' : 'off';
+}
+
+/** What `main` returns when it re-ran itself: the child's exit status or signal. */
+export class Relaunched {
+  constructor(status, signal) {
+    this.status = status;
+    this.signal = signal;
+  }
+}
+
+/** Where each key source is. */
+const KEY_SOURCES = {
+  env: 'the environment',
+  file: '.env.local at the project root',
+  command: 'the output of tracker.apiKeyCommand',
+};
+
+/**
+ * Why the tracker answered 401, from where the key came from and how the request
+ * left. Names the source, never the key.
+ */
+export function unauthorized({ name, variable, source, placeholder, route, host, version }) {
+  const status = `${name} returned HTTP 401`;
+  if (placeholder && route === 'on') {
+    return (
+      `${status}: ${variable} is a placeholder and the request went through the HTTPS ` +
+      "proxy, so the credential the proxy put in its place was rejected. Fix it in the proxy's " +
+      'credentials; the placeholder needs no change.'
+    );
+  }
+  if (placeholder && route !== 'none') {
+    const fix = {
+      off: 'Set NODE_USE_ENV_PROXY=1.',
+      exempt: `NO_PROXY sends ${host} direct: take that entry out.`,
+      unsupported: `Node ${version} cannot: use Node 22.21, 24 or later.`,
+    }[route];
+    return (
+      `${status}: ${variable} is a placeholder the HTTPS proxy replaces on the way out, ` +
+      `and Node is not sending the request through the proxy. ${fix}`
+    );
+  }
+  return `${status}: it rejected the ${variable} from ${KEY_SOURCES[source]}. Change it there.`;
+}
+
 /** The value of one key in a dotenv file, or `null`. Reads that key and nothing else. */
 export function envFileValue(text, name) {
   for (const line of text.split('\n')) {
@@ -102,9 +217,14 @@ export function envFileValue(text, name) {
  * The API key, from the first source that has one. `run` executes the approved
  * command, injected so a test never runs a real one.
  */
-export function resolveKey({ root, tracker, variable, env = process.env, run = runCommand }) {
+export function resolveKey(options) {
+  return findKey(options).key;
+}
+
+/** The key and its source: `env`, `file` or `command`. */
+function findKey({ root, tracker, variable, env = process.env, run = runCommand }) {
   const fromEnv = env[variable]?.trim();
-  if (fromEnv) return fromEnv;
+  if (fromEnv) return { key: fromEnv, source: 'env' };
 
   // A `.env.local` the repository commits is the repository's choice of key, not the
   // owner's, and would send canon's comments to whatever workspace it names.
@@ -112,7 +232,7 @@ export function resolveKey({ root, tracker, variable, env = process.env, run = r
   const committed = existsSync(file) && tracked(root, '.env.local');
   if (existsSync(file) && !committed) {
     const fromFile = envFileValue(readFileSync(file, 'utf8'), variable);
-    if (fromFile) return fromFile;
+    if (fromFile) return { key: fromFile, source: 'file' };
   }
 
   const command = tracker?.apiKeyCommand;
@@ -133,7 +253,7 @@ export function resolveKey({ root, tracker, variable, env = process.env, run = r
       );
     }
     const fromCommand = run(command).trim();
-    if (fromCommand) return fromCommand;
+    if (fromCommand) return { key: fromCommand, source: 'command' };
     throw new TrackerError(`tracker.apiKeyCommand printed nothing, so there is no ${variable}.`);
   }
 
@@ -226,8 +346,56 @@ async function readStdin() {
   return Buffer.concat(chunks).toString('utf8').trim();
 }
 
+/**
+ * Run this script again with `NODE_USE_ENV_PROXY=1`, which Node reads only at
+ * startup, and pass on how the child ended.
+ */
+function relaunch(argv, { env, execArgv, stdin, spawn }) {
+  const child = spawn(
+    process.execPath,
+    // The proxy agent is experimental on some versions, and says so on every run.
+    [...execArgv, '--disable-warning=UNDICI-EHPA', self, ...argv],
+    {
+      env: { ...env, NODE_USE_ENV_PROXY: '1' },
+      // A body handed to `main` rather than piped in goes to the child the same way.
+      ...(stdin === undefined
+        ? { stdio: 'inherit' }
+        : { input: stdin, stdio: ['pipe', 'inherit', 'inherit'] }),
+    }
+  );
+  if (child.error) {
+    throw new TrackerError(`could not re-run through the proxy: ${child.error.message}`);
+  }
+  return new Relaunched(child.status, child.signal);
+}
+
+/** `client` with every method's failure passed through `explain`. */
+function explainUnauthorized(client, explain) {
+  return Object.fromEntries(
+    Object.entries(client).map(([name, method]) => [
+      name,
+      (...args) =>
+        method(...args).catch((error) => {
+          throw explain(error);
+        }),
+    ])
+  );
+}
+
 /** Run one command and return what to print. */
-export async function main(argv, { cwd = process.cwd(), env = process.env, fetch, stdin } = {}) {
+export async function main(
+  argv,
+  {
+    cwd = process.cwd(),
+    env = process.env,
+    fetch,
+    stdin,
+    version = process.versions.node,
+    setGlobalProxy = http.setGlobalProxyFromEnv,
+    spawn = spawnSync,
+    execArgv = process.execArgv,
+  } = {}
+) {
   const args = [...argv];
   let configFile = null;
   const at = args.indexOf('--config');
@@ -272,16 +440,42 @@ export async function main(argv, { cwd = process.cwd(), env = process.env, fetch
   }
 
   const provider = await import(`./tracker/${tracker.provider}.mjs`);
-  const client = provider.createClient({
-    // A provider with no key variable, the fixture, reads no key.
-    apiKey:
-      provider.KEY_VARIABLE === null
-        ? null
-        : resolveKey({ root, tracker, variable: provider.KEY_VARIABLE, env }),
-    root,
-    team: tracker.team,
-    ...(fetch ? { fetch } : {}),
-  });
+
+  // Only a provider that makes requests needs the proxy, and only once argv is sound
+  // and before a key command runs, so a second run repeats none of that.
+  const host = provider.ENDPOINT ? new URL(provider.ENDPOINT).hostname : null;
+  let route = host ? proxyRoute(host, env, version, execArgv) : 'none';
+  // A value of the flag already set is the owner's choice, or this is the second run.
+  // An empty one is no choice: Node reads it as unset.
+  if (route === 'off' && !env.NODE_USE_ENV_PROXY) {
+    if (!setGlobalProxy) return relaunch(argv, { env, execArgv, stdin, spawn });
+    setGlobalProxy(env);
+    route = 'on';
+  }
+
+  // A provider with no key variable, the fixture, reads no key.
+  const variable = provider.KEY_VARIABLE;
+  const found = variable === null ? null : findKey({ root, tracker, variable, env });
+  const client = explainUnauthorized(
+    provider.createClient({
+      apiKey: found?.key ?? null,
+      root,
+      team: tracker.team,
+      ...(fetch ? { fetch } : {}),
+    }),
+    // Only this side knows where the key came from and how the request left.
+    (error) => {
+      if (error?.status !== 401 || !found) return error;
+      // The proxy swaps only a key in the environment; one from a file or a command
+      // that does not look like a key is just a wrong key.
+      const placeholder = found.source === 'env' && provider.looksLikeKey?.(found.key) === false;
+      const { NAME: name } = provider;
+      const { source } = found;
+      return new TrackerError(
+        unauthorized({ name, variable, source, placeholder, route, host, version })
+      );
+    }
+  );
 
   switch (command) {
     case 'issue': {
@@ -343,7 +537,17 @@ export async function main(argv, { cwd = process.cwd(), env = process.env, fetch
 const self = realpathSync(fileURLToPath(import.meta.url));
 if (process.argv[1] && realpathSync(resolve(process.argv[1])) === self) {
   main(process.argv.slice(2))
-    .then((result) => process.stdout.write(`${JSON.stringify(result, null, 2)}\n`))
+    .then((result) => {
+      if (!(result instanceof Relaunched)) {
+        process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+      } else if (result.signal) {
+        // A signal Node ignores or handles here still leaves a failing status.
+        process.exitCode = 128 + (constants.signals[result.signal] ?? 0);
+        process.kill(process.pid, result.signal);
+      } else {
+        process.exitCode = result.status;
+      }
+    })
     .catch((error) => {
       process.stderr.write(`tracker: ${error?.message ?? error}\n`);
       process.exitCode = error instanceof TrackerError ? error.code : 1;
