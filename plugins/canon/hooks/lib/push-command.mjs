@@ -6,7 +6,7 @@
  *
  * It reads pushes through `invocations` in `merge-command.mjs`, the same reader the
  * merge guard uses, so a push hidden behind `bash -c`, `eval`, `timeout`, a path to
- * the binary, a heredoc fed to a shell or `echo ... | bash` is seen the way a merge
+ * the binary, a heredoc or echoed text piped into a shell is seen the way a merge
  * there is. An earlier version matched a pattern over `commandSkeleton`, which saw
  * none of those.
  *
