@@ -54,7 +54,9 @@ file that exists and differs, and writes nothing until each one is approved by n
      for the obvious equivalents (`Makefile` targets, `pyproject.toml`, `Cargo.toml`). A check
      the project does not have is `null`, never invented.
    - **Per-file formatter**: prettier in `devDependencies` gives
-     `["<pm>", "exec", "prettier", "--write", "--ignore-unknown"]` (`npx` for npm). Anything
+     `["<pm>", "exec", "prettier", "--write", "--ignore-unknown"]`; for npm,
+     `["npm", "exec", "--no", "--", "prettier", "--write", "--ignore-unknown"]`, which never
+     downloads a package that is not installed. Anything
      else is `null` unless the user names one.
    - **Branches**: `staging` and `main` if both exist; `develop` and `main`, or `dev` and `main`,
      likewise. Otherwise suggest `staging` and the repository's default branch.

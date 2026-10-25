@@ -11,7 +11,7 @@ allowed-tools:
   - Bash(git push -u origin HEAD)
   - Bash(git pull --ff-only)
   - Bash(git branch --show-current)
-  - Bash(git for-each-ref --format='%(refname:short)' refs/remotes/origin)
+  - Bash(git for-each-ref *)
   - Bash(git merge-base --is-ancestor *)
   - Bash(gh pr view *)
   - Bash(gh pr list *)
