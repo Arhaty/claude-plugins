@@ -335,7 +335,7 @@ function simpleCommands(command) {
     if (commands.at(-1).words.length === 0) return;
     const previous = commands.at(-1);
     commands.push(fresh());
-    // `echo ... | bash` runs what the left side prints, so the right side keeps
+    // A shell on the right of a pipe runs what the left side prints, so the right side keeps
     // a reference to the left.
     if (pipe) commands.at(-1).pipedFrom = previous;
   };
