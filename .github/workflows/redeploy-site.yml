@@ -1,0 +1,17 @@
+name: Redeploy arhaty.com
+on:
+  push:
+    branches: [main]
+    paths:
+      - .claude-plugin/marketplace.json
+      - plugins/*/.claude-plugin/plugin.json
+  workflow_dispatch:
+permissions: {}
+jobs:
+  redeploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Call the Vercel deploy hook
+        env:
+          HOOK: ${{ secrets.VERCEL_DEPLOY_HOOK }}
+        run: curl -fsS -X POST "$HOOK"
