@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.4](https://github.com/Arhaty/claude-plugins/compare/canon-v0.4.3...canon-v0.4.4) (2026-10-25)
+
+
+### Bug Fixes
+
+* clear canon's allowed-tools and download-and-run directory warnings ([#41](https://github.com/Arhaty/claude-plugins/issues/41)) ([d8b9339](https://github.com/Arhaty/claude-plugins/commit/d8b9339a953d5841410d9b846c7ab58c0c2ae3bf))
+
 ## [0.4.3](https://github.com/Arhaty/claude-plugins/compare/canon-v0.4.2...canon-v0.4.3) (2026-10-18)
 
 

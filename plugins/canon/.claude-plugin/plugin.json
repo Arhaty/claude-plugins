@@ -1,6 +1,6 @@
 {
   "name": "canon",
-  "version": "0.4.3",
+  "version": "0.4.4",
   "description": "A spec, build, review, canon workflow for Claude Code: specs plan the work, docs/canon records how the project works today, and hooks enforce the git rules.",
   "author": {
     "name": "Arhaty",
