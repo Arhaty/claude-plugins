@@ -144,6 +144,7 @@ describe('skills pre-approve only scoped tools', () => {
   // that would otherwise prompt on every diff.
   const READ_ONLY = [
     'git diff ',
+    'git for-each-ref ',
     'git log ',
     'git ls-tree ',
     'git ls-files ',
@@ -166,8 +167,6 @@ describe('skills pre-approve only scoped tools', () => {
     'git fetch --prune origin',
     'git fetch --quiet --prune origin',
     'git fetch origin',
-    "git for-each-ref --format='%(refname)' refs/remotes/origin",
-    "git for-each-ref --format='%(refname:short)' refs/remotes/origin",
     'git pull --ff-only',
     'git push -u origin HEAD',
     'sort -u',
@@ -188,6 +187,8 @@ describe('skills pre-approve only scoped tools', () => {
     if (bash) {
       const command = bash[1];
       if (command.includes('..')) return false;
+      // Claude Code ends the parenthesised part at the first `)`, so the rest of the grant is lost.
+      if (command.includes(')')) return false;
       // A second command chained after a granted prefix rides on its approval.
       if (/[;&|`$<>\n]/.test(command.replaceAll('${CLAUDE_PLUGIN_ROOT}', ''))) return false;
       if (EXACT.includes(command) || SAFE_WILDCARDS.includes(command)) return true;
@@ -261,6 +262,7 @@ describe('skills pre-approve only scoped tools', () => {
     'Bash(gh pr view *; gh pr merge --admin --squash)',
     'Bash(gh pr list * | sh)',
     'Bash(git ls-tree $(rm -rf .))',
+    "Bash(git for-each-ref --format='%(refname)' refs/remotes/origin)",
   ])('refuses %s', (grant) => {
     expect(scoped(grant), grant).toBe(false);
   });
