@@ -1,6 +1,6 @@
 {
   "name": "write",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Drafts and edits text for other readers in the project's voice, strips AI writing tells, and checks a draft for them.",
   "author": {
     "name": "Arhaty",
