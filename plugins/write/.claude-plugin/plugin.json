@@ -7,6 +7,7 @@
     "url": "https://github.com/arhaty"
   },
   "homepage": "https://github.com/arhaty/claude-plugins/tree/main/plugins/write",
+  "privacyPolicyUrl": "https://github.com/arhaty/claude-plugins/tree/main/plugins/write#privacy",
   "repository": "https://github.com/arhaty/claude-plugins",
   "license": "MIT",
   "keywords": [
