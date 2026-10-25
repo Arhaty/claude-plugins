@@ -138,11 +138,11 @@ as one argument and the command runs with no shell, so a path can't inject anyth
 It runs only a command you approved. `formatFile` comes from the repository, so a cloned project
 could name any program there, and any switch kept in the repository can be committed beside it.
 `/canon:setup` shows the command and asks; on a yes it records the approval in
-`~/.claude/canon/trusted.json`, outside every repository, keyed by the repository's git directory
-and the sha256 of the argv list. The hook runs only on an exact match. If the command changes,
-through a pull, a branch switch or an edit, the hook stays off until you re-run `/canon:setup` and
-approve the new one. Worktrees of one clone share its approval; another clone of the same project
-needs its own. Set `formatFile` to `null` to turn the hook off.
+`~/.claude/canon/trusted.json`, outside every repository: under the repository's git directory, it
+stores the argv list in full and its sha256. The hook runs only on an exact match. If the command
+changes, through a pull, a branch switch or an edit, the hook stays off until you re-run
+`/canon:setup` and approve the new one. Worktrees of one clone share its approval; another clone of
+the same project needs its own. Set `formatFile` to `null` to turn the hook off.
 
 ## Permissions
 
@@ -218,10 +218,11 @@ yours, and `/canon:setup` offers your team's real names:
    ignored by git; setup checks, and a `.env.local` the repository commits is never read.
 3. `tracker.apiKeyCommand`, a command that prints the key, such as
    `["op", "read", "op://Vault/Item/field"]`. It runs with no shell, from your home directory,
-   and only after you approve that exact command in `/canon:setup`, recorded outside the
-   repository like the formatter. The program is a name found on `PATH` or an absolute path, and
-   the command may not name the repository's own path anywhere: an approval covers the command
-   line, and anything the repository holds could change under it.
+   and only after you approve that exact command in `/canon:setup`. The approval stores the argv
+   list in full, in `~/.claude/canon/trusted.json` beside the formatter's. The program is a name
+   found on `PATH` or an absolute path, and the command may not name the repository's own path
+   anywhere: an approval covers the command line, and anything the repository holds could change
+   under it.
 
 The key is never printed, and an API error reports its HTTP status, not the response body. A 401
 names where the key was read from, so you know which one to change.
@@ -321,16 +322,25 @@ asks before writing.
 Canon has no server and no telemetry. What it stores stays on your machine or in your
 repository:
 
-- **Your name.** Setup reads `git config user.name` and saves it as the owner in
-  `.claude/canon.json`, which you commit with the project.
-- **Approvals.** An approved formatter or API key command is recorded in
-  `~/.claude/canon/trusted.json` as the repository's git directory and the command's sha256.
+- **The owner's name.** Setup offers `git config user.name` as the default and saves the name you
+  confirm in `.claude/canon.json`, which you commit with the project.
+- **Approvals.** An approved formatter or API key command is stored in full, in plain text, in
+  `~/.claude/canon/trusted.json`, as described in [The formatter](#the-formatter) and
+  [The API key](#the-api-key). Every argument is kept, such as a config path or a vault path.
+  Canon creates the file readable only by your user account (mode `0600`, in a `0700`
+  directory), so other users on the machine can't read it, but any program you run can.
 
-It sends data to two services, both under your own account:
+Canon itself sends data to two services, both under your own account:
 
 - **GitHub**, through your signed-in `gh` CLI: pull requests, checks, CI runs and merges.
 - **Linear**, only when you configure a tracker: issues, comments, statuses and labels, sent to
-  `api.linear.app` with your API key. Canon never prints the key or writes it anywhere.
+  `api.linear.app`. The key is the first of `LINEAR_API_KEY` in the environment, an uncommitted
+  `.env.local` at the project root, or an approved `tracker.apiKeyCommand`, so a key already set
+  in your shell for another project sends to that workspace. Canon never prints the key or writes
+  it anywhere.
+
+`.claude/canon.json` names its schema by URL on `raw.githubusercontent.com`, so an editor that
+validates JSON may fetch the schema from GitHub when you open the file.
 
 ## Uninstalling
 
