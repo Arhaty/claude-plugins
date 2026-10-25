@@ -3,7 +3,13 @@ name: setup
 description: Set up the write skill in this project: write .claude/write.json and a tone-of-voice guide from the plain, formal or casual preset, asking before changing any existing file
 argument-hint: (none)
 disable-model-invocation: true
-allowed-tools: Bash, Read, Write, Glob, Grep, AskUserQuestion
+allowed-tools:
+  - Bash(git rev-parse --show-toplevel)
+  - Bash(node "${CLAUDE_PLUGIN_ROOT}/scripts/scaffold.mjs" plan *)
+  - Read
+  - Grep
+  - Glob
+  - AskUserQuestion
 ---
 
 # Set up write in this project
@@ -20,11 +26,11 @@ file that exists and differs, and writes nothing until each one is approved by n
 1. **Find the project root and what is already there.**
 
    ```bash
-   git rev-parse --show-toplevel 2>/dev/null || pwd
-   ls .claude/write.json 2>/dev/null
+   git rev-parse --show-toplevel
    ```
 
-   If `.claude/write.json` exists, read it: its values are the defaults for every question
+   Outside a git repository, the root is the current directory. Read `.claude/write.json` at the
+   root. If it exists, its values are the defaults for every question
    below, and this run is a change, not a first setup.
 
    Look for a style guide the project already has: `Glob` for `**/*{style,voice,tone,writing}*.md`
