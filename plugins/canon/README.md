@@ -316,6 +316,22 @@ in CI.
 Re-run `/canon:setup` after an update that changes the templates. It shows what would change and
 asks before writing.
 
+## Privacy
+
+Canon has no server and no telemetry. What it stores stays on your machine or in your
+repository:
+
+- **Your name.** Setup reads `git config user.name` and saves it as the owner in
+  `.claude/canon.json`, which you commit with the project.
+- **Approvals.** An approved formatter or API key command is recorded in
+  `~/.claude/canon/trusted.json` as the repository's git directory and the command's sha256.
+
+It sends data to two services, both under your own account:
+
+- **GitHub**, through your signed-in `gh` CLI: pull requests, checks, CI runs and merges.
+- **Linear**, only when you configure a tracker: issues, comments, statuses and labels, sent to
+  `api.linear.app` with your API key. Canon never prints the key or writes it anywhere.
+
 ## Uninstalling
 
 ```text
