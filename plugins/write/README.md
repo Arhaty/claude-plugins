@@ -73,6 +73,16 @@ a verbless fragment, flat sentence rhythm, a punchline closing every paragraph. 
 pattern's number in the list. Every flag is a place to look, not a verdict. Code, blockquotes and
 text in double quotes are skipped.
 
+## Privacy
+
+Write has no server and no telemetry, and its scripts make no network calls. What it stores stays
+in your project: the three files setup writes, listed in
+[What setup asks and writes](#what-setup-asks-and-writes). The checker reads the draft you pass
+it and prints its flags; it writes nothing.
+
+When the guide in `.claude/write.json` is an `https://` URL, Claude fetches it with its own web
+tools each time the skill reads the guide, so the host serving the guide sees those requests.
+
 ## Limitations
 
 - **The pattern list and the checker are English only.** In another language the skill keeps its
