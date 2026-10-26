@@ -1,10 +1,10 @@
 # write
 
 A Claude Code skill for text someone other than you will read: emails, posts, docs, READMEs, site
-copy, reports and replies. It drafts in the project's voice, edits your drafts with the smallest
-change that works, and strips the patterns that make text read as machine-written. Ask it whether
-a draft "reads as AI" and it quotes each line that does, names the pattern and leaves the rewrite
-to you.
+copy, reports and replies. New drafts follow the project's style guide and leave out the patterns
+that make text read as machine-written. A draft of yours gets the smallest edit that fixes it. Ask
+whether a draft "reads as AI" and it quotes each line that does, with the pattern, and leaves the
+rewrite to you.
 
 It does not apply to Claude's replies to you in chat.
 
@@ -68,10 +68,11 @@ DOC   LOOK #38 3 paragraphs end on a short line (budget: 1)
 ```
 
 `HARD` is a pattern from Tier 1 or 2 of the [pattern list](skills/write/references/patterns.md),
-and the exit code is 1 when one fires. `WORD` is a listed word or phrase. `LOOK` is a candidate:
-a verbless fragment, flat sentence rhythm, a punchline closing every paragraph. `#n` is the
-pattern's number in the list. Every flag is a place to look, not a verdict. Code, blockquotes and
-text in double quotes are skipped.
+and the exit code is 1 when one fires. `WORD` is a listed word or phrase, such as a "your voice"
+claim or a rider like "before you see it". `LOOK` is a candidate: a verbless fragment, flat
+sentence rhythm, a punchline closing every paragraph, one sentence listing three or more features,
+or a phrase of four or more words used twice. `#n` is the pattern's number in the list. Every
+flag is a place to look, not a verdict. Code, blockquotes and text in double quotes are skipped.
 
 ## Privacy
 

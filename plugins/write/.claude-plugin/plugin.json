@@ -1,7 +1,7 @@
 {
   "name": "write",
   "version": "0.1.1",
-  "description": "Drafts and edits text for other readers in the project's voice, strips AI writing tells, and checks a draft for them.",
+  "description": "Writes and edits text for other readers to the project's style guide. Asked to check a draft, it quotes each line that reads as AI-written.",
   "author": {
     "name": "Arhaty",
     "url": "https://github.com/arhaty"
