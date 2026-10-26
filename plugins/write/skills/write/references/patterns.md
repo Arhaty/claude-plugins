@@ -129,6 +129,9 @@ approach"). Keep a source credit the reader can follow and a caveat that changes
 Cut the account of how the work was made. A previous version belongs only in changelogs and
 release notes.
 
+In product copy, internal scoring, thresholds and process steps are method narration. Say what the
+reader gets.
+
 ### 19. Explaining the obvious
 
 A sentence telling the reader what a number means when the number already said it. "That's a big
@@ -189,6 +192,52 @@ conclusion". Use "and", "but", "so", or nothing. The next thought is usually the
 open a section or stage the next sentence. State the answer. Keep a question only when the reader
 would ask it and the answer adds a fact. One real question at the end of a message ("Worth a short
 call?") is an ask, and fine.
+
+### 41. Feature-list sentence
+
+One sentence chains three or more capability verbs, often verb-first with no subject. It is the
+default shape of AI product copy, and every product could use it.
+
+> Bad: Drafts and edits text in your project's voice, then quotes each line that reads as
+> AI-written and names the pattern.
+>
+> Bad: Plan each change in a spec, build it behind a pull request, and update docs/canon/ in the
+> same pull request.
+>
+> Bad: It drafts in your project's voice, strips AI writing tells, and checks a draft against 40
+> named patterns.
+>
+> Bad: Write a spec, build it behind a pull request, keep docs/canon/ current, and let hooks guard
+> your branches.
+>
+> Bad: canon writes one spec per change, carries it through review, staging, and a release pull
+> request, keeps docs/canon/ current as the project's living documentation, and enforces the git
+> rules with hooks.
+>
+> Good: write checks a draft for AI writing tells and quotes each line that has one, with the
+> pattern it breaks. New drafts follow your project's style guide.
+>
+> Good: Each change starts as a spec and ships in a pull request that also updates docs/canon/.
+> Hooks refuse pushes and merges into your protected branches.
+
+In product, site and README copy, one or two verbs per sentence. Three or more capabilities go in
+a list or a table, never one sentence.
+
+Not a tell: a plain list of nouns ("emails, posts, docs, READMEs, and replies"), or a literal step
+in a numbered procedure ("Cuts a branch, researches, and writes docs/specs/NNN-slug.md").
+
+### 42. Reassurance rider
+
+A clause tacked on to soothe the reader that adds no fact: "before you see it", "before it reaches
+you", "before it hands anything back", "so you don't have to", "without lifting a finger", "in
+seconds", "with no extra work". The phrase-level form of manufactured warmth.
+
+> Bad: Claude writes a first draft, then rereads it for AI patterns and fixes them before you see
+> it.
+>
+> Good: Claude writes a first draft, then rereads it for AI patterns and fixes them.
+
+Cut the rider. If the timing is a real fact the reader needs, state it as one.
 
 ## Tier 3: weak alone, count when stacked
 
@@ -255,6 +304,15 @@ it's strongest, and use the space for a point that moves the argument.
 
 More than one in a piece.
 
+### 43. Repeated phrase
+
+The same distinctive phrase recurring across one piece, often once per section. One page used
+"before you see it" four times and "Claude never merges into production" three times. #39 is the
+same point twice; this is the same words twice.
+
+A phrase of four or more words, other than the product's name and its commands, appears at most
+once per piece. Say it where it is strongest, and use different words or nothing elsewhere.
+
 ## Vocabulary: cut or replace
 
 delve, leverage (verb), tapestry, landscape (abstract), vibrant, crucial, pivotal, robust, foster,
@@ -269,7 +327,10 @@ quietly (as color: "quietly reshaping").
 Phrases: at the heart of, in today's [world/landscape], in an era where, the intersection of,
 paving the way, it remains to be seen, move the needle, double down, lean into, circle back,
 low-hanging fruit, take it to the next level, unlock the full potential, the real question is, at
-its core.
+its core, in your voice, in your brand voice, in your project's voice, in your own words, sounds
+like you, sounds just like you (name where the voice comes from: "writes to your project's style
+guide"), before you see it, before it reaches you, before it hands anything back, so you don't
+have to, without lifting a finger, in seconds, with no extra work (riders, #42).
 
 Filler swaps: "in order to" is "to". "Due to the fact that" is "because". "It's important to note
 that" goes. "A number of" is the number.

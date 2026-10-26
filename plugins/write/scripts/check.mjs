@@ -25,6 +25,10 @@ import { fileURLToPath } from 'node:url';
 
 const APOS = "['’]";
 
+const escape = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const whole = (text, suffix = '') =>
+  new RegExp(`(?<![\\w-])${escape(text)}${suffix}(?![\\w-])`, 'gi');
+
 /** `[name, pattern number, regex]`. Case-insensitive unless the regex says otherwise. */
 const HARD = [
   ['dash', 7, /[—]|(?<!\d\s?)–|–(?!\s?\d)| -- /g],
@@ -160,6 +164,48 @@ const PHRASES = [
   'at scale',
 ];
 
+/**
+ * Phrases matched on lowercased text with straight apostrophes, as `[label, pattern, regex]`.
+ * The "your voice" claim fits every writing product; a rider soothes and adds no fact (#42).
+ */
+const CLAIMS = [
+  ['in your voice', null, /\bin your (?:own |brand |[\w-]+'s )?voice\b/g],
+  ['in your own words', null, /\bin your own words\b/g],
+  ['sounds like you', null, /\bsounds (?:just )?like you\b/g],
+  ...[
+    'before you see it',
+    'before it reaches you',
+    'before it hands anything back',
+    "so you don't have to",
+    'without lifting a finger',
+    'in seconds',
+    'with no extra work',
+  ].map((phrase) => [phrase, 42, whole(phrase)]),
+];
+
+/**
+ * Bare verbs that open an imperative chain ("Plan each change, build it, and update the docs").
+ * A sentence whose first word is one of these, capitalized, is read as a list of commands.
+ */
+const BARE_VERBS = new Set(
+  `add apply ask automate build carry catch check choose clean configure connect create cut deploy
+draft drop edit enforce export find fix follow generate get give guard help import install keep
+let load make manage merge move open pick plan publish push read record release remove replace
+report review run save scan schedule search see send set share ship show start stop store strip
+sync take test track try turn update use write`.split(/\s+/)
+);
+
+/** A modal before a bare verb: "can fix", "will run". */
+const MODAL = /^(can|will|could|may|might)$/;
+
+/** Words ending in -s that are never a third-person verb at the head of a clause. */
+const NOT_VERBS =
+  /^(is|was|has|does|this|its|his|hers|ours|yours|theirs|always|as|us|yes|thus|plus|perhaps|sometimes|towards|afterwards|whereas|series|news|means|lots)$/;
+
+/** A third-person -s verb, read from shape alone: lowercase, four letters or more, not -ss or -us. */
+const isVerbS = (word) =>
+  /^[a-z][a-z-]{2,}s$/.test(word) && !/(ss|us|is)$/.test(word) && !NOT_VERBS.test(word);
+
 const VERBISH = new RegExp(
   '\\b(is|are|was|were|be|been|am|has|have|had|do|does|did|can|could|will|would|should|may|might|must' +
     "|\\w+n't|\\w+'s|\\w+'re|\\w+'ll|\\w+'ve|\\w+'m|\\w+'d|\\w+ed|\\w+es)\\b" +
@@ -177,9 +223,6 @@ const VERBISH = new RegExp(
 const STRUCTURE =
   /^\s*(#|[-*+] |\d+\. |\||>)|^\s*(hi|hello|dear|hey|thanks|thank you|cheers|best)\b/i;
 
-const escape = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-const whole = (text, suffix = '') =>
-  new RegExp(`(?<![\\w-])${escape(text)}${suffix}(?![\\w-])`, 'gi');
 const VOCAB_RES = VOCAB.map((word) => [word, whole(word)]);
 // A phrase's last word may be inflected: "deep dives", "circled back" is not, "circle backs" is.
 const PHRASE_RES = PHRASES.map((phrase) => [phrase, whole(phrase, '(?:s|es|ed|ing)?')]);
@@ -268,6 +311,89 @@ const sentencesAt = (text) =>
   }));
 
 /**
+ * How many capability verbs `sentence` chains, if it reads as a feature list: three or more
+ * clauses joined by commas, "and" or "then", each opening on a verb, with at least two of the
+ * joins a comma, or four verb clauses however joined. A clause counts when it opens on a
+ * third-person -s verb or a modal ("can fix") with words after it, or a subject and one ("It
+ * drafts", "canon writes", "and it runs").
+ * A sentence opening on a capitalized bare verb is an imperative chain, and each clause opening
+ * on a bare verb counts. A lone -s word ("posts") is a noun in a list unless it opens the sentence.
+ * Returns 0 for anything else.
+ */
+export function featureVerbs(sentence) {
+  const parts = sentence
+    .replace(/[.!?]+$/, '')
+    .split(/(\s*[,;]\s*(?:and then|and|then|or)?\s+|\s+(?:and then|and|then)\s+)/);
+  const imperative = BARE_VERBS.has(parts[0].match(/^\W*([A-Z][a-z]+)/)?.[1]?.toLowerCase());
+  let verbs = 0;
+  let commas = 0;
+  for (let i = 0; i < parts.length; i += 2) {
+    const words = parts[i].match(/[\w'-]+/g) ?? [];
+    if (!words.length) continue;
+    const first = i === 0;
+    // Step past a pronoun subject ("and it runs") and an "also".
+    const subject = words.length > 1 && /^(it|they|we|you|he|she)$/i.test(words[0]);
+    let k = subject ? 1 : 0;
+    if (words[k] === 'also' && words.length > k + 1) k++;
+    const head = first && k === 0 ? words[0].toLowerCase() : words[k];
+    const verb =
+      (imperative && k === 0 && BARE_VERBS.has(head)) ||
+      (MODAL.test(head) && words.length > k + 1) ||
+      (isVerbS(head) && (words.length > k + 1 || first || subject)) ||
+      (first && k === 0 && words.length > 2 && (isVerbS(words[1]) || MODAL.test(words[1])));
+    if (!verb) continue;
+    verbs++;
+    if (i > 0 && parts[i - 1].includes(',')) commas++;
+  }
+  return verbs >= 4 || (verbs >= 3 && commas >= 2) ? verbs : 0;
+}
+
+/**
+ * Every phrase of four or more words that appears twice or more across `sentences`, longest
+ * first, each as `[phrase, count]`. A phrase inside a longer repeated one is not reported again.
+ */
+function repeatedPhrases(sentences) {
+  const tokens = sentences.map(
+    (s) =>
+      s
+        .toLowerCase()
+        .replace(/\u2019/g, "'")
+        .match(/[a-z0-9][\w'-]*/g) ?? []
+  );
+  const counts = new Map();
+  for (const words of tokens) {
+    for (let i = 0; i + 4 <= words.length; i++) {
+      const key = words.slice(i, i + 4).join(' ');
+      counts.set(key, (counts.get(key) ?? 0) + 1);
+    }
+  }
+  const found = new Map();
+  for (const words of tokens) {
+    let i = 0;
+    while (i + 4 <= words.length) {
+      if ((counts.get(words.slice(i, i + 4).join(' ')) ?? 0) < 2) {
+        i++;
+        continue;
+      }
+      let end = i + 4;
+      while (end < words.length && (counts.get(words.slice(end - 3, end + 1).join(' ')) ?? 0) >= 2)
+        end++;
+      const phrase = words.slice(i, end).join(' ');
+      found.set(phrase, (found.get(phrase) ?? 0) + 1);
+      i = end;
+    }
+  }
+  const phrases = [...found.keys()].sort((a, b) => b.length - a.length);
+  return phrases
+    .filter((p, j) => !phrases.slice(0, j).some((longer) => ` ${longer} `.includes(` ${p} `)))
+    .map((p) => {
+      const count = tokens.filter((words) => ` ${words.join(' ')} `.includes(` ${p} `)).length;
+      return [p, Math.max(count, found.get(p))];
+    })
+    .filter(([, count]) => count >= 2);
+}
+
+/**
  * Every flag for `text`, as `{ line, level, name, pattern, match }`. `line` is null
  * for a flag on the whole document; `pattern` is the number in patterns.md, or null.
  */
@@ -306,6 +432,9 @@ export function check(text) {
     for (const [phrase, re] of PHRASE_RES) {
       for (const m of low.matchAll(re)) found.push([m.index, 'WORD', 'phrase', null, phrase]);
     }
+    for (const [phrase, pattern, re] of CLAIMS) {
+      for (const m of low.matchAll(re)) found.push([m.index, 'WORD', 'phrase', pattern, phrase]);
+    }
     if (!block.structure) {
       for (const s of sentencesAt(prose)) {
         const words = s.text.match(/[\w'%$-]+/g) ?? [];
@@ -317,6 +446,10 @@ export function check(text) {
           !VERBISH.test(s.text)
         ) {
           found.push([s.index, 'LOOK', 'possible fragment', 20, s.text.replace(/\s+/g, ' ')]);
+        }
+        if (featureVerbs(s.text)) {
+          const clipped = s.text.replace(/\s+/g, ' ').replace(/^(.{60}).+$/, '$1...');
+          found.push([s.index, 'LOOK', 'feature-list sentence', 41, clipped]);
         }
       }
     }
@@ -344,6 +477,14 @@ export function check(text) {
 
   if (prose.split(/\s+/).length > 60 && !/\b\w+['\u2019](t|s|re|ll|ve|m|d)\b/.test(prose)) {
     flag(null, 'LOOK', 'no contractions anywhere (fine if the guide is formal)', null, null);
+  }
+
+  // Headings and table rows are labels; list items are prose here.
+  const running = all.filter((b) => !/^\s*(#|\|)/.test(b.lines[0].raw));
+  for (const [phrase, count] of repeatedPhrases(
+    running.flatMap((b) => sentencesAt(b.text).map((s) => s.text))
+  )) {
+    flag(null, 'LOOK', `repeated phrase (${count} times)`, 43, phrase);
   }
 
   const punchlines = paragraphs.filter((p) => {

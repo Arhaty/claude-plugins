@@ -150,10 +150,10 @@ describe('patterns.md agrees with the checker', () => {
     [...PATTERNS.matchAll(/^### (\d+)\. (.+)$/gm)].map((m) => [Number(m[1]), m[2]])
   );
 
-  it('numbers the patterns 1 to 40 with none missing', () => {
+  it('numbers the patterns 1 to 43 with none missing', () => {
     assert.deepEqual(
-      [...headings.keys()],
-      Array.from({ length: 40 }, (_, i) => i + 1)
+      [...headings.keys()].sort((a, b) => a - b),
+      Array.from({ length: 43 }, (_, i) => i + 1)
     );
   });
 
@@ -162,6 +162,9 @@ describe('patterns.md agrees with the checker', () => {
       'Honestly, it’s not just fast — it serves as a testament. Four weeks.',
       'Moreover, the data tells us. Pages 3–5! Done! She was involved in it.',
       "Let's dive in. What nobody tells you is this. I hope this helps.",
+      'It drafts in your voice, strips tells, and checks drafts before you see it.',
+      '',
+      'It ships before you see it.',
     ].join('\n');
     for (const flag of check(sample)) {
       if (flag.pattern !== null) assert.ok(headings.has(flag.pattern), format(flag));
@@ -324,4 +327,122 @@ describe('sentence openers', () => {
       assert.equal(hard(text).length, 1, names(hard(text)).join());
     });
   }
+});
+
+describe('product copy', () => {
+  const featureList = (text) => check(text).filter((f) => f.name === 'feature-list sentence');
+  const NEW = new Set([41, 42, 43]);
+  const fresh = (text) =>
+    check(text).filter((f) => NEW.has(f.pattern) || (f.name === 'phrase' && f.pattern === null));
+
+  for (const text of [
+    "Drafts and edits text in your project's voice, then quotes each line that reads as AI-written and names the pattern.",
+    'Plan each change in a spec, build it behind a pull request, and update docs/canon/ in the same pull request.',
+    "It drafts in your project's voice, strips AI writing tells, and checks a draft against 40 named patterns.",
+    'Write a spec, build it behind a pull request, keep docs/canon/ current, and let hooks guard your branches.',
+    "canon writes one spec per change, carries it through review, staging, and a release pull request, keeps docs/canon/ current as the project's living documentation, and enforces the git rules with hooks.",
+    'The skill drafts short, then reads its own draft back line by line, rewrites what sounds artificial, and scores it out of 50 on directness, rhythm, trust, authenticity, and density.',
+    'It reports each violation with its file, line and rule, can fix naming violations in place, and runs in CI as a single binary.',
+    'It drafts the reply, it checks the facts, and it sends the email.',
+  ]) {
+    it(`flags a feature-list sentence: ${text}`, () => {
+      assert.equal(featureList(text).length, 1);
+      assert.equal(featureList(text)[0].pattern, 41);
+    });
+  }
+
+  it('reports a feature-list sentence on the line where it starts', () => {
+    const text = 'It ships today.\nIt drafts in a plain voice, strips tells,\nand checks drafts.';
+    assert.deepEqual(
+      featureList(text).map((f) => f.line),
+      [2]
+    );
+  });
+
+  for (const text of [
+    "write checks a draft for AI writing tells and quotes each line that has one, with the pattern it breaks. New drafts follow your project's style guide.",
+    'Each change starts as a spec and ships in a pull request that also updates docs/canon/. Hooks refuse pushes and merges into your protected branches.',
+    'Claude writes a first draft, then rereads it for AI patterns and fixes them.',
+    'It can fix the naming violations in place, and it runs in CI as a single binary.',
+    'It can fix the naming violations in place, and it runs in CI as a single binary.',
+    'It covers emails, posts, docs, READMEs, and replies.',
+    'Emails, posts, docs, READMEs, and replies all count.',
+    '1. Cuts a branch, researches, and writes docs/specs/NNN-slug.md.',
+    '- Cuts a branch, researches, and writes docs/specs/NNN-slug.md.',
+  ]) {
+    it(`leaves it alone: ${text}`, () => assert.deepEqual(fresh(text), []));
+  }
+
+  for (const [text, phrase] of [
+    ["It drafts in your project's voice.", 'in your voice'],
+    ['It drafts in your brand voice.', 'in your voice'],
+    ['It drafts in your team’s voice.', 'in your voice'],
+    ['It writes in your own words.', 'in your own words'],
+    ['The reply sounds just like you.', 'sounds like you'],
+  ]) {
+    it(`flags the voice claim: ${text}`, () => {
+      assert.ok(check(text).some((f) => f.level === 'WORD' && f.match === phrase));
+    });
+  }
+
+  for (const phrase of [
+    'before you see it',
+    'before it reaches you',
+    'before it hands anything back',
+    "so you don't have to",
+    'without lifting a finger',
+    'in seconds',
+    'with no extra work',
+  ]) {
+    it(`flags the rider "${phrase}" with #42`, () => {
+      const flags = check(`Claude fixes the draft ${phrase}.`);
+      assert.ok(flags.some((f) => f.level === 'WORD' && f.pattern === 42 && f.match === phrase));
+    });
+  }
+
+  it('flags a rider in the Bad example and passes the Good one', () => {
+    const bad =
+      'Claude writes a first draft, then rereads it for AI patterns and fixes them before you see it.';
+    assert.deepEqual(
+      fresh(bad).map((f) => f.match),
+      ['before you see it']
+    );
+  });
+
+  it('flags a phrase repeated in two paragraphs, and the rider', () => {
+    const text =
+      'Claude writes a draft and fixes it before you see it.\n\nThe checker runs before you see it.';
+    const flags = check(text);
+    const repeated = flags.filter((f) => f.pattern === 43);
+    assert.equal(repeated.length, 1);
+    assert.equal(repeated[0].line, null);
+    assert.equal(repeated[0].match, 'before you see it');
+    assert.ok(flags.some((f) => f.level === 'WORD' && f.pattern === 42));
+  });
+
+  it('reports the longest repeated phrase once, with its count', () => {
+    const text = [
+      'Claude never merges into production on its own.',
+      'Hooks block the push. Claude never merges into production on its own.',
+      'Releases wait for you. Claude never merges into production on its own.',
+    ].join('\n\n');
+    const repeated = check(text).filter((f) => f.pattern === 43);
+    assert.deepEqual(
+      repeated.map((f) => [f.name, f.match]),
+      [['repeated phrase (3 times)', 'claude never merges into production on its own']]
+    );
+  });
+
+  it('ignores repeats in headings, code and quotes, and phrases of three words', () => {
+    const text = [
+      '## How the checker works',
+      'The checker works on drafts. Run `node check.mjs on a draft` here.',
+      'Avoid "how the checker works" and `node check.mjs on a draft` there.',
+      'It reads drafts. Then it reads drafts again.',
+    ].join('\n\n');
+    assert.deepEqual(
+      check(text).filter((f) => f.pattern === 43),
+      []
+    );
+  });
 });

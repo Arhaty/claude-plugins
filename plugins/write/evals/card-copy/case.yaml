@@ -1,0 +1,32 @@
+schema_version: '1.1'
+name: card-copy
+description: >-
+  A two-sentence card description for a developer tool runs the skill and comes back with no
+  feature-list sentence, no "your voice" claim and no reassurance rider.
+tags: [write, trigger, behaviour, product-copy]
+execution:
+  prompt: >-
+    Write the two-sentence description for the card on our plugin directory page. The tool is
+    lintkit, a command-line linter for Terraform. It reads a project's .lintkit.toml for the team's
+    naming and tagging rules, checks every .tf file against them, prints each violation with the
+    file, line and rule, and can fix the naming ones in place. It runs in CI as a single binary.
+  max_turns: 8
+  allowed_tools: [Read, Glob, Grep, Skill, Bash, Write]
+graders:
+  - name: skill-runs
+    type: tool_used
+    tool: Skill
+    input_match: '"skill"\s*:\s*"(?:write:)?write"'
+  - name: card-has-no-tells
+    type: llm
+    weight: 3
+    focus: last_message
+    criteria: >-
+      Judge only the card description, not Claude's message around it. PASS if it is two sentences,
+      names lintkit or Terraform, and none of its sentences chains three or more verbs or
+      capabilities (for example "reports each violation, can fix naming violations, and runs in
+      CI"). It must not claim to write "in your voice" or "sounds like you"; naming where the rules
+      come from, such as "your team's .lintkit.toml", is fine. It must not end a clause on a
+      reassurance rider such as "before you see it", "so you don't have to", "in seconds" or "with
+      no extra work", and must invent no feature, number or name the prompt did not give. FAIL
+      otherwise.
