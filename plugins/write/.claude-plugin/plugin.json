@@ -1,12 +1,13 @@
 {
   "name": "write",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Writes and edits text for other readers to the project's style guide. Asked to check a draft, it quotes each line that reads as AI-written.",
   "author": {
     "name": "Arhaty",
     "url": "https://github.com/arhaty"
   },
   "homepage": "https://github.com/arhaty/claude-plugins/tree/main/plugins/write",
+  "privacyPolicyUrl": "https://github.com/arhaty/claude-plugins/tree/main/plugins/write#privacy",
   "repository": "https://github.com/arhaty/claude-plugins",
   "license": "MIT",
   "keywords": [
