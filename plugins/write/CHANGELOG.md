@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.0](https://github.com/Arhaty/claude-plugins/compare/write-v0.1.1...write-v0.2.0) (2026-10-26)
+
+
+### Features
+
+* catch feature-list sentences and other product-copy tells in write ([#51](https://github.com/Arhaty/claude-plugins/issues/51)) ([6ba3150](https://github.com/Arhaty/claude-plugins/commit/6ba315021e7311f5ccd3a84ada3f1410fb3f36e7))
+
 ## [0.1.1](https://github.com/Arhaty/claude-plugins/compare/write-v0.1.0...write-v0.1.1) (2026-10-25)
 
 
