@@ -402,13 +402,48 @@ function writeTrust(trusted) {
 }
 
 /**
+ * The environment variable that approves a `formatFile` where no trust file can exist: a fresh
+ * cloud container. Its value is the command's digest, set in the cloud environment's own
+ * settings, outside the repository.
+ */
+export const TRUST_FORMAT_VARIABLE = 'CANON_TRUST_FORMAT_SHA256';
+
+/**
+ * Whether the project's own settings set `name` in their `env` block. Claude Code applies that
+ * block to the session, so a repository could approve its own command there: such a value is not
+ * an approval. Both files are read, the committed one and the local one, since nothing stops a
+ * repository committing the local one too. Unreadable counts as setting it.
+ */
+export function projectSetsEnv(root, name) {
+  for (const file of ['.claude/settings.json', '.claude/settings.local.json']) {
+    const path = join(root, file);
+    if (!existsSync(path)) continue;
+    try {
+      const env = JSON.parse(readFileSync(path, 'utf8'))?.env;
+      if (env !== null && typeof env === 'object' && name in env) return true;
+    } catch {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
  * Has the owner approved exactly this `formatFile` for this repository? Keyed by
  * `trustKey` and the command's digest, so a changed command, or the same command
- * in another clone, is not approved until setup asks again.
+ * in another clone, is not approved until setup asks again. Or, where there is no
+ * trust file, `CANON_TRUST_FORMAT_SHA256` in `env` names this command's digest, and
+ * the project's own settings do not set it.
  */
-export function isTrusted(root, argv) {
+export function isTrusted(root, argv, env = process.env) {
   const digest = entryFor(readTrust(), trustKey(root)).sha256;
-  return typeof digest === 'string' && digest === commandDigest(argv);
+  if (typeof digest === 'string' && digest === commandDigest(argv)) return true;
+  const approved = env[TRUST_FORMAT_VARIABLE];
+  return (
+    typeof approved === 'string' &&
+    approved.trim().toLowerCase() === commandDigest(argv) &&
+    !projectSetsEnv(root, TRUST_FORMAT_VARIABLE)
+  );
 }
 
 /**

@@ -180,6 +180,11 @@ file that exists and differs, and writes nothing until each one is approved by n
    node "${CLAUDE_PLUGIN_ROOT}/scripts/scaffold.mjs" trust --root <project root> --answers <file>
    ```
 
+   It prints the command's digest. Pass it on: for a Claude Code cloud environment, which never
+   has the trust file, setting `CANON_TRUST_FORMAT_SHA256` to it in the environment's own
+   settings approves the same command there. Never suggest setting it in the repository's
+   `.claude/settings.json`, which the hook ignores.
+
    Never run `trust` without that yes. A declined formatter stays in `.claude/canon.json` and
    never runs. An approved API key command is recorded the same way, on its own yes:
 

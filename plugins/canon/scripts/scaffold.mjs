@@ -53,6 +53,8 @@ import { fileURLToPath } from 'node:url';
 import {
   CONFIG_PATH,
   DOMAINS_PATH,
+  TRUST_FORMAT_VARIABLE,
+  commandDigest,
   keyCommandProblem,
   symlinkIn,
   trust,
@@ -320,7 +322,12 @@ function main(argv) {
       return 1;
     }
     trust(root, config.formatFile);
-    process.stdout.write(`trusted   ${JSON.stringify(config.formatFile)} for ${root}\n`);
+    process.stdout.write(
+      `trusted   ${JSON.stringify(config.formatFile)} for ${root}\n` +
+        `For a cloud environment, where this file does not exist, set\n` +
+        `${TRUST_FORMAT_VARIABLE}=${commandDigest(config.formatFile)}\n` +
+        "in the environment's own settings, never in the repository's.\n"
+    );
     return 0;
   }
 
