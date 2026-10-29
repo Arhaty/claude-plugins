@@ -46,6 +46,22 @@ describe('validate', () => {
     expect(validate(full)).toEqual([]);
   });
 
+  it('takes the project skills review runs, and refuses anything else', () => {
+    expect(validate({ ...valid(), review: { extraSkills: ['security', 'acme:perf'] } })).toEqual(
+      []
+    );
+    expect(validate({ ...valid(), review: {} })).toEqual([]);
+    expect(validate({ ...valid(), review: { extraSkills: 'security' } })).toEqual([
+      '`review.extraSkills` must be a list of skill names, e.g. ["security"]',
+    ]);
+    expect(validate({ ...valid(), review: { extraSkills: ['/security'] } })).toEqual([
+      '`review.extraSkills` must be a list of skill names, e.g. ["security"]',
+    ]);
+    expect(validate({ ...valid(), review: { skills: [] } })).toEqual([
+      '`review.skills` is not a known key',
+    ]);
+  });
+
   it.each([
     ['a non-object', () => [], /JSON object/],
     ['a wrong version', (c) => ({ ...c, version: 2 }), /version/],

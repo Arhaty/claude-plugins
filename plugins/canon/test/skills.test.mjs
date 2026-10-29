@@ -267,3 +267,14 @@ describe('skills pre-approve only scoped tools', () => {
     expect(scoped(grant), grant).toBe(false);
   });
 });
+
+describe("review runs the project's own checks", () => {
+  it('runs each extra skill on the same scope and folds its findings in under the same bar', () => {
+    const review = skill('review');
+    expect(review).toMatch(
+      /With `review\.extraSkills` in the config, run each one on the same scope/
+    );
+    expect(review).toMatch(/never a wider one/);
+    expect(review).toMatch(/under the bar above/);
+  });
+});

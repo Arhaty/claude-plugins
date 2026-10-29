@@ -284,6 +284,30 @@ also needs that workflow's success on the head, not only some check's.
 
 Leave the block out to only wait, which is right for CI that runs on every push.
 
+## Project extensions
+
+A project keeps its own commands, skills, rules and hooks beside the plugin's. Names that do not
+collide with the plugin's (`/security`, `/localhost`, `/write`) stay as they are, and so do label
+axes of its own beside the `domain-*` ones, such as `surface-*`: canon only adds and checks labels
+with `tracker.labelPrefix`.
+
+**Checks `/canon:review` runs too.** List the project's own review skills or commands in the
+config, and `/canon:review` runs each on the same scope and folds its findings into its report,
+under the same bar for what counts as a finding. `/canon:ship` reviews through `/canon:review`, so
+its rounds run them as well:
+
+```json
+"review": { "extraSkills": ["security", "performance"] }
+```
+
+A name the session has no skill or command for is reported in one line, and the review goes on.
+
+**Hooks.** The plugin's hooks run in every canon project. A hook the project keeps in its own
+`.claude/settings.json` that does the same job (`protect-branch`, `branch-notice`, `protect-push`,
+`protect-merge`, `require-canon`, `format-file`, `ci-watch`) runs as well, so the call is checked
+twice and a refusal can come from either. Delete the project's copy, or keep only hooks that do
+something the plugin does not, such as starting a dev server.
+
 ## Migrating an existing project
 
 If the project already has local copies of these commands and hooks (the setup this plugin was

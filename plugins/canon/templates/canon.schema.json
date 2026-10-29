@@ -183,6 +183,18 @@
         }
       }
     },
+    "review": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Optional. What a project adds to /canon:review, and so to /canon:ship's review rounds.",
+      "properties": {
+        "extraSkills": {
+          "type": "array",
+          "items": { "type": "string", "pattern": "^[A-Za-z0-9][\\w:.-]*$" },
+          "description": "The project's own skills or commands /canon:review runs on the same scope, e.g. [\"security\", \"performance\"], folding their findings into its report under the same bar. A name the session does not have is reported, never guessed at."
+        }
+      }
+    },
     "ci": {
       "type": "object",
       "additionalProperties": false,

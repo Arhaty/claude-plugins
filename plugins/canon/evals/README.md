@@ -12,6 +12,7 @@ Local only: they run Claude on your account and cost money, so CI does not run t
 | `define-stops-at-draft`      | `/canon:define` pushes a draft and stops: no approval, no pull request. |
 | `review-cites-spec`          | Review runs on a prose request and cites the spec and the canon rule.   |
 | `review-canon-paths`         | Checking paths against `docs/canon` runs review.                        |
+| `review-extra-skills`        | Review runs the project's own check from `review.extraSkills`.          |
 | `review-near-miss-bugs`      | A bug review of pasted code does not run canon's review.                |
 | `review-near-miss-prose`     | Reviewing a sentence for tone does not run review.                      |
 

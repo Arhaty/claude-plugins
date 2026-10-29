@@ -42,6 +42,7 @@ const TOP = [
   'formatFile',
   'urls',
   'tracker',
+  'review',
   'ci',
 ];
 const BRANCHES = ['integration', 'production', 'prefixes'];
@@ -164,7 +165,8 @@ export function validate(config) {
     ...unknownKeys(config.urls, URLS, 'urls.'),
     ...unknownKeys(config.tracker, TRACKER, 'tracker.'),
     ...unknownKeys(config.tracker?.statuses, ROLES, 'tracker.statuses.'),
-    ...unknownKeys(config.ci, CI, 'ci.')
+    ...unknownKeys(config.ci, CI, 'ci.'),
+    ...unknownKeys(config.review, ['extraSkills'], 'review.')
   );
   if (config.version !== 1) errors.push('`version` must be 1');
   if (!isText(config.owner)) errors.push('`owner` must be a non-empty string');
@@ -220,7 +222,24 @@ export function validate(config) {
 
   if ('tracker' in config) errors.push(...trackerErrors(config.tracker, isText));
   if ('ci' in config) errors.push(...ciErrors(config.ci));
+  if ('review' in config) errors.push(...reviewErrors(config.review));
   return errors;
+}
+
+/** Problems with the optional `review` block: the project's own skills review runs too. */
+function reviewErrors(review) {
+  if (!isObject(review)) return ['`review` must be an object, or left out'];
+  const skills = review.extraSkills;
+  if (
+    'extraSkills' in review &&
+    !(
+      Array.isArray(skills) &&
+      skills.every((name) => typeof name === 'string' && /^[A-Za-z0-9][\w:.-]*$/.test(name))
+    )
+  ) {
+    return ['`review.extraSkills` must be a list of skill names, e.g. ["security"]'];
+  }
+  return [];
 }
 
 /**

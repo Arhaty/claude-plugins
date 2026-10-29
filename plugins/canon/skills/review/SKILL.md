@@ -121,6 +121,15 @@ Then, against the diff only:
 - **Debug output left in committed code**, where the project's rules forbid it.
 - Anything a rule file that matches the diff names as checkable.
 
+## The project's own checks
+
+**With `review.extraSkills` in the config, run each one on the same scope**, after the checks
+above: invoke the skill or command by name (`/security`, say) with the scope you resolved, the
+branch's diff or the paths given, never a wider one. Each runs as the project wrote it. Fold what
+it finds into this report under the bar above, naming the skill in the finding (`security:`), and
+drop what does not clear the bar. A name the session has no skill or command for is one note, and
+the review carries on without it.
+
 ## Reporting
 
 **Report what is broken. Report nothing else.** No list of what passed, no account of what was
