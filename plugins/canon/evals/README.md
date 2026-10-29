@@ -10,6 +10,7 @@ Local only: they run Claude on your account and cost money, so CI does not run t
 | `define-near-miss-word`      | Defining a word does not run define.                                    |
 | `define-refuses-not-ready`   | With a tracker, define refuses an issue not in its ready status.        |
 | `define-stops-at-draft`      | `/canon:define` pushes a draft and stops: no approval, no pull request. |
+| `staging-remote-rest`        | In a cloud session, staging makes no `gh pr` or GraphQL call.           |
 | `review-cites-spec`          | Review runs on a prose request and cites the spec and the canon rule.   |
 | `review-canon-paths`         | Checking paths against `docs/canon` runs review.                        |
 | `review-near-miss-bugs`      | A bug review of pasted code does not run canon's review.                |
@@ -21,3 +22,12 @@ The cases with a `scaffold.sh` build a throwaway canon project in the eval works
 The tracker cases use the `fixture` provider, a tracker held in `.claude/tracker-fixture.json`, so
 they make no network call and need no key. An eval does not apply the scaffolded project's
 `.claude/settings.json` `env`, so a stub cannot be preloaded that way.
+
+`staging-remote-rest` needs `CLAUDE_CODE_REMOTE=true` in the shell that starts the eval: a case's
+`execution.env` takes only `EVAL_*` keys, and the eval child inherits `CLAUDE_CODE_*` settings.
+Run it on its own:
+
+```bash
+CLAUDE_CODE_REMOTE=true pnpm exec claude plugin eval plugins/canon --case staging-remote-rest \
+  --scaffold --allow-tools Bash Write Edit --ablation none
+```
