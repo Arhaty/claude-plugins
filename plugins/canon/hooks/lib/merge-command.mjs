@@ -867,7 +867,7 @@ const API_BODY = new Set(['-f', '--raw-field', '-F', '--field', '--input']);
  * reads one spelling of a merge and not another is the gap these hooks keep closing.
  */
 const API_MERGE =
-  /^(?:https?:\/\/[^/]+(?:\/api\/v3)?)?\/?(?:repos\/(?<owner>[^/]+)\/(?<repo>[^/]+)|repositories\/(?<id>\d+))\/pulls\/(?<number>\d+)\/(?<route>merge|ccr\/auto_merge)\/?(?:\?.*)?$/;
+  /^(?:https?:\/\/[^/]+(?:\/api\/v3)?)?\/?(?:repos\/(?<owner>[^/]+)\/(?<repo>[^/]+)|repositories\/(?<id>\d+))\/pulls\/(?<number>[^/?]+)\/(?<route>merge|ccr\/auto_merge)\/?(?:\?.*)?$/;
 
 /**
  * The methods that merge, per endpoint. A DELETE on `auto_merge` turns it off,
@@ -1151,8 +1151,9 @@ function mergeOf({ argv, env, appended }) {
     if (!path) return directWrite(endpoint, method, pairs);
     const { owner, repo, id, number, route } = path.groups;
     if (!MERGE_METHODS[route].includes(method)) return null;
-    // `repositories/<id>` names a repository by number, which `prDetails` cannot read.
-    if (id !== undefined) return { selector: null };
+    // `repositories/<id>` names a repository by number, which `prDetails` cannot read,
+    // and `pulls/$number/merge` a pull request whose number is not on the line.
+    if (id !== undefined || !/^\d+$/.test(number)) return { selector: null };
 
     // The placeholders, `{owner}` or the older `:owner`, mean the current
     // repository, unless `GH_REPO` says which.
@@ -1170,6 +1171,110 @@ function mergeOf({ argv, env, appended }) {
 /** Every merge the command runs, in order. Empty when it runs none. */
 export function mergeTargets(command) {
   return invocations(command).map(mergeOf).filter(Boolean);
+}
+
+/**
+ * The REST forms of `gh pr create`, `gh pr ready` and `gh pr merge`, which a Claude Code cloud
+ * session uses because its proxy refuses GraphQL: `POST pulls`, the proxy's
+ * `POST pulls/<n>/ccr/ready_for_review`, and `PUT pulls/<n>/merge`. The route and the methods
+ * that make each one.
+ */
+const API_PULLS =
+  /^(?:https?:\/\/[^/]+(?:\/api\/v3)?)?\/?repos\/(?<owner>[^/]+)\/(?<repo>[^/]+)\/pulls(?:\/(?<number>[^/?]+)\/(?<route>merge|ccr\/ready_for_review))?\/?(?:\?.*)?$/;
+const API_PR_ROUTES = {
+  create: { route: undefined, methods: ['POST'] },
+  ready: { route: 'ccr/ready_for_review', methods: ['POST'] },
+  merge: { route: 'merge', methods: ['PUT'] },
+};
+
+/** `{owner}/{repo}` and the older `:owner/:repo` are the checkout's repository. */
+const placeholderRepo = (owner, repo) =>
+  /^(?:\{owner\}|:owner)$/.test(owner) && /^(?:\{repo\}|:repo)$/.test(repo);
+
+/** The parsed `gh api` request: its endpoint, method and `-f`/`-F` fields. */
+function apiRequest(argv) {
+  const { positionals, flags, pairs } = parseArgs(argv.slice(2), API_VALUES);
+  const named = flags.get('--method') ?? flags.get('-X');
+  const sends = [...flags.keys()].some((flag) => API_BODY.has(flag)) ? 'POST' : 'GET';
+  const method = (typeof named === 'string' ? named : sends).toUpperCase();
+  return { endpoint: positionals[0] ?? '', method, fields: bodyFields(pairs) };
+}
+
+/**
+ * Every pull request call of the named kinds made through `gh api`, in the shape `prCalls`
+ * gives a `gh pr` one, so a hook judges both alike: `positionals` is the pull request (its
+ * number, or its URL when the path names a repository), and `create`'s `base` and `head`
+ * fields are its `--base` and `--head`. A field whose value is not on the line, such as
+ * `head="$branch"`, is left out, as an absent `--head` is the checked-out branch. `repo` is the
+ * `owner/repo` the path names, empty for the placeholders.
+ */
+export function apiPrCalls(command, subcommands) {
+  const found = [];
+  for (const { argv, env, appended, dirKnown } of invocations(command)) {
+    if (argv[0] !== 'gh' || argv[1] !== 'api') continue;
+    const { endpoint, method, fields } = apiRequest(argv);
+    const path = API_PULLS.exec(endpoint);
+    if (!path) continue;
+    const { owner, repo, number, route } = path.groups;
+    const subcommand = subcommands.find(
+      (name) => API_PR_ROUTES[name]?.route === route && API_PR_ROUTES[name].methods.includes(method)
+    );
+    if (subcommand === undefined) continue;
+
+    const own = placeholderRepo(owner, repo);
+    const pairs = [];
+    if (subcommand === 'create') {
+      for (const name of ['base', 'head']) {
+        const value = fields.filter(([key]) => key === name).at(-1)?.[1];
+        if (value !== undefined && !unreadable(value)) pairs.push([`--${name}`, value]);
+      }
+    }
+    const positionals =
+      number === undefined
+        ? []
+        : [
+            own || !/^\d+$/.test(number)
+              ? number
+              : `https://github.com/${owner}/${repo}/pull/${number}`,
+          ];
+    found.push({
+      subcommand,
+      positionals,
+      flags: new Map(pairs),
+      pairs,
+      env,
+      appended,
+      dirKnown,
+      repo: own ? '' : `${owner}/${repo}`,
+      api: true,
+    });
+  }
+  return found;
+}
+
+const API_DISPATCH =
+  /^(?:https?:\/\/[^/]+(?:\/api\/v3)?)?\/?repos\/(?<owner>[^/]+)\/(?<repo>[^/]+)\/actions\/workflows\/[^/?]+\/dispatches\/?(?:\?.*)?$/;
+
+/**
+ * Every `workflow_dispatch` the command starts through `gh api`: `{ ref, repo }`, with `ref` the
+ * branch it runs on, empty when its value is not on the line, and `repo` the `owner/repo` the
+ * path names, empty for the placeholders.
+ */
+export function dispatchCalls(command) {
+  const found = [];
+  for (const { argv } of invocations(command)) {
+    if (argv[0] !== 'gh' || argv[1] !== 'api') continue;
+    const { endpoint, method, fields } = apiRequest(argv);
+    const path = API_DISPATCH.exec(endpoint);
+    if (!path || method !== 'POST') continue;
+    const { owner, repo } = path.groups;
+    const ref = fields.filter(([key]) => key === 'ref').at(-1)?.[1];
+    found.push({
+      ref: ref === undefined || unreadable(ref) ? '' : bareBranch(ref),
+      repo: placeholderRepo(owner, repo) ? '' : `${owner}/${repo}`,
+    });
+  }
+  return found;
 }
 
 /**
@@ -1230,21 +1335,22 @@ const PR_FIELDS = '{baseRefName: .base.ref, number, url: .html_url}';
 /**
  * The REST read for a `gh pr merge` selector: a number, a URL, a branch, or
  * nothing for the current branch. A branch is looked up among open pull requests
- * by head, the way `gh pr view` picks one.
+ * by head, the way `gh pr view` picks one. `fields` is the jq that shapes one pull
+ * request; `ci-triggers.mjs` reads its head with it.
  */
-function prRead(selector) {
+export function prRead(selector, fields = PR_FIELDS) {
   const [target] = selector;
   const byHead = (head) => ({
     endpoint: `repos/{owner}/{repo}/pulls?head={owner}:${head}&state=open`,
-    jq: `.[0] // empty | ${PR_FIELDS}`,
+    jq: `.[0] // empty | ${fields}`,
   });
   if (target === undefined) return byHead('{branch}');
 
   const url = /^https:\/\/github\.com\/([^/]+)\/([^/]+)\/pull\/(\d+)/.exec(target);
-  if (url) return { endpoint: `repos/${url[1]}/${url[2]}/pulls/${url[3]}`, jq: PR_FIELDS };
+  if (url) return { endpoint: `repos/${url[1]}/${url[2]}/pulls/${url[3]}`, jq: fields };
 
   const number = /^#?(\d+)$/.exec(target);
-  if (number) return { endpoint: `repos/{owner}/{repo}/pulls/${number[1]}`, jq: PR_FIELDS };
+  if (number) return { endpoint: `repos/{owner}/{repo}/pulls/${number[1]}`, jq: fields };
 
   return byHead(encodeURIComponent(target));
 }
