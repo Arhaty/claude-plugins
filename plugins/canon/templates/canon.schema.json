@@ -24,6 +24,8 @@
       "type": "object",
       "additionalProperties": false,
       "required": ["integration", "production"],
+      "if": { "properties": { "naming": { "const": "tracker" } }, "required": ["naming"] },
+      "else": { "required": ["prefixes"] },
       "description": "The two protected branches, and how feature branches are named.",
       "properties": {
         "integration": {
