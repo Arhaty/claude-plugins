@@ -31,6 +31,8 @@ export const CONFIG_PATH = '.claude/canon.json';
 export const DOMAINS_PATH = '.claude/canon-domains.json';
 
 const COMMANDS = ['typecheck', 'lint', 'format', 'test'];
+/** Optional commands, which may be left out. */
+const OPTIONAL_COMMANDS = ['build'];
 const URLS = ['preview', 'staging', 'production'];
 const TOP = [
   '$schema',
@@ -46,7 +48,7 @@ const TOP = [
 ];
 const BRANCHES = ['integration', 'production', 'prefixes'];
 const TRACKER = ['provider', 'team', 'statuses', 'labelPrefix', 'apiKeyCommand'];
-const CI = ['workflow', 'baseInput'];
+const CI = ['workflow', 'baseInput', 'requiredCheck'];
 
 /**
  * The issue trackers a `tracker` block may name. One module each in `scripts/tracker/`.
@@ -160,7 +162,7 @@ export function validate(config) {
   errors.push(
     ...unknownKeys(config, TOP, ''),
     ...unknownKeys(config.branches, BRANCHES, 'branches.'),
-    ...unknownKeys(config.commands, COMMANDS, 'commands.'),
+    ...unknownKeys(config.commands, [...COMMANDS, ...OPTIONAL_COMMANDS], 'commands.'),
     ...unknownKeys(config.urls, URLS, 'urls.'),
     ...unknownKeys(config.tracker, TRACKER, 'tracker.'),
     ...unknownKeys(config.tracker?.statuses, ROLES, 'tracker.statuses.'),
@@ -194,6 +196,7 @@ export function validate(config) {
         errors.push(`\`commands.${name}\` must be a command string or null`);
       }
     }
+    if ('build' in commands) errors.push(...buildErrors(commands.build, isText));
   }
 
   const formatFile = config.formatFile;
@@ -224,6 +227,34 @@ export function validate(config) {
 }
 
 /**
+ * Problems with the optional `commands.build`: a command string or null like the others, or
+ * `{ command, env, requires }` for a build that needs environment variables CI sets, or a local
+ * service that may be missing.
+ */
+function buildErrors(build, isText) {
+  if (build === null || isText(build)) return [];
+  if (!isObject(build)) {
+    return ['`commands.build` must be a command string, null, or { command, env, requires }'];
+  }
+  const errors = unknownKeys(build, ['command', 'env', 'requires'], 'commands.build.');
+  if (!isText(build.command)) errors.push('`commands.build.command` must be a command string');
+  if ('env' in build) {
+    if (
+      !isObject(build.env) ||
+      !Object.entries(build.env).every(
+        ([name, value]) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(name) && typeof value === 'string'
+      )
+    ) {
+      errors.push('`commands.build.env` must map variable names to string values');
+    }
+  }
+  if ('requires' in build && !isText(build.requires)) {
+    errors.push('`commands.build.requires` must be a command string');
+  }
+  return errors;
+}
+
+/**
  * Problems with the optional `ci` block. Absent means `/canon:staging` only waits for
  * CI; set, it starts the workflow on a head commit nothing has run on.
  */
@@ -240,6 +271,9 @@ function ciErrors(ci) {
     !(typeof ci.baseInput === 'string' && /^[A-Za-z_][\w-]*$/.test(ci.baseInput))
   ) {
     errors.push('`ci.baseInput` must be the name of a workflow_dispatch input, or null');
+  }
+  if ('requiredCheck' in ci && !(typeof ci.requiredCheck === 'string' && ci.requiredCheck.trim())) {
+    errors.push('`ci.requiredCheck` must be the name of a check run, e.g. "Verify"');
   }
   return errors;
 }

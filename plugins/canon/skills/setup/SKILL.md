@@ -77,7 +77,9 @@ file that exists and differs, and writes nothing until each one is approved by n
      repositories are not supported in this version. If the user has only one branch, say so and
      offer to create the integration branch from it after setup.
    - **Package manager.**
-   - **Typecheck, lint, format-check and test commands**, each a command or none.
+   - **Typecheck, lint, format-check, test and build commands**, each a command or none. The
+     build defaults to none even when a `build` script exists: offer `<pm> build` as the second
+     option. Keep an existing `build` object (`command`, `env`, `requires`) as it is.
    - **Preview URL pattern** with `{branch}`, or none if feature branches get no preview. Also
      the staging and production URLs, or none.
    - **Branch prefixes**: default `feat`, `fix`, `chore`, `refactor`, `docs`.

@@ -70,6 +70,26 @@
         "test": {
           "type": ["string", "null"],
           "description": "e.g. \"pnpm test\"."
+        },
+        "build": {
+          "oneOf": [
+            { "type": ["string", "null"] },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["command"],
+              "properties": {
+                "command": { "type": "string", "minLength": 1 },
+                "env": {
+                  "type": "object",
+                  "propertyNames": { "pattern": "^[A-Za-z_][A-Za-z0-9_]*$" },
+                  "additionalProperties": { "type": "string" }
+                },
+                "requires": { "type": "string", "minLength": 1 }
+              }
+            }
+          ],
+          "description": "Optional, run last. A command string, e.g. \"pnpm build\", or { command, env, requires }: env is set for the build alone, copied from what CI sets; requires is a command that must exit 0 for the build to run locally, e.g. \"supabase status\", and when it fails the build is skipped and left to CI. references/gate.md in the plugin has the detail."
         }
       }
     },
@@ -193,6 +213,11 @@
           "type": "string",
           "pattern": "^[\\w.-]+\\.ya?ml$",
           "description": "The workflow's file name under .github/workflows/, e.g. \"ci.yml\". It must declare workflow_dispatch and be on the default branch, or GitHub refuses the dispatch."
+        },
+        "requiredCheck": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Optional. The name of the check run that must succeed on the head commit before /canon:staging merges, e.g. \"Verify\". A skipped or absent run of it is not a pass, and /canon:staging dispatches the workflow only when no run of it is queued, in progress or successful on the head."
         },
         "baseInput": {
           "type": ["string", "null"],

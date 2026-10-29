@@ -41,7 +41,7 @@ enforce the git rules around it.
 - the integration branch and the production branch
 - the branch prefixes (default `feat`, `fix`, `chore`, `refactor`, `docs`)
 - the package manager
-- the typecheck, lint, format-check and test commands, each one optional
+- the typecheck, lint, format-check, test and build commands, each one optional
 - a per-branch preview URL pattern with `{branch}`, and the staging and production URLs, each
   optional
 - a per-file formatter, and whether you approve running it
@@ -283,6 +283,26 @@ workflow must declare `workflow_dispatch` and be on the default branch. With a `
 also needs that workflow's success on the head, not only some check's.
 
 Leave the block out to only wait, which is right for CI that runs on every push.
+
+`ci.requiredCheck` names one check run, such as `"Verify"`, that must have succeeded on the head
+commit before `/canon:staging` merges. A skipped or absent run of it is not a pass, which matters
+for a workflow whose job skips itself on a draft. With it set, `/canon:staging` dispatches only
+when no run of that check is queued, running or green on the head, so a dispatch never runs it
+twice.
+
+## A build in the local gate
+
+`commands.build` is optional and runs last. Besides a command string it takes an object, for a
+build that needs the environment CI gives it, or a local service that may be missing:
+
+```json
+"build": { "command": "pnpm build", "env": { "SITE_URL": "https://staging.example.com" }, "requires": "supabase status" }
+```
+
+`env` is set for the build alone. When `requires` exits non-zero, as it does in a cloud session
+with no local database, the build is skipped and the hand-back says CI builds it instead; pair it
+with `ci.requiredCheck` naming the CI check that builds, so the merge still waits for a build.
+[references/gate.md](references/gate.md) has the rule the skills follow.
 
 ## Migrating an existing project
 
