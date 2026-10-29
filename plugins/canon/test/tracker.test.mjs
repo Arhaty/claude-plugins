@@ -61,6 +61,7 @@ describe('the Linear provider', () => {
   it('reads an issue, sending the key unprefixed', async () => {
     expect(await client.issue('abc-1')).toEqual({
       identifier: 'ABC-1',
+      branchName: 'abc-1-rate-limit-password-reset',
       title: 'Rate-limit password reset',
       description: 'Limit reset requests per account.',
       url: 'https://linear.app/example/issue/ABC-1',
@@ -843,7 +844,11 @@ describe('the fixture tracker', () => {
   });
 
   it('reads and moves an issue with no key and no network', async () => {
-    expect(await run(['issue', 'ABC-7'])).toMatchObject({ state: 'In Progress', role: 'building' });
+    expect(await run(['issue', 'ABC-7'])).toMatchObject({
+      state: 'In Progress',
+      role: 'building',
+      branchName: 'abc-7-rate-limit-resets',
+    });
     await run(['set-state', 'ABC-7', 'blocked']);
     expect(fixture().issues['ABC-7'].state).toBe('Blocked');
     await rejects(() => run(['set-state', 'ABC-7', 'production']), /Refusing to set production/);

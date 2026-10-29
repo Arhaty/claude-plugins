@@ -23,8 +23,8 @@
     "branches": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["integration", "production", "prefixes"],
-      "description": "The two protected branches, and the prefixes feature branches take.",
+      "required": ["integration", "production"],
+      "description": "The two protected branches, and how feature branches are named.",
       "properties": {
         "integration": {
           "type": "string",
@@ -40,7 +40,12 @@
           "type": "array",
           "minItems": 1,
           "items": { "type": "string", "pattern": "^[a-z0-9-]+$" },
-          "description": "Allowed feature branch prefixes, without the slash, e.g. [\"feat\", \"fix\", \"chore\", \"refactor\", \"docs\"]. A branch is <prefix>/<kebab-case-slug>."
+          "description": "Allowed feature branch prefixes, without the slash, e.g. [\"feat\", \"fix\", \"chore\", \"refactor\", \"docs\"]. A branch is <prefix>/<kebab-case-slug>. Required unless naming is \"tracker\"."
+        },
+        "naming": {
+          "enum": ["prefix", "tracker"],
+          "default": "prefix",
+          "description": "How a feature branch is named. \"prefix\": <prefix>/<slug>, or <prefix>/<id>-<slug> with a tracker. \"tracker\": the tracker issue's own branch name, verbatim, e.g. Linear's branchName \"abc-123-rate-limit-reset\"; it needs a tracker block, and every branch then starts from an issue."
         }
       }
     },

@@ -23,6 +23,7 @@ import { commandDigest, trustKey } from '../hooks/lib/config.mjs';
 import {
   CONFIG,
   HOOKS,
+  TRACKER,
   ROOT,
   afterEach,
   beforeEach,
@@ -813,6 +814,27 @@ describe('protect-branch and branch-notice', () => {
     } finally {
       rmSync(scratch, { recursive: true, force: true });
     }
+  });
+
+  it('shows a branch name in the configured form', () => {
+    repo.git('checkout', '-q', 'staging');
+    expect(edit(join(repo.dir, 'src/a.ts')).stderr).toMatch(
+      /git checkout -b feat\/short-description/
+    );
+    writeFileSync(
+      join(repo.dir, '.claude/canon.json'),
+      JSON.stringify({
+        ...CONFIG,
+        branches: { integration: 'staging', production: 'main', naming: 'tracker' },
+        tracker: TRACKER,
+      })
+    );
+    const refused = edit(join(repo.dir, 'src/a.ts'));
+    expect(refused.status).toBe(2);
+    expect(refused.stderr).toMatch(/tracker issue's own branch name, verbatim, e\.g\. `abc-123-/);
+    expect(refused.stderr).not.toMatch(/prefixes/);
+    const notice = run('branch-notice.mjs', { cwd: repo.dir }, 'exit 1', { project: repo.dir });
+    expect(notice.stdout).toMatch(/git checkout -b abc-123-short-description/);
   });
 
   it('says a protected branch is checked out, and nothing on a feature branch', () => {

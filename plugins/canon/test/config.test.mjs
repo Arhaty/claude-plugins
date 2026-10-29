@@ -46,6 +46,32 @@ describe('validate', () => {
     expect(validate(full)).toEqual([]);
   });
 
+  it('takes tracker naming, with or without prefixes, only beside a tracker', () => {
+    const named = { ...valid(), tracker: TRACKER };
+    named.branches = { integration: 'staging', production: 'main', naming: 'tracker' };
+    expect(validate(named)).toEqual([]);
+    named.branches.prefixes = ['feat'];
+    expect(validate(named)).toEqual([]);
+    named.branches.prefixes = [];
+    expect(validate(named)).toEqual([
+      '`branches.prefixes` must be a non-empty list of lowercase prefixes',
+    ]);
+    const alone = valid();
+    alone.branches = { integration: 'staging', production: 'main', naming: 'tracker' };
+    expect(validate(alone)).toEqual([
+      '`branches.naming` "tracker" needs a `tracker` block, whose issues name the branches',
+    ]);
+    const prefixed = valid();
+    prefixed.branches.naming = 'prefix';
+    expect(validate(prefixed)).toEqual([]);
+    delete prefixed.branches.prefixes;
+    expect(validate(prefixed)).toEqual([
+      '`branches.prefixes` must be a non-empty list of lowercase prefixes',
+    ]);
+    prefixed.branches = { ...valid().branches, naming: 'linear' };
+    expect(validate(prefixed)).toEqual(['`branches.naming` must be one of: prefix, tracker']);
+  });
+
   it.each([
     ['a non-object', () => [], /JSON object/],
     ['a wrong version', (c) => ({ ...c, version: 2 }), /version/],
