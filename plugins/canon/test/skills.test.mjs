@@ -14,7 +14,7 @@ describe('staging merges only on a success for the head commit', () => {
   const staging = skill('staging');
 
   it('reads every check run on the head SHA, not one that happens to have passed', () => {
-    expect(staging).toContain('sha=$(gh pr view <number> --json headRefOid -q .headRefOid)');
+    expect(staging).toContain('sha=$(gh api "repos/{owner}/{repo}/pulls/<number>" --jq .head.sha)');
     expect(staging).toContain('commits/$sha/check-runs');
     // A failing call prints nothing, which must not read as nothing having run.
     expect(staging).toContain(
@@ -42,7 +42,10 @@ describe('staging merges only on a success for the head commit', () => {
   });
 
   it('merges on the head CI verified', () => {
-    expect(staging).toContain('--match-head-commit "$sha"');
+    expect(staging).toContain(
+      'gh api -X PUT "repos/{owner}/{repo}/pulls/<number>/merge" \\\n  -f merge_method=merge -f sha="$sha"'
+    );
+    expect(staging).toMatch(/run step 6's check-run query on it once more first/);
   });
 });
 
@@ -60,8 +63,10 @@ describe('staging starts CI on a head nothing has run on, once', () => {
   });
 
   it('decides on dispatching before it watches the checks', () => {
-    expect(staging.indexOf('/dispatches')).toBeLessThan(staging.indexOf('gh pr checks <number>'));
-    expect(staging.indexOf('sha=$(gh pr view')).toBeLessThan(staging.indexOf('head_sha=$sha'));
+    expect(staging.indexOf('/dispatches')).toBeLessThan(
+      staging.indexOf('**Then wait for the checks**')
+    );
+    expect(staging.indexOf('sha=$(gh api')).toBeLessThan(staging.indexOf('head_sha=$sha'));
   });
 
   it("dispatches on the pull request's branch, with the base input when there is one", () => {
@@ -82,7 +87,7 @@ describe('staging starts CI on a head nothing has run on, once', () => {
   });
 
   it('decides on fresh reads of the queries, not the watch or the read before the dispatch', () => {
-    expect(staging).toMatch(/poll the two queries every 30 seconds instead/);
+    expect(staging).toMatch(/read the check-run query below every 30 seconds/);
     expect(staging).toMatch(/never from the read\s+before the dispatch/);
   });
 
@@ -102,6 +107,33 @@ describe('staging starts CI on a head nothing has run on, once', () => {
 
   it('still needs the configured workflow to succeed before it merges', () => {
     expect(staging).toMatch(/the configured workflow's\s+success is required too/);
+  });
+});
+
+describe('GitHub calls work in a cloud session, which refuses GraphQL', () => {
+  // `gh pr ready` is the one allowed, behind the cloud check: REST has no ready endpoint.
+  const GRAPHQL = /gh pr (create|view|edit|checks|merge|comment|list|reopen|close|diff)\b/;
+
+  it.each(['staging', 'build', 'ship', 'production'])('%s runs no gh pr call but ready', (name) => {
+    const code = [...skill(name).matchAll(/```bash\n([^]*?)```/g)].map((m) => m[1]).join('\n');
+    expect(code).not.toMatch(GRAPHQL);
+    expect(code).not.toMatch(/gh api graphql/);
+  });
+
+  it.each(['staging', 'build'])('%s marks ready through the proxy in the cloud', (name) => {
+    const text = skill(name);
+    expect(text).toContain('if [ "$CLAUDE_CODE_REMOTE" = true ]; then');
+    expect(text).toContain(
+      'gh api -X POST "repos/{owner}/{repo}/pulls/<number>/ccr/ready_for_review"'
+    );
+  });
+
+  it('deletes the branch after the merge unless the config says not to, and warns on a 403', () => {
+    const staging = skill('staging');
+    expect(staging).toContain('gh api -X DELETE "repos/{owner}/{repo}/git/refs/heads/<branch>"');
+    expect(staging).toMatch(/unless `branches\.deleteAfterMerge` is `false`/);
+    expect(staging).toMatch(/A failure here is a warning, never a failed merge/);
+    expect(staging).not.toContain('--delete-branch');
   });
 });
 
