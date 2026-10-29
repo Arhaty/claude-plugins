@@ -149,7 +149,8 @@ file that exists and differs, and writes nothing until each one is approved by n
    }
    ```
 
-   Leave `tracker` out entirely when the owner wants none, and `ci` likewise.
+   Leave `tracker` out entirely when the owner wants none, and `ci` likewise. `urls` may be left
+   out too, or any URL in it: left out means none.
 
    Write it outside the project (your scratchpad or `$TMPDIR`), then:
 
