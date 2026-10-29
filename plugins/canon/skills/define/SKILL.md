@@ -14,6 +14,10 @@ the project needs `/canon:setup`. Otherwise it prints the project's config. Belo
 `<integration>` and `<production>` mean its `owner`, `branches.integration` and
 `branches.production`, and `<prefixes>` its `branches.prefixes`.
 
+**If it has a `specs` block**, read `${CLAUDE_PLUGIN_ROOT}/references/specs.md` now. It says
+where the branch's spec is, whether its `**Status:**` line is required, when it is committed and
+how it is archived, and it overrides the steps below where they differ.
+
 **If it has a `tracker` block**, read `${CLAUDE_PLUGIN_ROOT}/references/tracker.md` now, then
 follow **With a tracker** below wherever a step names it.
 
@@ -192,7 +196,8 @@ for a new spec is a stop: ask for the issue.
      `Claude, recommended`.
    - **`## Still open`** is everything you could not close, or `None.`
 
-   **End every round with a commit and a push**, once the spec is written and the round's answers
+   **End every round with a commit and a push**, unless `specs.commitWhileDrafting` is `false`
+   (see `specs.md`), once the spec is written and the round's answers
    are folded in, and before you put the next questions. A draft with open questions is pushed
    too: the owner reads it from another session or on GitHub while answering. The first commit of
    a spec is `docs: draft spec NNN`; every later one, in this pass or a revision round, is

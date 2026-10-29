@@ -42,11 +42,13 @@ const TOP = [
   'formatFile',
   'urls',
   'tracker',
+  'specs',
   'ci',
 ];
 const BRANCHES = ['integration', 'production', 'prefixes'];
 const TRACKER = ['provider', 'team', 'statuses', 'labelPrefix', 'apiKeyCommand'];
 const CI = ['workflow', 'baseInput'];
+const SPECS = ['naming', 'archive', 'commitWhileDrafting'];
 
 /**
  * The issue trackers a `tracker` block may name. One module each in `scripts/tracker/`.
@@ -164,7 +166,8 @@ export function validate(config) {
     ...unknownKeys(config.urls, URLS, 'urls.'),
     ...unknownKeys(config.tracker, TRACKER, 'tracker.'),
     ...unknownKeys(config.tracker?.statuses, ROLES, 'tracker.statuses.'),
-    ...unknownKeys(config.ci, CI, 'ci.')
+    ...unknownKeys(config.ci, CI, 'ci.'),
+    ...unknownKeys(config.specs, SPECS, 'specs.')
   );
   if (config.version !== 1) errors.push('`version` must be 1');
   if (!isText(config.owner)) errors.push('`owner` must be a non-empty string');
@@ -220,6 +223,30 @@ export function validate(config) {
 
   if ('tracker' in config) errors.push(...trackerErrors(config.tracker, isText));
   if ('ci' in config) errors.push(...ciErrors(config.ci));
+  if ('specs' in config) errors.push(...specsErrors(config.specs, 'tracker' in config));
+  return errors;
+}
+
+/**
+ * Problems with the optional `specs` block. Absent means numbered specs, committed every round
+ * and archived in the repository.
+ */
+function specsErrors(specs, hasTracker) {
+  if (!isObject(specs)) return ['`specs` must be an object, or left out'];
+  const errors = [];
+  const oneOf = (key, values) => {
+    if (key in specs && !values.includes(specs[key])) {
+      errors.push(`\`specs.${key}\` must be one of: ${values.join(', ')}`);
+    }
+  };
+  oneOf('naming', ['number', 'branch']);
+  oneOf('archive', ['repo', 'tracker']);
+  if (specs.archive === 'tracker' && !hasTracker) {
+    errors.push('`specs.archive` "tracker" needs a `tracker` block to post the spec to');
+  }
+  if ('commitWhileDrafting' in specs && typeof specs.commitWhileDrafting !== 'boolean') {
+    errors.push('`specs.commitWhileDrafting` must be true or false, or left out');
+  }
   return errors;
 }
 

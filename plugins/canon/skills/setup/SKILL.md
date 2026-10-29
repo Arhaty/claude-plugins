@@ -149,7 +149,8 @@ file that exists and differs, and writes nothing until each one is approved by n
    }
    ```
 
-   Leave `tracker` out entirely when the owner wants none, and `ci` likewise.
+   Leave `tracker` out entirely when the owner wants none, and `ci` likewise. Setup does not ask
+   about `specs`: keep an existing config's block as it is, and leave it out otherwise.
 
    Write it outside the project (your scratchpad or `$TMPDIR`), then:
 

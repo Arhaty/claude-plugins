@@ -39,6 +39,10 @@ Run `node "${CLAUDE_PLUGIN_ROOT}/scripts/config.mjs"`. If it fails, stop and pas
 Below, `<owner>`, `<integration>` and `<production>` mean its `owner`, `branches.integration` and
 `branches.production`.
 
+**If it has a `specs` block**, read `${CLAUDE_PLUGIN_ROOT}/references/specs.md` now. It says
+where the branch's spec is, whether its `**Status:**` line is required, when it is committed and
+how it is archived, and it overrides the steps below where they differ.
+
 **If it has a `tracker` block**, read `${CLAUDE_PLUGIN_ROOT}/references/tracker.md` now. Approval
 is then the issue's status, not the spec line: the line still moves to `approved`, as a mirror,
 and the issue moves to `approved` after the push. `<ID>` below is the spec's `**Issue:**` line.
@@ -67,7 +71,7 @@ wrong and what would fix it.
   breath approves nothing. More than one is two concerns on one branch: name them and stop.
 
 - **The spec or anything in `docs/canon/` has changes no commit holds**, or the spec has no
-  commit at all: `git status --porcelain -- docs/specs/<NNN-slug>.md docs/canon` names them.
+  commit at all, unless `specs.commitWhileDrafting` is `false`, when that is expected: `git status --porcelain -- docs/specs/<NNN-slug>.md docs/canon` names them.
   `/canon:define` commits every round, the spec and any canon edit the owner asked for, so an
   uncommitted one is a correction that skipped it, or a draft from a define that never
   committed: either wants a `/canon:define NNN` round, which commits and pushes it, not an

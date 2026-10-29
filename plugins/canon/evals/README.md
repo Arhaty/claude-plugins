@@ -6,6 +6,7 @@ Local only: they run Claude on your account and cost money, so CI does not run t
 | Case                         | Checks                                                                  |
 | ---------------------------- | ----------------------------------------------------------------------- |
 | `build-refuses-not-approved` | With a tracker, build refuses an issue that is not approved.            |
+| `define-drafts-uncommitted`  | Specs named after the branch, left uncommitted while drafted.           |
 | `define-near-miss-spec`      | A spec asked for in prose does not run define, which is user-only.      |
 | `define-near-miss-word`      | Defining a word does not run define.                                    |
 | `define-refuses-not-ready`   | With a tracker, define refuses an issue not in its ready status.        |

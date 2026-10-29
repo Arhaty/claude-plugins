@@ -23,6 +23,10 @@ is what keeps this context small enough to run the whole loop.
 Run `node "${CLAUDE_PLUGIN_ROOT}/scripts/config.mjs"`. If it fails, stop and pass its message on.
 Below, `<owner>` and `<integration>` mean its `owner` and `branches.integration`.
 
+**If it has a `specs` block**, read `${CLAUDE_PLUGIN_ROOT}/references/specs.md` now. It says
+where the branch's spec is, whether its `**Status:**` line is required, when it is committed and
+how it is archived, and it overrides the steps below where they differ.
+
 **If it has a `tracker` block**, read `${CLAUDE_PLUGIN_ROOT}/references/tracker.md` now.
 `$ARGUMENTS` is then the issue's identifier, `<ID>` below.
 

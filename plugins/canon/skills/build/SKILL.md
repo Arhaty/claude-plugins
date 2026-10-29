@@ -20,6 +20,10 @@ Below, `<owner>`, `<integration>` and `<production>` mean its `owner`, `branches
 typecheck, lint, format, test. A null entry is a check the project does not have: say so where the
 gate is reported, never count it as a pass.
 
+**If it has a `specs` block**, read `${CLAUDE_PLUGIN_ROOT}/references/specs.md` now. It says
+where the branch's spec is, whether its `**Status:**` line is required, when it is committed and
+how it is archived, and it overrides the steps below where they differ.
+
 **If it has a `tracker` block**, read `${CLAUDE_PLUGIN_ROOT}/references/tracker.md` now.
 `$ARGUMENTS` is then the issue's identifier, `<ID>` below, and the issue's role is the gate, not
 the spec line.
