@@ -14,7 +14,9 @@ describe('staging merges only on a success for the head commit', () => {
   const staging = skill('staging');
 
   it('reads every check run on the head SHA, not one that happens to have passed', () => {
-    expect(staging).toContain('sha=$(gh api "repos/{owner}/{repo}/pulls/<number>" --jq .head.sha)');
+    expect(staging).toContain(
+      'sha=$(node "${CLAUDE_PLUGIN_ROOT}/scripts/gh-get.mjs" "repos/{owner}/{repo}/pulls/<number>" --jq .head.sha)'
+    );
     expect(staging).toContain('commits/$sha/check-runs');
     // A failing call prints nothing, which must not read as nothing having run.
     expect(staging).toContain(
@@ -54,7 +56,7 @@ describe('staging starts CI on a head nothing has run on, once', () => {
 
   it("reads the configured workflow's runs on the head SHA", () => {
     expect(staging).toContain(
-      'gh api --paginate "repos/{owner}/{repo}/actions/workflows/<workflow>/runs?head_sha=$sha&per_page=100"'
+      'node "${CLAUDE_PLUGIN_ROOT}/scripts/gh-get.mjs" --paginate "repos/{owner}/{repo}/actions/workflows/<workflow>/runs?head_sha=$sha&per_page=100"'
     );
     expect(staging).toContain(
       '--jq ".workflow_runs[] | $buckets") \\\n  && if [ -z "$runs" ]; then echo none; else sort <<<"$runs" | uniq -c; fi'
@@ -66,7 +68,7 @@ describe('staging starts CI on a head nothing has run on, once', () => {
     expect(staging.indexOf('/dispatches')).toBeLessThan(
       staging.indexOf('**Then wait for the checks**')
     );
-    expect(staging.indexOf('sha=$(gh api')).toBeLessThan(staging.indexOf('head_sha=$sha'));
+    expect(staging.indexOf('sha=$(node')).toBeLessThan(staging.indexOf('head_sha=$sha'));
   });
 
   it("dispatches on the pull request's branch, with the base input when there is one", () => {
@@ -111,8 +113,9 @@ describe('staging starts CI on a head nothing has run on, once', () => {
 });
 
 describe('GitHub calls work in a cloud session, which refuses GraphQL', () => {
-  // `gh pr ready` is the one allowed, behind the cloud check: REST has no ready endpoint.
-  const GRAPHQL = /gh pr (create|view|edit|checks|merge|comment|list|reopen|close|diff)\b/;
+  // Every `gh pr` subcommand but `ready` reads or writes through GraphQL. `ready` is the one
+  // allowed outside the cloud: REST has no ready endpoint.
+  const GRAPHQL = /gh pr (?!ready\b)[a-z]/;
 
   it.each(['staging', 'build', 'ship', 'production'])('%s runs no gh pr call but ready', (name) => {
     const code = [...skill(name).matchAll(/```bash\n([^]*?)```/g)].map((m) => m[1]).join('\n');
@@ -128,6 +131,13 @@ describe('GitHub calls work in a cloud session, which refuses GraphQL', () => {
     expect(text).toContain(
       'gh api -X POST "repos/{owner}/{repo}/pulls/<number>/ccr/ready_for_review"'
     );
+  });
+
+  it.each(['staging', 'production'])('%s reads GitHub through the GET-only script', (name) => {
+    const code = [...skill(name).matchAll(/```bash\n([^]*?)```/g)].map((m) => m[1]).join('\n');
+    // A `gh api` with no -X is a read, or a POST once a field is given: neither belongs here.
+    expect(code).not.toMatch(/gh api (?!-X )/);
+    expect(code).toContain('node "${CLAUDE_PLUGIN_ROOT}/scripts/gh-get.mjs" "repos/');
   });
 
   it('deletes the branch after the merge unless the config says not to, and warns on a 403', () => {
@@ -217,6 +227,7 @@ describe('skills pre-approve only scoped tools', () => {
   const SAFE_WILDCARDS = [
     'gh pr ready *',
     'node "${CLAUDE_PLUGIN_ROOT}/scripts/tracker.mjs" *',
+    'node "${CLAUDE_PLUGIN_ROOT}/scripts/gh-get.mjs" *',
     'node "${CLAUDE_PLUGIN_ROOT}/scripts/scaffold.mjs" plan *',
   ];
   const PLAIN_TOOLS = ['Read', 'Grep', 'Glob', 'AskUserQuestion'];

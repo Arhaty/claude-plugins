@@ -24,7 +24,7 @@ graders:
   - name: no-gh-pr
     type: tool_used
     tool: Bash
-    input_match: 'gh\s+pr\s+(create|view|edit|checks|merge|comment|list|ready|reopen)\b'
+    input_match: 'gh\s+pr\s+[a-z]'
     min: 0
     max: 0
     arm: with-only
@@ -38,7 +38,7 @@ graders:
   - name: uses-rest
     type: tool_used
     tool: Bash
-    input_match: 'gh\s+api\s+[^|;&]*repos/\{owner\}/\{repo\}/pulls'
+    input_match: '(gh\s+api|gh-get\.mjs"?)\s+[^|;&]*repos/\{owner\}/\{repo\}/pulls'
     min: 1
     arm: with-only
   - name: no-local-merge

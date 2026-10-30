@@ -155,7 +155,8 @@ unless every part of it is granted, so some of `/canon:approve`'s checks still a
 `git push -u origin HEAD` pushes the current branch, `gh pr ready` marks the branch's draft pull
 request ready for review (or back to draft), and the tracker script moves, labels and comments on
 Linear issues. Everything else asks, as it would without the plugin: commits,
-every `gh api` call (a grant on it would cover writes as well as reads), merges, the project's own checks, and any command Claude composes
+every `gh api` write (a grant on `gh api` would cover writes as well as reads, so staging and
+production read GitHub through the plugin's GET-only `gh-get.mjs` instead), merges, the project's own checks, and any command Claude composes
 itself. To run `/canon:ship` or `/canon:staging` unattended, add allow rules for those to your own
 settings or run in a permission mode that allows them.
 

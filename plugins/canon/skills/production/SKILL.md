@@ -6,6 +6,7 @@ disable-model-invocation: true
 allowed-tools:
   - Bash(node "${CLAUDE_PLUGIN_ROOT}/scripts/config.mjs")
   - Bash(node "${CLAUDE_PLUGIN_ROOT}/scripts/tracker.mjs" *)
+  - Bash(node "${CLAUDE_PLUGIN_ROOT}/scripts/gh-get.mjs" *)
   - Bash(git ls-tree *)
   - Bash(git fetch origin)
   - Bash(gh run list *)
@@ -104,10 +105,11 @@ body.
 
 **2. Open or update the release pull request.** No checkout needed: `head` does the work. Every
 GitHub call here is `gh api` REST, never `gh pr`: a Claude Code cloud session's GitHub proxy
-refuses the GraphQL `gh pr` uses.
+refuses the GraphQL `gh pr` uses. Reads go through `gh-get.mjs`, which runs `gh api` with GET
+and is pre-approved; writes stay `gh api -X`, which asks.
 
 ```bash
-gh api "repos/{owner}/{repo}/pulls?base=<production>&head={owner}:<integration>&state=open" \
+node "${CLAUDE_PLUGIN_ROOT}/scripts/gh-get.mjs" "repos/{owner}/{repo}/pulls?base=<production>&head={owner}:<integration>&state=open" \
   --jq '.[] | {number, url: .html_url}'
 ```
 
@@ -129,8 +131,8 @@ never deleted.
 unbounded watch:
 
 ```bash
-sha=$(gh api "repos/{owner}/{repo}/pulls/<number>" --jq .head.sha)
-gh api "repos/{owner}/{repo}/commits/$sha/check-runs" --jq '[.check_runs[]
+sha=$(node "${CLAUDE_PLUGIN_ROOT}/scripts/gh-get.mjs" "repos/{owner}/{repo}/pulls/<number>" --jq .head.sha)
+node "${CLAUDE_PLUGIN_ROOT}/scripts/gh-get.mjs" "repos/{owner}/{repo}/commits/$sha/check-runs" --jq '[.check_runs[]
   | select(.status == "completed" and (.conclusion | IN("success", "skipped", "neutral") | not))
   | {name, conclusion, url: .html_url}]'
 ```

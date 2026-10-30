@@ -6,6 +6,7 @@ disable-model-invocation: true
 allowed-tools:
   - Bash(node "${CLAUDE_PLUGIN_ROOT}/scripts/config.mjs")
   - Bash(node "${CLAUDE_PLUGIN_ROOT}/scripts/tracker.mjs" *)
+  - Bash(node "${CLAUDE_PLUGIN_ROOT}/scripts/gh-get.mjs" *)
   - Bash(git fetch --quiet --prune origin)
   - Bash(git fetch --prune origin)
   - Bash(git push -u origin HEAD)
@@ -58,6 +59,9 @@ proxy refuses GraphQL, and `gh pr create`, `view`, `edit`, `checks` and `merge` 
 one exception is marking ready in step 5, which has no REST endpoint outside the cloud. `{owner}`,
 `{repo}` and `{branch}` are filled in by `gh api` from the checkout.
 
+**Reads go through `gh-get.mjs`**, which runs `gh api` with GET and refuses anything else, so it
+is pre-approved and a poll never waits on a prompt. Writes stay `gh api -X`, which asks.
+
 ## Refuse to merge if
 
 Check all of these before merging, and stop at the first that fails.
@@ -93,8 +97,8 @@ Check all of these before merging, and stop at the first that fails.
 - **With a tracker, the pull request body does not close the issue**: no `Fixes <ID>` line, or
   the identifier sits beside a contributing word (`Part of`, `ref`, `related to`,
   `contributes to`, `towards`), which links the pull request and stops the merge moving the
-  issue. Read it with `gh api "repos/{owner}/{repo}/pulls/<number>" --jq .body`. This one is free
-  to fix and this command fixes it: rewrite the body with a `Fixes <ID>` line and no contributing
+  issue. Read it with `gh-get.mjs "repos/{owner}/{repo}/pulls/<number>" --jq .body`. This one
+  is free to fix and this command fixes it: rewrite the body with a `Fixes <ID>` line and no contributing
   word for `<ID>` (`gh api -X PATCH "repos/{owner}/{repo}/pulls/<number>" -F body=@<file>`),
   then carry on. After the merge it cannot be
   fixed: a merge event does not replay.
@@ -142,14 +146,14 @@ documented nowhere.
 
 ```bash
 git push -u origin HEAD
-gh api "repos/{owner}/{repo}/pulls?head={owner}:{branch}&state=open" --jq '.[].number'
+node "${CLAUDE_PLUGIN_ROOT}/scripts/gh-get.mjs" "repos/{owner}/{repo}/pulls?head={owner}:{branch}&state=open" --jq '.[].number'
 ```
 
 No number means none is open. Otherwise read it by that number, which the list does not carry
 `mergeable` for:
 
 ```bash
-gh api "repos/{owner}/{repo}/pulls/<number>" \
+node "${CLAUDE_PLUGIN_ROOT}/scripts/gh-get.mjs" "repos/{owner}/{repo}/pulls/<number>" \
   --jq '{state, draft, base: .base.ref, mergeable, mergeable_state, url: .html_url}'
 ```
 
@@ -182,7 +186,7 @@ for permission.
 run into:
 
 ```bash
-sha=$(gh api "repos/{owner}/{repo}/pulls/<number>" --jq .head.sha)
+sha=$(node "${CLAUDE_PLUGIN_ROOT}/scripts/gh-get.mjs" "repos/{owner}/{repo}/pulls/<number>" --jq .head.sha)
 buckets='if .status != "completed" or .conclusion == "action_required" then "pending"
   elif .conclusion == "success" then "success"
   elif (.conclusion | IN("skipped", "neutral", "cancelled", "stale")) then "ignored"
@@ -201,7 +205,7 @@ the merge commit step 1 pushed. Below, `<workflow>` and `<baseInput>` are `ci.wo
 `ci.baseInput`. Read the configured workflow's runs on the head:
 
 ```bash
-runs=$(gh api --paginate "repos/{owner}/{repo}/actions/workflows/<workflow>/runs?head_sha=$sha&per_page=100" \
+runs=$(node "${CLAUDE_PLUGIN_ROOT}/scripts/gh-get.mjs" --paginate "repos/{owner}/{repo}/actions/workflows/<workflow>/runs?head_sha=$sha&per_page=100" \
   --jq ".workflow_runs[] | $buckets") \
   && if [ -z "$runs" ]; then echo none; else sort <<<"$runs" | uniq -c; fi
 ```
@@ -221,7 +225,7 @@ answer as final. Otherwise one read is enough.
 - **Nothing else (`none`, or only `ignored`): dispatch, once for this head.**
 
 ```bash
-branch=$(gh api "repos/{owner}/{repo}/pulls/<number>" \
+branch=$(node "${CLAUDE_PLUGIN_ROOT}/scripts/gh-get.mjs" "repos/{owner}/{repo}/pulls/<number>" \
   --jq 'select(.head.repo.full_name == .base.repo.full_name) | .head.ref')
 gh api -X POST "repos/{owner}/{repo}/actions/workflows/<workflow>/dispatches" \
   -f ref="$branch" -f "inputs[<baseInput>]=<integration>"
@@ -246,9 +250,8 @@ workflow that diffs against the base to skip work: a dispatched run carries no
 After a dispatch, read the workflow query every 15 seconds until it shows the run. **Never
 dispatch a second time for the same head.** A minute with still no run on `$sha`:
 
-- **The head moved** (`gh api "repos/{owner}/{repo}/pulls/<number>" --jq .head.sha` no longer
-  gives `$sha`): the
-  dispatch ran on the new tip. That is step 7: go back to step 5.
+- **The head moved** (`gh-get.mjs "repos/{owner}/{repo}/pulls/<number>" --jq .head.sha` no
+  longer gives `$sha`): the dispatch ran on the new tip. That is step 7: go back to step 5.
 - **Otherwise the run failed to start:** say so and stop.
 
 **Then wait for the checks**: read the check-run query below every 30 seconds, and with a `ci`
@@ -261,7 +264,7 @@ that succeeded while the rest are still running or have failed. Read every check
 SHA:
 
 ```bash
-runs=$(gh api --paginate "repos/{owner}/{repo}/commits/$sha/check-runs?per_page=100" \
+runs=$(node "${CLAUDE_PLUGIN_ROOT}/scripts/gh-get.mjs" --paginate "repos/{owner}/{repo}/commits/$sha/check-runs?per_page=100" \
   --jq ".check_runs[] | $buckets") \
   && if [ -z "$runs" ]; then echo none; else sort <<<"$runs" | uniq -c; fi
 ```
@@ -283,7 +286,7 @@ that is no longer the head verify nothing.
 **8. Merge on the head CI verified.**
 
 ```bash
-sha=$(gh api "repos/{owner}/{repo}/pulls/<number>" --jq .head.sha)
+sha=$(node "${CLAUDE_PLUGIN_ROOT}/scripts/gh-get.mjs" "repos/{owner}/{repo}/pulls/<number>" --jq .head.sha)
 gh api -X PUT "repos/{owner}/{repo}/pulls/<number>/merge" \
   -f merge_method=merge -f sha="$sha" --jq .merged
 ```
