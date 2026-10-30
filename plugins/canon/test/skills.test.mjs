@@ -329,3 +329,25 @@ describe("review runs the project's own checks", () => {
     expect(review).toMatch(/under the bar above/);
   });
 });
+
+describe('the build step and the required check', () => {
+  const staging = skill('staging');
+  const gate = readFileSync(join(ROOT, 'references/gate.md'), 'utf8');
+
+  it('runs the build last, with its env, and skips it only when requires fails', () => {
+    expect(gate).toMatch(/typecheck, lint, format, test, build/);
+    expect(gate).toContain('env NAME=value ... <command>');
+    expect(gate).toMatch(/\*\*Exit 0: run the build\.\*\*/);
+    expect(gate).toMatch(/never skip it when there is no `requires`/);
+    expect(gate).toMatch(/A skipped build is not a pass/);
+    for (const name of ['build', 'staging', 'review']) {
+      expect(skill(name), name).toContain('${CLAUDE_PLUGIN_ROOT}/references/gate.md');
+    }
+  });
+
+  it('merges only on a success of the required check, and never dispatches it twice', () => {
+    expect(staging).toContain('commits/$sha/check-runs?check_name=<check>&per_page=100');
+    expect(staging).toMatch(/a `success` or `pending` run of `<check>` means do not\s+dispatch/);
+    expect(staging).toMatch(/A skipped or absent `<check>` is not\s+a pass/);
+  });
+});

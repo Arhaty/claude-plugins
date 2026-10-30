@@ -23,8 +23,8 @@ a pull request merges.
 
 Run `node "${CLAUDE_PLUGIN_ROOT}/scripts/config.mjs"`. If it fails, stop and pass its message on.
 Below, `<owner>` and `<integration>` mean its `owner` and `branches.integration`, and **the
-gate** is its non-null `commands`. With a `specs` block, `${CLAUDE_PLUGIN_ROOT}/references/specs.md`
-says where the branch's spec is.
+gate** is its non-null `commands`, run as `${CLAUDE_PLUGIN_ROOT}/references/gate.md` says. With a
+`specs` block, `${CLAUDE_PLUGIN_ROOT}/references/specs.md` says where the branch's spec is.
 
 ## The bar a finding has to clear
 

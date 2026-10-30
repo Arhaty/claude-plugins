@@ -17,8 +17,9 @@ not reopen the design; it means a question costs one reply instead of a failed r
 Run `node "${CLAUDE_PLUGIN_ROOT}/scripts/config.mjs"`. If it fails, stop and pass its message on.
 Below, `<owner>`, `<integration>` and `<production>` mean its `owner`, `branches.integration` and
 `branches.production`. **The gate** is every non-null entry of its `commands`, in the order
-typecheck, lint, format, test. A null entry is a check the project does not have: say so where the
-gate is reported, never count it as a pass.
+typecheck, lint, format, test, build. A null entry is a check the project does not have: say so
+where the gate is reported, never count it as a pass. With a `build` command, read
+`${CLAUDE_PLUGIN_ROOT}/references/gate.md` for how it runs and when it is skipped.
 
 **If it has a `specs` block**, read `${CLAUDE_PLUGIN_ROOT}/references/specs.md` now. It says
 where the branch's spec is, whether its `**Status:**` line is required, when it is committed and

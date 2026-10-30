@@ -39,7 +39,8 @@ branch is not production: a bad merge there costs a revert. It is exactly why
 
 Run `node "${CLAUDE_PLUGIN_ROOT}/scripts/config.mjs"`. If it fails, stop and pass its message on.
 Below, `<owner>`, `<integration>` and `<production>` mean its `owner`, `branches.integration` and
-`branches.production`; **the gate** is its non-null `commands`; `urls.preview` (with `{branch}`
+`branches.production`; **the gate** is its non-null `commands`, run as
+`${CLAUDE_PLUGIN_ROOT}/references/gate.md` says; `urls.preview` (with `{branch}`
 replaced) and `urls.staging` are where the work can be seen, when they are set. A `ci` block
 names the workflow step 6 starts when nothing has run on the head commit.
 
@@ -229,6 +230,19 @@ answer as final. Otherwise one read is enough.
   retry.
 - **Nothing else (`none`, or only `ignored`): dispatch, once for this head.**
 
+**With `ci.requiredCheck`, that check decides, not the workflow's runs.** `<check>` is its value,
+the name of a check run such as `Verify`. Read its runs on the head:
+
+```bash
+check=$(node "${CLAUDE_PLUGIN_ROOT}/scripts/gh-get.mjs" --paginate "repos/{owner}/{repo}/commits/$sha/check-runs?check_name=<check>&per_page=100" \
+  --jq ".check_runs[] | $buckets") \
+  && if [ -z "$check" ]; then echo none; else sort <<<"$check" | uniq -c; fi
+```
+
+The same three rules, on this query: a `success` or `pending` run of `<check>` means do not
+dispatch, since a dispatch would run it twice; a `failing` one is a fix on this branch; `none` or
+only `ignored`, such as the run a draft skipped, means dispatch once.
+
 ```bash
 branch=$(node "${CLAUDE_PLUGIN_ROOT}/scripts/gh-get.mjs" "repos/{owner}/{repo}/pulls/<number>" \
   --jq 'select(.head.repo.full_name == .base.repo.full_name) | .head.ref')
@@ -274,7 +288,10 @@ runs=$(node "${CLAUDE_PLUGIN_ROOT}/scripts/gh-get.mjs" --paginate "repos/{owner}
   && if [ -z "$runs" ]; then echo none; else sort <<<"$runs" | uniq -c; fi
 ```
 
-It passes only when at least one is `success`, none is `pending` and none is `failing`. An
+It passes only when at least one is `success`, none is `pending` and none is `failing`. **With
+`ci.requiredCheck`, it also needs a run of `<check>` on the head SHA whose conclusion is
+`success`**, from the check query, read again on every poll. A skipped or absent `<check>` is not
+a pass, however green everything else is. An
 `ignored` run is why a success is still required. **With a `ci` block, the configured workflow's
 success is required too**, read again from the workflow query on every poll, never from the read
 before the dispatch: a success from another app, a deploy preview or a scanner, does not show CI
