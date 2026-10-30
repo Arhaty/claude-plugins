@@ -889,6 +889,7 @@ const API_REFS = /^git\/refs\/?(?:\?.*)?$/;
 const API_CONTENTS = /^contents(?:\/|\?|$)/;
 const API_UPSTREAM = /^merge-upstream\/?(?:\?.*)?$/;
 const API_BRANCH = /^branches\/(.+?)(?:\/(?:protection|rename)(?:\/[^?]*)?)?\/?(?:\?.*)?$/;
+const API_PULLS_CREATE = /^pulls\/?(?:\?.*)?$/;
 
 /** `main`, `heads/main` and `refs/heads/main` name one branch. */
 const bareBranch = (ref) => ref.replace(/^(?:refs\/)?heads\//, '');
@@ -964,6 +965,10 @@ function directWrite(endpoint, method, pairs) {
   if (branch !== undefined) {
     return unreadable(branch) ? { branch: null } : { branch: decode(branch) };
   }
+
+  // Opening a pull request lands nothing: `/canon:production` opens the release one
+  // with `base` set to production, and its merge is judged when it comes.
+  if (API_PULLS_CREATE.test(rest) && method === 'POST') return null;
 
   const named = [
     ...rest.replace(/\?.*$/, '').split('/').filter(Boolean).map(decode),

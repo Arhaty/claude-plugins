@@ -189,6 +189,8 @@ describe('protect-merge', () => {
     for (const command of [
       'gh pr create --base main --head staging --title "release" --body "x"',
       'gh pr create -B main -H staging --fill',
+      'gh api -X POST "repos/{owner}/{repo}/pulls" -f base=main -f head=staging -f title="release: x" -F body=@f.md',
+      'gh api repos/o/r/pulls -f base=main -f head=staging -f title=release',
       'gh api repos/o/r/pulls',
       'gh api graphql -f query=query{viewer{login}}',
       'gh api graphql -f query=\'query($n: Int!) { repository(owner: "o", name: "r") { pullRequest(number: $n) { baseRefName } } }\' -F n=5',
