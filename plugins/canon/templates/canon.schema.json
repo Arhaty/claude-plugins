@@ -41,6 +41,11 @@
           "minItems": 1,
           "items": { "type": "string", "pattern": "^[a-z0-9-]+$" },
           "description": "Allowed feature branch prefixes, without the slash, e.g. [\"feat\", \"fix\", \"chore\", \"refactor\", \"docs\"]. A branch is <prefix>/<kebab-case-slug>."
+        },
+        "deleteAfterMerge": {
+          "type": "boolean",
+          "default": true,
+          "description": "Whether /canon:staging deletes the feature branch on GitHub after it merges. false leaves it for the project to delete, e.g. with a scheduled sweep: a Claude Code cloud session's GitHub proxy refuses a ref deletion with a 403, which /canon:staging reports as a warning."
         }
       }
     },

@@ -46,7 +46,7 @@ const TOP = [
   'tracker',
   'ci',
 ];
-const BRANCHES = ['integration', 'production', 'prefixes'];
+const BRANCHES = ['integration', 'production', 'prefixes', 'deleteAfterMerge'];
 const TRACKER = ['provider', 'team', 'statuses', 'labelPrefix', 'apiKeyCommand'];
 const CI = ['workflow', 'baseInput', 'requiredCheck'];
 
@@ -183,6 +183,9 @@ export function validate(config) {
     !branches.prefixes.every((p) => isText(p) && /^[a-z0-9-]+$/.test(p))
   ) {
     errors.push('`branches.prefixes` must be a non-empty list of lowercase prefixes');
+  }
+  if (branches.deleteAfterMerge !== undefined && typeof branches.deleteAfterMerge !== 'boolean') {
+    errors.push('`branches.deleteAfterMerge` must be true or false, or left out');
   }
 
   if (!isText(config.packageManager)) errors.push('`packageManager` must be a non-empty string');

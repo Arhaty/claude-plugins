@@ -1,8 +1,14 @@
 #!/usr/bin/env node
 /**
  * PreToolUse hook on Bash and on any MCP server's `merge_pull_request`. Blocks
- * `gh pr create`, `gh pr ready` and `gh pr merge`, and an MCP merge, when the pull
- * request changes code in a governed domain and updates no file in `docs/canon/`.
+ * `gh pr create`, `gh pr ready` and `gh pr merge`, their REST forms through `gh api`
+ * (`POST pulls`, `POST pulls/<n>/ccr/ready_for_review`, `PUT pulls/<n>/merge`), and an
+ * MCP merge, when the pull request changes code in a governed domain and updates no
+ * file in `docs/canon/`.
+ *
+ * The REST forms are what a Claude Code cloud session uses, since its GitHub proxy
+ * refuses the GraphQL behind `gh pr`. Both are read, and judged alike: the skills send
+ * the REST form, and a person still types `gh pr`.
  *
  * The canon changes in the same pull request as the code that depends on it. A
  * rule nothing checks is a rule the next reader trusts and the code has quietly
@@ -61,6 +67,13 @@ import { basename, join } from 'node:path';
 
 const allow = () => process.exit(0);
 
+/** How a refusal names each REST call. */
+const API_VERBS = {
+  create: '`gh api -X POST .../pulls`',
+  ready: '`gh api -X POST .../pulls/<n>/ccr/ready_for_review`',
+  merge: '`gh api -X PUT .../pulls/<n>/merge`',
+};
+
 const block = (message) => {
   console.error(message);
   process.exit(2);
@@ -69,7 +82,7 @@ const block = (message) => {
 if (process.env.ALLOW_UNDECIDED_MERGE === '1') allow();
 
 try {
-  const { mergesIn, prCalls, prDetails, prFiles, remaining } =
+  const { apiPrCalls, mergesIn, prCalls, prDetails, prFiles, remaining } =
     await import('./lib/merge-command.mjs');
   const { DOMAINS_PATH, canonical, configProblem, loadConfig, projectRoot, readPayload } =
     await import('./lib/config.mjs');
@@ -83,9 +96,11 @@ try {
   const MAP = join(ROOT, DOMAINS_PATH);
 
   const isMcpMerge = /^mcp__.+__merge_pull_request$/.test(payload?.tool_name ?? '');
-  const judged =
-    isMcpMerge || prCalls(payload?.tool_input?.command, ['create', 'ready', 'merge']).length > 0;
-  if (!judged) allow();
+  const JUDGED = ['create', 'ready', 'merge'];
+  const command = payload?.tool_input?.command;
+  // In the order they appear, `gh pr` and `gh api` alike.
+  const calls = isMcpMerge ? [] : [...prCalls(command, JUDGED), ...apiPrCalls(command, JUDGED)];
+  if (!isMcpMerge && calls.length === 0) allow();
   if (state.status !== 'ok') block(configProblem(state, 'require-canon.mjs'));
   if (!existsSync(MAP)) {
     block(
@@ -145,8 +160,6 @@ try {
   // Any of the three is enough to ask the question; which one it was only affects the
   // wording of the refusal. Reading them all matters for the same reason it does in
   // `protect-merge.mjs`: one Bash call can hold more than one.
-  const calls = prCalls(payload?.tool_input?.command, ['create', 'ready', 'merge']);
-  if (calls.length === 0) allow();
 
   // A git failure is an unreadable diff, not a crash: it fails open, per the header.
   const git = (dir, ...args) => {
@@ -172,14 +185,14 @@ try {
     // After a `cd` in the same call, nothing says which repository or branch the call
     // acts on, and judging the session's own checkout instead can wave it through: a
     // session on the integration branch is never judged by diff. Refused, with the fix.
-    if (!call.dirKnown) block(movedRefusal(call));
+    const verb = call.api ? API_VERBS[call.subcommand] : `\`gh pr ${call.subcommand}\``;
+    if (!call.dirKnown) block(movedRefusal(verb));
     const dir = DIR;
     // Run from another repository's checkout, the call is about that repository.
     if (elsewhere(dir)) continue;
     const current = git(dir, 'rev-parse', '--abbrev-ref', 'HEAD')?.trim() ?? null;
     const protectedBranch = current === integration || current === production;
 
-    const verb = `\`gh pr ${call.subcommand}\``;
     const [selector] = call.positionals;
     const refused =
       call.subcommand !== 'create' && (selector !== undefined || protectedBranch)
@@ -190,10 +203,10 @@ try {
 
   allow();
 
-  /** The refusal for a `gh pr` call that follows a `cd` in the same command. */
-  function movedRefusal(call) {
+  /** The refusal for a `gh pr` call, or its REST form, that follows a `cd` in the same command. */
+  function movedRefusal(verb) {
     return (
-      `Refusing \`gh pr ${call.subcommand}\`: it follows a \`cd\` in the same command, so this ` +
+      `Refusing ${verb}: it follows a \`cd\` in the same command, so this ` +
       'hook cannot tell which repository or branch it acts on, or whether that change needs ' +
       'a canon update.\n\n' +
       'Run the `cd` on its own first, then the `gh` command in its own call: the shell keeps ' +
@@ -210,6 +223,9 @@ try {
    */
   function fromCall(call, verb, dir) {
     if (call.flags.has('--repo') || call.flags.has('-R')) return null;
+    // The REST path names its repository, and the selector is then the pull request's URL,
+    // which reads the right one.
+    if (call.api && call.repo && !/^https:/.test(call.positionals[0] ?? '')) return null;
     if (call.env.GH_REPO !== undefined || call.appended) return null;
     return fromPullRequest(call.positionals.slice(0, 1), `Refusing ${verb}`, dir);
   }
