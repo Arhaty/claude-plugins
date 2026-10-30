@@ -80,7 +80,8 @@ wrong and what would fix it.
   `in-progress` or later is past this command. A missing status line wants a `/canon:define`
   pass.
 - **With a tracker: the spec has no `**Issue:**` line, the branch name does not contain the
-  identifier in lowercase, or the issue's role is not `spec`.** Read it with `issue <ID>`.
+  identifier in lowercase (with `branches.naming` set to `tracker`: is not the issue's
+  `branchName`), or the issue's role is not `spec`.** Read it with `issue <ID>`.
   `approved` is already approved: change nothing. `ready` means `/canon:define` never ran on it;
   `building` or later is past this command.
 - **`## Still open` holds anything but `None.`** Say what is open.

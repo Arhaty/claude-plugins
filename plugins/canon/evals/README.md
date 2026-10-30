@@ -10,6 +10,7 @@ Local only: they run Claude on your account and cost money, so CI does not run t
 | `define-near-miss-spec`      | A spec asked for in prose does not run define, which is user-only.      |
 | `define-near-miss-word`      | Defining a word does not run define.                                    |
 | `define-refuses-not-ready`   | With a tracker, define refuses an issue not in its ready status.        |
+| `define-tracker-branch-name` | With tracker naming, define cuts the issue's own branch name.           |
 | `define-stops-at-draft`      | `/canon:define` pushes a draft and stops: no approval, no pull request. |
 | `staging-remote-rest`        | In a cloud session, staging makes no `gh pr` or GraphQL call.           |
 | `review-cites-spec`          | Review runs on a prose request and cites the spec and the canon rule.   |

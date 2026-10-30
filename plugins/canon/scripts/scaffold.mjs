@@ -89,7 +89,10 @@ export function placeholders(config) {
     owner: config.owner,
     integration: config.branches.integration,
     production: config.branches.production,
-    prefixes: config.branches.prefixes.map((p) => code(`${p}/`)).join(', '),
+    branchNames:
+      config.branches.naming === 'tracker'
+        ? "the tracker issue's own branch name, verbatim"
+        : `${config.branches.prefixes.map((p) => code(`${p}/`)).join(', ')} followed by a kebab-case description`,
     checks: checks.length ? checks.map(code).join(', ') : 'none configured in `.claude/canon.json`',
     tracker: config.tracker ? trackerSection(config) : '',
   };
@@ -100,7 +103,7 @@ export function placeholders(config) {
  * Kept here rather than in the template so a project without a tracker gets no
  * trace of one.
  */
-function trackerSection({ tracker, owner }) {
+function trackerSection({ tracker, owner, branches }) {
   const name = { linear: 'Linear' }[tracker.provider] ?? tracker.provider;
   const status = (role) => `\`${tracker.statuses[role]}\``;
   return [
@@ -112,7 +115,9 @@ function trackerSection({ tracker, owner }) {
     `when they need ${owner}. ${name}'s GitHub integration sets ${status('staging')} and ${status('production')}`,
     "when the pull requests merge, never by hand. The spec's `**Status:**` line mirrors the issue.",
     '',
-    `- Branches are \`<prefix>/${tracker.team.toLowerCase()}-123-<slug>\`. Commit bodies carry`,
+    branches.naming === 'tracker'
+      ? `- Branches are the issue's own branch name, verbatim, e.g. \`${tracker.team.toLowerCase()}-123-<slug>\`. Commit bodies carry`
+      : `- Branches are \`<prefix>/${tracker.team.toLowerCase()}-123-<slug>\`. Commit bodies carry`,
     `  \`Part of ${tracker.team}-123\`; the pull request body carries \`Fixes ${tracker.team}-123\`,`,
     '  which is what moves the issue on merge.',
     `- A ${status('blocked')} issue has its question in a comment starting \`canon: blocked\`.`,
