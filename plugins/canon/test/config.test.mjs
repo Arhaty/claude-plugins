@@ -13,9 +13,11 @@ import {
   trustFile,
   trustKey,
   validate,
+  withDefaults,
 } from '../hooks/lib/config.mjs';
 import {
   CONFIG,
+  ROOT,
   TRACKER,
   describe,
   expect,
@@ -44,6 +46,43 @@ describe('validate', () => {
       production: 'https://example.com',
     };
     expect(validate(full)).toEqual([]);
+  });
+
+  it('takes urls left out, whole or in part, as null', () => {
+    const none = valid();
+    delete none.urls;
+    expect(validate(none)).toEqual([]);
+    expect(withDefaults(none).urls).toEqual({ preview: null, staging: null, production: null });
+    const some = { ...valid(), urls: { staging: 'https://s.example.com' } };
+    expect(validate(some)).toEqual([]);
+    expect(withDefaults(some).urls).toEqual({
+      preview: null,
+      staging: 'https://s.example.com',
+      production: null,
+    });
+    expect(validate({ ...valid(), urls: null })).toEqual(['`urls` must be an object, or left out']);
+    expect(validate({ ...valid(), urls: { staging: 3 } })).toEqual([
+      '`urls.staging` must be a URL string or null',
+    ]);
+  });
+
+  it('prints the config for the skills with what a left-out setting means', () => {
+    const config = valid();
+    delete config.urls;
+    const project = makeProject({ config });
+    try {
+      const printed = spawnSync(process.execPath, [join(ROOT, 'scripts/config.mjs'), project], {
+        encoding: 'utf8',
+      });
+      expect(printed.status, printed.stderr).toBe(0);
+      expect(JSON.parse(printed.stdout).urls).toEqual({
+        preview: null,
+        staging: null,
+        production: null,
+      });
+    } finally {
+      rmSync(project, { recursive: true, force: true });
+    }
   });
 
   it('takes deleteAfterMerge either way, and leaves it out by default', () => {
