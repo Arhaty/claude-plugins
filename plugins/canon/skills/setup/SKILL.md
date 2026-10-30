@@ -149,10 +149,10 @@ file that exists and differs, and writes nothing until each one is approved by n
    }
    ```
 
-   Leave `tracker` out entirely when the owner wants none, and `ci` likewise. Keep every other
-   key an existing config has, such as `branches.deleteAfterMerge` or the `specs` block, as it
-   is: setup does not ask about them, and dropping one changes what the skills do. With no
-   `specs` block, leave it out.
+   Leave `tracker` out entirely when the owner wants none, and `ci` likewise. `urls` may be left
+   out too, or any URL in it: left out means none. Keep every other key an existing config has,
+   such as `branches.deleteAfterMerge` or the `specs` block, as it is: setup does not ask about
+   them, and dropping one changes what the skills do. With no `specs` block, leave it out.
 
    Write it outside the project (your scratchpad or `$TMPDIR`), then:
 
