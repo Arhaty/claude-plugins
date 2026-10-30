@@ -20,7 +20,8 @@ enforce the git rules around it.
 - macOS or Linux (see [Limitations](#limitations)).
 - Node 20 or later. The hooks and scripts use only Node built-ins; nothing is installed.
 - The GitHub CLI, `gh`, authenticated. The build, staging and production steps open, read and
-  merge pull requests through it.
+  merge pull requests through its REST calls, `gh api`, so they also run in a Claude Code cloud
+  session. See [Cloud sessions](#cloud-sessions).
 - A git repository with two long-lived branches: an integration branch (for example `staging`)
   and a production branch (for example `main`). See [Limitations](#limitations).
 
@@ -107,15 +108,15 @@ The hooks run only in a project with `.claude/canon.json` or `docs/canon/`, so a
 install leaves other repositories alone. If `docs/canon/` exists and the config is missing or
 invalid, the push, merge and canon guards refuse what they guard and say to run `/canon:setup`.
 
-| Hook             | When                                                    | Refuses                                                                                                                                                                                                                                                                                                      | Bypass                                         |
-| ---------------- | ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------- |
-| `protect-branch` | Before Edit, Write, NotebookEdit, and Bash that writes  | Any change to the project while the integration or production branch is checked out.                                                                                                                                                                                                                         | `ALLOW_PROTECTED_BRANCH_EDIT=1`                |
-| `branch-notice`  | On each prompt                                          | Nothing. Says a protected branch is checked out before the first write.                                                                                                                                                                                                                                      |                                                |
-| `protect-push`   | Before Bash                                             | A push landing on either protected branch, however it is spelled (refspec, upstream, `push.default`, `--all`, `--mirror`). Any force push, to any branch.                                                                                                                                                    | `ALLOW_PROTECTED_PUSH=1`, `ALLOW_FORCE_PUSH=1` |
-| `protect-merge`  | Before Bash and any MCP `merge_pull_request`            | Any merge into the production branch: `gh pr merge`, `gh api` merges and auto-merge, the MCP tool, or a direct ref write. Any `gh api` write naming that branch, a contents write with no branch, and a GraphQL mutation that moves a branch or can't be read. A pull request it cannot read is refused too. | None. The owner merges in the GitHub UI.       |
-| `require-canon`  | Before Bash and any MCP `merge_pull_request`            | `gh pr create`, `gh pr ready` or a merge into the integration branch when the change touches a path in `.claude/canon-domains.json` and no file in `docs/canon/`.                                                                                                                                            | `ALLOW_UNDECIDED_MERGE=1`                      |
-| `format-file`    | After Edit, Write and NotebookEdit                      | Nothing. Runs the configured formatter on the one file written.                                                                                                                                                                                                                                              |                                                |
-| `ci-watch`       | After a command that starts a CI run, in the background | Nothing. If a CI run for that commit fails, it wakes Claude with the failing step and log. It reads the workflows' `on:` triggers to tell which of `git push`, `gh pr create`, `gh pr ready` and `gh pr reopen` start a run; with none it can read, GitHub's default `pull_request` types.                   |                                                |
+| Hook             | When                                                    | Refuses                                                                                                                                                                                                                                                                                                                                             | Bypass                                         |
+| ---------------- | ------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------- |
+| `protect-branch` | Before Edit, Write, NotebookEdit, and Bash that writes  | Any change to the project while the integration or production branch is checked out.                                                                                                                                                                                                                                                                | `ALLOW_PROTECTED_BRANCH_EDIT=1`                |
+| `branch-notice`  | On each prompt                                          | Nothing. Says a protected branch is checked out before the first write.                                                                                                                                                                                                                                                                             |                                                |
+| `protect-push`   | Before Bash                                             | A push landing on either protected branch, however it is spelled (refspec, upstream, `push.default`, `--all`, `--mirror`). Any force push, to any branch.                                                                                                                                                                                           | `ALLOW_PROTECTED_PUSH=1`, `ALLOW_FORCE_PUSH=1` |
+| `protect-merge`  | Before Bash and any MCP `merge_pull_request`            | Any merge into the production branch: `gh pr merge`, `gh api` merges and auto-merge, the MCP tool, or a direct ref write. Any `gh api` write naming that branch, a contents write with no branch, and a GraphQL mutation that moves a branch or can't be read. A pull request it cannot read is refused too.                                        | None. The owner merges in the GitHub UI.       |
+| `require-canon`  | Before Bash and any MCP `merge_pull_request`            | `gh pr create`, `gh pr ready` or a merge into the integration branch, or their `gh api` REST forms, when the change touches a path in `.claude/canon-domains.json` and no file in `docs/canon/`.                                                                                                                                                    | `ALLOW_UNDECIDED_MERGE=1`                      |
+| `format-file`    | After Edit, Write and NotebookEdit                      | Nothing. Runs the configured formatter on the one file written.                                                                                                                                                                                                                                                                                     |                                                |
+| `ci-watch`       | After a command that starts a CI run, in the background | Nothing. If a CI run for that commit fails, it wakes Claude with the failing step and log. It reads the workflows' `on:` triggers to tell which of `git push`, `gh pr create`, `gh pr ready` and `gh pr reopen`, or their REST forms, start a run, and watches a `workflow_dispatch`; with none it can read, GitHub's default `pull_request` types. |                                                |
 
 Each refusal says why and names its bypass. Set a bypass in front of the one command it is for,
 and say which change it covers.
@@ -146,15 +147,16 @@ the same project needs its own. Set `formatFile` to `null` to turn the hook off.
 
 ## Permissions
 
-A command pre-approves the plugin's scripts, a short list of exact commands, read-only `gh` and
-`git` lookups that take no output file, and edits under `docs/specs/`, `docs/canon/` and
+A command pre-approves the plugin's scripts, a short list of exact commands, read-only `git`
+lookups that take no output file, and edits under `docs/specs/`, `docs/canon/` and
 `.claude/canon-domains.json`, the map that decides which paths the canon gates. The lookups
 include `git diff` and `git log`, whose `--output` can write a file. A compound command prompts
 unless every part of it is granted, so some of `/canon:approve`'s checks still ask. Three of those reach past the machine without a prompt:
 `git push -u origin HEAD` pushes the current branch, `gh pr ready` marks the branch's draft pull
 request ready for review (or back to draft), and the tracker script moves, labels and comments on
 Linear issues. Everything else asks, as it would without the plugin: commits,
-pull request creation and other edits, merges, the project's own checks, and any command Claude composes
+every `gh api` write (a grant on `gh api` would cover writes as well as reads, so staging and
+production read GitHub through the plugin's GET-only `gh-get.mjs` instead), merges, the project's own checks, and any command Claude composes
 itself. To run `/canon:ship` or `/canon:staging` unattended, add allow rules for those to your own
 settings or run in a permission mode that allows them.
 
@@ -283,6 +285,26 @@ workflow must declare `workflow_dispatch` and be on the default branch. With a `
 also needs that workflow's success on the head, not only some check's.
 
 Leave the block out to only wait, which is right for CI that runs on every push.
+
+## Cloud sessions
+
+A Claude Code cloud session reaches GitHub through a proxy that refuses GraphQL, which every
+`gh pr` command uses. So the skills make every GitHub call through `gh api` REST: pull requests
+are opened with `POST pulls`, read and edited by number, merged with `PUT pulls/<n>/merge`, and
+commented on through the issues endpoint. Checks are read from the head commit's check runs.
+
+Two calls differ by where the session runs:
+
+- **Marking a draft ready** has no REST endpoint. With `CLAUDE_CODE_REMOTE=true` the skills use
+  the proxy's `POST pulls/<n>/ccr/ready_for_review`; elsewhere, `gh pr ready`.
+- **Deleting the merged branch** gets a `403` from the proxy. `/canon:staging` deletes it with
+  `DELETE git/refs/heads/<branch>` and reports a failure as a warning, since the merge has
+  already landed. Set `branches.deleteAfterMerge` to `false` to skip the deletion, for a project
+  that deletes merged branches another way, such as a scheduled workflow.
+
+The hooks read the REST forms as they read `gh pr`, and still read `gh pr` for a command a person
+types: `require-canon` judges `POST pulls`, the ready call and the merge, and `ci-watch` wakes on
+them and on a `workflow_dispatch`.
 
 ## Migrating an existing project
 

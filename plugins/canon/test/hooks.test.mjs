@@ -104,6 +104,13 @@ describe('protect-merge', () => {
   it('fails closed on another repository and on a selector it cannot evaluate', () => {
     expect(runHook('protect-merge.mjs', 'gh pr merge 5 --repo o/r', into('staging'))).toBe(2);
     expect(runHook('protect-merge.mjs', 'gh pr merge $PR --merge', into('staging'))).toBe(2);
+    expect(
+      runHook(
+        'protect-merge.mjs',
+        'gh api -X PUT "repos/{owner}/{repo}/pulls/$n/merge"',
+        into('staging')
+      )
+    ).toBe(2);
   });
 
   it('blocks a REST or MCP merge into production however it is spelled', () => {
@@ -113,6 +120,8 @@ describe('protect-merge', () => {
       'gh api --method=PUT "repos/{owner}/{repo}/pulls/12/merge" -f merge_method=merge',
       'gh api -X PUT repos/{owner}/{repo}/pulls/12/ccr/auto_merge',
       'gh api repos/{owner}/{repo}/pulls/12/ccr/auto_merge -f merge_method=merge',
+      // The form /canon:staging sends, from a cloud session as anywhere else.
+      'gh api -X PUT "repos/{owner}/{repo}/pulls/12/merge" -f merge_method=merge -f sha="$sha" --jq .merged',
     ]) {
       expect(runHook('protect-merge.mjs', command, into('main', 12)), command).toBe(2);
       expect(runHook('protect-merge.mjs', command, into('staging', 12)), command).toBe(0);
@@ -180,6 +189,8 @@ describe('protect-merge', () => {
     for (const command of [
       'gh pr create --base main --head staging --title "release" --body "x"',
       'gh pr create -B main -H staging --fill',
+      'gh api -X POST "repos/{owner}/{repo}/pulls" -f base=main -f head=staging -f title="release: x" -F body=@f.md',
+      'gh api repos/o/r/pulls -f base=main -f head=staging -f title=release',
       'gh api repos/o/r/pulls',
       'gh api graphql -f query=query{viewer{login}}',
       'gh api graphql -f query=\'query($n: Int!) { repository(owner: "o", name: "r") { pullRequest(number: $n) { baseRefName } } }\' -F n=5',
@@ -292,6 +303,33 @@ describe('require-canon on a gh command', () => {
     // past that, Claude Code lets the call through.
     expect(Date.now() - started).toBeLessThan(17_000);
   }, 60_000);
+
+  it('judges the REST forms a cloud session sends as it judges gh pr', () => {
+    const check = (command, gh = governed, branch = 'feature') =>
+      runHook('require-canon.mjs', command, gh, undefined, feature(branch));
+    const create =
+      'gh api -X POST "repos/{owner}/{repo}/pulls" -f base=staging -f head=feature -f title=x -F body=@b.md';
+    const ready = 'gh api -X POST "repos/{owner}/{repo}/pulls/57/ccr/ready_for_review"';
+    const merge =
+      'gh api -X PUT "repos/{owner}/{repo}/pulls/57/merge" -f merge_method=merge -f sha=abc';
+    expect(check(create, 'exit 1')).toBe(2);
+    expect(check(`ALLOW_UNDECIDED_MERGE=1 ${create}`, 'exit 1')).toBe(0);
+    expect(check(ready)).toBe(2);
+    expect(check(merge)).toBe(2);
+    const withCanon = pr('staging', ['src/lib/content.ts', 'docs/canon/architecture.md']);
+    expect(check(ready, withCanon)).toBe(0);
+    expect(check(merge, withCanon)).toBe(0);
+    // The release pull request, and a read, are not judged.
+    expect(
+      check('gh api -X POST repos/{owner}/{repo}/pulls -f base=main -f head=staging', 'exit 1')
+    ).toBe(0);
+    expect(check('gh api repos/{owner}/{repo}/pulls/57')).toBe(0);
+    // On the integration branch a merge is judged on the pull request it names.
+    expect(check(merge, governed, 'staging')).toBe(2);
+    const moved = run('require-canon.mjs', `cd /tmp && ${ready}`, governed);
+    expect(moved.status).toBe(2);
+    expect(moved.stderr).toMatch(/ccr\/ready_for_review`: it follows a `cd`/);
+  });
 
   it('fails open on a merge aimed at another repository', () => {
     const migrations = pr('staging', ['supabase/migrations/0005_x.sql']);
@@ -991,9 +1029,9 @@ describe('ci-watch.sh', () => {
    * Run the hook with a stub `gh` that logs every call and lists `runs` for any
    * commit, each with its conclusion; `conclusion` alone is one run, 42. `sleep` is
    * stubbed too, so the waits cost nothing. `project` is `$CLAUDE_PROJECT_DIR`, which
-   * the payload's `cwd` overrides. `prHead` is what `gh pr view` prints: `<sha> <branch>`;
-   * `ownRepo` what `gh repo view` does; `script` is the hook's path, which a test runs through
-   * a symlink. A call made with `GH_REPO` set is logged as `[<repo>] <args>`. A run whose
+   * the payload's `cwd` overrides. `prHead` is what a REST read of a pull request
+   * prints: `<sha> <branch>`; `ownRepo` what `gh repo view` does; `script` is the
+   * hook's path, which a test runs through a symlink. A call made with `GH_REPO` set is logged as `[<repo>] <args>`. A run whose
    * conclusion is `hang` never finishes, one that is `stall` fails and never prints its log, and
    * with no runs at all the listing itself never answers. `env` adds to the hook's environment.
    */
@@ -1022,7 +1060,7 @@ describe('ci-watch.sh', () => {
         Object.keys(runs).length > 0
           ? `  "run list") printf '%s\\n' ${Object.keys(runs).join(' ')} ;;`
           : '  "run list") exec /bin/sleep 60 ;;',
-        `  "pr view") echo '${prHead}' ;;`,
+        `  "api "*/pulls*) echo '${prHead}' ;;`,
         `  "repo view") echo '${ownRepo}' ;;`,
         '  "run watch") r=$(result "$3"); [ "$r" = hang ] && exec /bin/sleep 60; [ "$r" = success ] ;;',
         '  "run view") case "$*" in *--log-failed*) [ "$(result "$3")" = stall ] && exec /bin/sleep 60; echo log ;; *) result "$3" ;; esac ;;',
@@ -1469,6 +1507,37 @@ describe('ci-watch.sh', () => {
       expectIgnored(PUSH);
     });
 
+    it('watches the REST forms a cloud session sends, under the same triggers', () => {
+      workflow(
+        'on:\n  pull_request:\n    types: [opened, reopened, ready_for_review]\n  workflow_dispatch:'
+      );
+      expectWatched('gh api -X POST "repos/{owner}/{repo}/pulls/12/ccr/ready_for_review"');
+      expectWatched('gh api -X POST "repos/{owner}/{repo}/pulls" -f base=staging -f title=x');
+      expectIgnored('gh api "repos/{owner}/{repo}/pulls/12"');
+      expectIgnored('gh api repos/{owner}/{repo}/pulls/12/ccr/ready_for_review');
+      workflow('on: pull_request');
+      expectIgnored('gh api -X POST "repos/{owner}/{repo}/pulls/12/ccr/ready_for_review"');
+    });
+
+    it('reads the head of a pull request marked ready through REST, not GraphQL', () => {
+      workflow('on:\n  pull_request:\n    types: [ready_for_review]');
+      const result = watched('gh pr ready 12');
+      expect(result.calls).toContain('api repos/{owner}/{repo}/pulls/12 --jq');
+      expect(result.calls).not.toContain('pr view');
+    });
+
+    it('watches a workflow_dispatch on the branch it names, whatever the triggers', () => {
+      workflow('on:\n  pull_request:\n    types: [opened]\n  workflow_dispatch:');
+      const dispatch = (ref) =>
+        `gh api -X POST "repos/{owner}/{repo}/actions/workflows/ci.yml/dispatches" -f ref=${ref} -f "inputs[base]=staging"`;
+      expectWatched(dispatch('feature'));
+      // A ref that is not on the line is the checked-out branch's.
+      const fromHead = watched(dispatch('"$branch"'));
+      expect(fromHead.status).toBe(2);
+      expect(fromHead.calls).toContain(`run list --commit ${sha('HEAD')}`);
+      expectIgnored('gh api "repos/{owner}/{repo}/actions/workflows/ci.yml/runs?head_sha=x"');
+    });
+
     it('reads types written as a block list, at either indent', () => {
       workflow('on:\n  pull_request:\n    types:\n      - opened\n      - ready_for_review');
       expectWatched(READY);
@@ -1581,7 +1650,7 @@ describe('ci-watch.sh', () => {
         prHead: `${head} other-branch`,
       });
       expect(result.status).toBe(2);
-      expect(result.calls).toContain('pr view 12 --repo o/r --json');
+      expect(result.calls).toContain('[o/r] api repos/{owner}/{repo}/pulls/12 --jq');
       expect(result.calls).toContain(`run list --commit ${head}`);
       expect(result.stderr).toContain(`CI failed on other-branch at ${head}.`);
       // The group flag before the subcommand, as gh takes it.
@@ -1591,21 +1660,21 @@ describe('ci-watch.sh', () => {
         prHead: `${head} other-branch`,
       });
       expect(group.status).toBe(2);
-      expect(group.calls).toContain('pr view 12 --repo o/r --json');
+      expect(group.calls).toContain('[o/r] api repos/{owner}/{repo}/pulls/12 --jq');
       // pflag reads `-R=o/r` as `o/r`.
       const equals = watch({
         command: 'gh pr ready -R=o/r 12',
         conclusion: 'failure',
         prHead: `${head} other-branch`,
       });
-      expect(equals.calls).toContain('pr view 12 --repo o/r --json');
+      expect(equals.calls).toContain('[o/r] api repos/{owner}/{repo}/pulls/12 --jq');
     });
 
     it('stays quiet when gh cannot read the pull request a ready names', () => {
       workflow(TRIMMED);
       const result = watch({ command: 'gh pr ready 12', conclusion: 'failure', prHead: '' });
       expect(result.status).toBe(0);
-      expect(result.calls).toContain('pr view 12');
+      expect(result.calls).toContain('api repos/{owner}/{repo}/pulls/12');
       expect(result.calls).not.toContain('run list');
     });
 
@@ -1669,8 +1738,8 @@ describe('ci-watch.sh', () => {
     it('looks up every pull request marked ready in one call', () => {
       workflow(TRIMMED);
       const result = watched('gh pr ready 12 && gh pr ready 13');
-      expect(result.calls).toContain('pr view 12 --json');
-      expect(result.calls).toContain('pr view 13 --json');
+      expect(result.calls).toContain('api repos/{owner}/{repo}/pulls/12 --jq');
+      expect(result.calls).toContain('api repos/{owner}/{repo}/pulls/13 --jq');
     });
 
     it('watches gh pr create --repo in the repository it names', () => {
@@ -1766,7 +1835,9 @@ describe('ci-watch.sh', () => {
       workflow(TRIMMED);
       const result = watch({ command: 'gh pr ready\necho done', conclusion: 'failure' });
       expect(result.status).toBe(2);
-      expect(result.calls).toContain('pr view --json');
+      expect(result.calls).toContain(
+        'api repos/{owner}/{repo}/pulls?head={owner}:{branch}&state=open --jq'
+      );
       expect(
         watch({ command: 'gh pr ready\ngit stash --undo', conclusion: 'failure' }).status
       ).toBe(2);
@@ -1861,7 +1932,7 @@ describe('ci-watch.sh', () => {
       workflow('on:\n  pull_request:\n    types: [opened]');
       const result = watched('gh pr ready 7 --repo org/other');
       expect(result.status).toBe(2);
-      expect(result.calls).toContain('pr view 7 --repo org/other --json');
+      expect(result.calls).toContain('[org/other] api repos/{owner}/{repo}/pulls/7 --jq');
     });
 
     it('watches the tag --follow-tags sent on another commit when only tags start a run', () => {
@@ -1996,7 +2067,9 @@ describe('ci-watch.sh', () => {
         conclusion: 'failure',
       });
       expect(result.status).toBe(2);
-      expect(result.calls).toContain('pr view --json');
+      expect(result.calls).toContain(
+        'api repos/{owner}/{repo}/pulls?head={owner}:{branch}&state=open --jq'
+      );
     });
 
     it("reads a worktree's own workflows, with the config from the project", () => {

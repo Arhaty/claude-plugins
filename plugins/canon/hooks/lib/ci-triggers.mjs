@@ -38,7 +38,7 @@ import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { CONFIG_PATH } from './config.mjs';
-import { prCalls } from './merge-command.mjs';
+import { apiPrCalls, dispatchCalls, prCalls, prRead } from './merge-command.mjs';
 import { pushTargets } from './push-command.mjs';
 
 export const DEFAULT_TYPES = Object.freeze(['opened', 'synchronize', 'reopened']);
@@ -273,9 +273,11 @@ const DETACHED = 'detached HEAD';
 
 /**
  * The repository a `gh pr` call names. pflag reads `-R=o/r` as `o/r`, so a short flag's `=` is
- * not part of the value; `--repo==o/r` keeps it, as gh does.
+ * not part of the value; `--repo==o/r` keeps it, as gh does. A `gh api` call names it in its
+ * path.
  */
 function repoOf(call) {
+  if (call.api) return call.repo;
   const long = call.flags.get('--repo');
   if (typeof long === 'string') return long;
   const short = call.flags.get('-R');
@@ -284,7 +286,11 @@ function repoOf(call) {
 
 /**
  * What this command starts, read through `prCalls` so `gh pr -R o/r ready 12`, quoting and a
- * second line are read as the shell reads them. Pushes arrive as `refs`, read by the caller.
+ * second line are read as the shell reads them, and through `apiPrCalls` for the REST forms a
+ * cloud session sends instead: `POST pulls` is a create and `POST pulls/<n>/ccr/ready_for_review`
+ * a ready. A `workflow_dispatch` through `gh api` starts a run whatever the triggers say, on the
+ * branch its `ref` names, or on `HEAD` when that is not on the line. Pushes arrive as `refs`,
+ * read by the caller.
  *
  * `refs` are what the pushes sent, each `{ sha, name, tag }` with `sha` empty when this checkout
  * cannot resolve it and `name` empty for a detached `HEAD`. Each is weighed on its own: a branch
@@ -315,7 +321,10 @@ export function decide({ command, refs = [], head, files }) {
   // A pull request opened for `--head <branch>` runs on that branch, not on `HEAD`; the caller
   // resolves it. Like a ready, one opened in another repository counts whatever the local
   // workflows say.
-  const calls = prCalls(text, ['create', 'ready', 'reopen']);
+  const calls = [
+    ...prCalls(text, ['create', 'ready', 'reopen']),
+    ...apiPrCalls(text, ['create', 'ready']),
+  ];
   const creates = calls
     .filter((call) => call.subcommand === 'create' && (types.has('opened') || repoOf(call)))
     .map((call) => {
@@ -339,7 +348,12 @@ export function decide({ command, refs = [], head, files }) {
       return call.subcommand === 'reopen' && (types.has('reopened') || repoOf(call) !== '');
     })
     .map((call) => ({ selector: call.positionals[0] ?? '', repo: repoOf(call) }));
-  return { targets, prs, heads: creates.filter(({ branch }) => branch) };
+  const heads = creates.filter(({ branch }) => branch);
+  for (const { ref, repo } of dispatchCalls(text)) {
+    if (ref) heads.push({ branch: ref, repo });
+    else if (head.sha) targets.push({ sha: head.sha, label: head.name || DETACHED, repo });
+  }
+  return { targets, prs, heads };
 }
 
 // A ref line as git prints it, read from the JSON-encoded output, so a newline is a backslash:
@@ -448,7 +462,9 @@ export function watchTargets(payload, project) {
 function targetsOf(payload, project) {
   const command = String(payload?.tool_input?.command ?? '');
   const read = readPushes(command);
-  if (!read.pushing && !command.includes('gh pr')) return { targets: [] };
+  if (!read.pushing && !command.includes('gh pr') && !command.includes('gh api')) {
+    return { targets: [] };
+  }
   const output = JSON.stringify(payload?.tool_response ?? '');
   // The directory the command ran in, which may be a worktree or another checkout: reading
   // `HEAD` in the project directory watched a commit nobody pushed.
@@ -615,17 +631,15 @@ function targetsOf(payload, project) {
     // `gh pr ready 12` from another branch, or with commits not pushed yet, or in another
     // repository. A named pull request gh cannot read is left out: `HEAD` may be another pull
     // request's. Only a bare `gh pr ready`, which is about the current branch's, falls back to it.
+    // Read through REST, as the hooks read a pull request: a cloud session refuses GraphQL.
     for (const pr of prs) {
-      const view = quiet('gh', [
-        'pr',
-        'view',
-        ...(pr.selector ? [pr.selector] : []),
-        ...(pr.repo ? ['--repo', pr.repo] : []),
-        '--json',
-        'headRefOid,headRefName',
-        '--jq',
-        '.headRefOid + " " + .headRefName',
-      ]);
+      const { endpoint, jq } = prRead(
+        pr.selector ? [pr.selector] : [],
+        '.head.sha + " " + .head.ref'
+      );
+      const view = quiet('gh', ['api', endpoint, '--jq', jq], {
+        env: pr.repo ? { ...process.env, GH_REPO: pr.repo } : process.env,
+      });
       const found = /^([0-9a-f]{7,64}) (\S+)/.exec(view);
       if (found) targets.push({ sha: found[1], label: found[2], repo: pr.repo });
       else if (!pr.selector && head.sha) {

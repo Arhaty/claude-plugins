@@ -15,9 +15,13 @@
 # triggers of every workflow in the checkout, since a failure in any run on the commit is
 # reported, and the rule is:
 #
-# - `gh pr create` starts a run if `opened` is a type;
-# - `gh pr ready` starts one if `ready_for_review` is a type, and `gh pr reopen` if `reopened`
-#   is; both watch the pull request's head, not `HEAD`;
+# - `gh pr create`, or its REST form `gh api -X POST .../pulls`, starts a run if `opened` is a
+#   type;
+# - `gh pr ready`, or the cloud proxy's `POST .../pulls/<n>/ccr/ready_for_review`, starts one if
+#   `ready_for_review` is a type, and `gh pr reopen` if `reopened` is; both watch the pull
+#   request's head, not `HEAD`;
+# - `gh api -X POST .../actions/workflows/<wf>/dispatches` starts one on the branch its `ref`
+#   names;
 # - `git push` starts one for each ref it sent: a branch if a `push` trigger's branch filters
 #   take it, or if `synchronize` is a type and the branch has an open pull request; a tag if a
 #   `push` trigger has tag filters or none.
@@ -53,6 +57,7 @@ command_on=${request#*'"command"'}
 git_push='git([^"\\]|\\.)*push'
 case "$request" in
   *"gh pr"*create* | *"gh pr"*ready* | *"gh pr"*reopen*) ;;
+  *"gh api"*pulls* | *"gh api"*dispatches*) ;;
   *) [[ $command_on =~ $git_push ]] || exit 0 ;;
 esac
 command -v gh >/dev/null 2>&1 || exit 0
