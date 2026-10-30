@@ -198,7 +198,10 @@ yours, and `/canon:setup` offers your team's real names:
 ```
 
 - **Branches** are `<prefix>/abc-123-<slug>`: the identifier in the name is what links the branch
-  in Linear. Specs keep their number and carry an `**Issue:** ABC-123` line.
+  in Linear. Set `branches.naming` to `"tracker"` to use the issue's own `branchName` instead,
+  verbatim and with no prefix (`abc-123-rate-limit-reset`), so a run that starts from the issue
+  alone finds its branch; `branches.prefixes` may then be left out. Specs keep their number and
+  carry an `**Issue:** ABC-123` line.
 - **Labels.** `/canon:define` adds the `domain-*` label for each canon file the spec's `## Where`
   routes to through `.claude/canon-domains.json` (`auth.md` is `domain-auth`). It never creates a
   label; a missing one is reported.

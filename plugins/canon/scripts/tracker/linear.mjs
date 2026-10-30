@@ -43,6 +43,7 @@ export const looksLikeKey = (key) => /^lin_api_\S+$/.test(key ?? '');
 const ISSUE_FIELDS = `
   id
   identifier
+  branchName
   title
   description
   url
@@ -110,6 +111,7 @@ export function createClient({ apiKey, team, fetch: fetchImpl = fetch, timeoutMs
 
   const shape = (node) => ({
     identifier: node.identifier,
+    branchName: node.branchName ?? '',
     title: node.title,
     description: node.description ?? '',
     url: node.url,

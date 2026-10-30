@@ -274,6 +274,20 @@ describe('scaffold', () => {
     }
   });
 
+  it('names branches the way the config does', () => {
+    apply(root, {
+      ...config(),
+      branches: { integration: 'staging', production: 'main', naming: 'tracker' },
+      tracker: TRACKER,
+    });
+    const claude = readFileSync(join(root, 'CLAUDE.md'), 'utf8');
+    expect(claude).toMatch(/Branch names: the tracker issue's own branch name, verbatim\./);
+    expect(claude).toMatch(
+      /Branches are the issue's own branch name, verbatim, e\.g\. `abc-123-<slug>`/
+    );
+    expect(claude).not.toMatch(/<prefix>/);
+  });
+
   it('records an approved API key command from a partial answers file', () => {
     const home = mkdtempSync(join(tmpdir(), 'canon-home-'));
     const answers = join(root, 'answers.json');

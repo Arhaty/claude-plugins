@@ -17,7 +17,13 @@
 
 import { execFileSync } from 'node:child_process';
 
-import { configProblem, loadConfig, projectRoot, readPayload } from './lib/config.mjs';
+import {
+  branchNaming,
+  configProblem,
+  loadConfig,
+  projectRoot,
+  readPayload,
+} from './lib/config.mjs';
 
 const payload = await readPayload();
 const ROOT = projectRoot(payload);
@@ -45,12 +51,12 @@ try {
 
 if (branch !== branches.integration && branch !== branches.production) process.exit(0);
 
-const prefixes = branches.prefixes.map((p) => `\`${p}/\``).join(', ');
+const naming = branchNaming(state.config);
 process.stdout.write(
   `\`${branch}\` is checked out, which takes no direct commit. If this turn changes anything ` +
     'in the repository, create the branch first and say so:\n\n' +
-    '  git checkout -b <branch>\n\n' +
-    `Branch names take one of these prefixes and a kebab-case description: ${prefixes}. ` +
+    `  git checkout -b ${naming.example}\n\n` +
+    `${naming.rule}. ` +
     `Branch off \`${branches.integration}\`, never off \`${branches.production}\` and never off ` +
     'another feature branch. Reading, running the test suite and answering a question are all ' +
     'fine here and need no branch.\n'
