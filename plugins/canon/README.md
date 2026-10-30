@@ -145,6 +145,15 @@ changes, through a pull, a branch switch or an edit, the hook stays off until yo
 `/canon:setup` and approve the new one. Worktrees of one clone share its approval; another clone of
 the same project needs its own. Set `formatFile` to `null` to turn the hook off.
 
+**In a cloud session** the container is new every time, so it never has the trust file and the
+formatter would never run. Approve it in the cloud environment's settings instead, outside the
+repository: set `CANON_TRUST_FORMAT_SHA256` to the command's digest, which `/canon:setup` prints
+when you approve the formatter (the sha256 of the argv list as JSON). The hook runs the command
+when the variable names exactly its digest, so a changed command is off again until you update
+the variable. A value set in the project's own `.claude/settings.json` or
+`.claude/settings.local.json` `env` block is ignored: Claude Code applies that block to the
+session, and it would be the repository approving its own command.
+
 ## Permissions
 
 A command pre-approves the plugin's scripts, a short list of exact commands, read-only `git`

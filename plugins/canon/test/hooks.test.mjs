@@ -954,6 +954,35 @@ describe('format-file', () => {
     expect(existsSync(log)).toBe(true);
   });
 
+  it('runs on an approval the cloud environment sets, never one the repository sets', () => {
+    const file = join(project, 'a.ts');
+    writeFileSync(file, 'x');
+    const withEnv = (value) =>
+      run(
+        'format-file.mjs',
+        { tool_name: 'Write', tool_input: { file_path: file }, cwd: project },
+        'exit 1',
+        { project, home, env: { CANON_TRUST_FORMAT_SHA256: value } }
+      );
+    // A digest for another command approves nothing.
+    withEnv(commandDigest([...argv, '--extra']));
+    expect(existsSync(log)).toBe(false);
+    withEnv(commandDigest(argv));
+    expect(existsSync(log)).toBe(true);
+    rmSync(log);
+    // The project's own settings can set the variable for the session: that is the repository
+    // approving its own command, and it is ignored, in either settings file.
+    for (const name of ['settings.json', 'settings.local.json']) {
+      writeFileSync(
+        join(project, '.claude', name),
+        JSON.stringify({ env: { CANON_TRUST_FORMAT_SHA256: commandDigest(argv) } })
+      );
+      withEnv(commandDigest(argv));
+      expect(existsSync(log), name).toBe(false);
+      rmSync(join(project, '.claude', name));
+    }
+  });
+
   it('stays off once the command changes', () => {
     const file = join(project, 'a.ts');
     writeFileSync(file, 'x');
