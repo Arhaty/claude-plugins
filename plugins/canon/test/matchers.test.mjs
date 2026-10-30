@@ -10,7 +10,9 @@
 import { describe, expect, it } from './helpers.mjs';
 
 import {
+  apiPrCalls,
   commandSkeleton,
+  dispatchCalls,
   mergeTargets,
   mergesIn,
   invocations,
@@ -1030,6 +1032,124 @@ describe('prCalls', () => {
     expect(prCalls('git commit -m "fix cd handling" && gh pr create', ['create'])[0].dirKnown).toBe(
       true
     );
+  });
+});
+
+describe('apiPrCalls', () => {
+  const kinds = ['create', 'ready', 'merge'];
+  const read = (command) =>
+    apiPrCalls(command, kinds).map(({ subcommand, positionals, pairs, repo }) => ({
+      subcommand,
+      positionals,
+      pairs,
+      repo,
+    }));
+
+  it('reads the REST form of each pull request call a cloud session sends', () => {
+    expect(
+      read(
+        'gh api -X POST "repos/{owner}/{repo}/pulls" -f base=staging -f head=rung-14-ladder -f title=x -F body=@b.md'
+      )
+    ).toEqual([
+      {
+        subcommand: 'create',
+        positionals: [],
+        pairs: [
+          ['--base', 'staging'],
+          ['--head', 'rung-14-ladder'],
+        ],
+        repo: '',
+      },
+    ]);
+    expect(read('gh api -X POST "repos/{owner}/{repo}/pulls/57/ccr/ready_for_review"')).toEqual([
+      { subcommand: 'ready', positionals: ['57'], pairs: [], repo: '' },
+    ]);
+    expect(
+      read(
+        'gh api -X PUT "repos/{owner}/{repo}/pulls/57/merge" -f merge_method=merge -f sha="$sha"'
+      )
+    ).toEqual([{ subcommand: 'merge', positionals: ['57'], pairs: [], repo: '' }]);
+  });
+
+  it('takes POST from a field, as gh does, and leaves a read alone', () => {
+    expect(read('gh api repos/{owner}/{repo}/pulls -f base=staging -f head=x')[0]?.subcommand).toBe(
+      'create'
+    );
+    for (const command of [
+      'gh api repos/{owner}/{repo}/pulls',
+      'gh api "repos/{owner}/{repo}/pulls?head={owner}:x&state=open" --jq ".[0].number"',
+      'gh api repos/{owner}/{repo}/pulls/57',
+      'gh api -X PATCH repos/{owner}/{repo}/pulls/57 -F body=@b.md',
+      'gh api repos/{owner}/{repo}/pulls/57/ccr/ready_for_review',
+      'gh api repos/{owner}/{repo}/pulls/57/merge',
+      'gh api repos/{owner}/{repo}/pulls/57/files',
+      'echo gh api -X POST repos/{owner}/{repo}/pulls',
+    ]) {
+      expect(read(command), command).toEqual([]);
+    }
+  });
+
+  it('names the pull request by URL when the path names a repository', () => {
+    expect(read('gh api -X PUT https://api.github.com/repos/o/r/pulls/5/merge')).toEqual([
+      {
+        subcommand: 'merge',
+        positionals: ['https://github.com/o/r/pull/5'],
+        pairs: [],
+        repo: 'o/r',
+      },
+    ]);
+  });
+
+  it('leaves out a base or head whose value is not on the line', () => {
+    const [call] = apiPrCalls(
+      'gh api -X POST repos/{owner}/{repo}/pulls -f base=staging -f head="$(git branch --show-current)"',
+      ['create']
+    );
+    expect(call.pairs).toEqual([['--base', 'staging']]);
+  });
+
+  it('keeps the inline environment and whether the directory is known', () => {
+    const [call] = apiPrCalls(
+      'cd x && ALLOW_UNDECIDED_MERGE=1 gh api -X POST repos/{owner}/{repo}/pulls -f base=s',
+      ['create']
+    );
+    expect(call.env.ALLOW_UNDECIDED_MERGE).toBe('1');
+    expect(call.dirKnown).toBe(false);
+  });
+
+  it('reads only the kinds asked for', () => {
+    expect(apiPrCalls('gh api -X PUT repos/{owner}/{repo}/pulls/5/merge', ['create'])).toEqual([]);
+  });
+});
+
+describe('dispatchCalls', () => {
+  it('reads the branch a workflow_dispatch runs on', () => {
+    expect(
+      dispatchCalls(
+        'gh api -X POST "repos/{owner}/{repo}/actions/workflows/ci.yml/dispatches" -f ref=rung-14-x -f "inputs[base]=staging"'
+      )
+    ).toEqual([{ ref: 'rung-14-x', repo: '' }]);
+    expect(
+      dispatchCalls('gh api repos/o/r/actions/workflows/ci.yml/dispatches -f ref=refs/heads/x')
+    ).toEqual([{ ref: 'x', repo: 'o/r' }]);
+  });
+
+  it('gives an empty ref when its value is not on the line, and ignores a read', () => {
+    expect(
+      dispatchCalls(
+        'gh api -X POST repos/{owner}/{repo}/actions/workflows/ci.yml/dispatches -f ref="$branch"'
+      )
+    ).toEqual([{ ref: '', repo: '' }]);
+    expect(dispatchCalls('gh api repos/{owner}/{repo}/actions/workflows/ci.yml/runs')).toEqual([]);
+  });
+});
+
+describe('a REST merge whose number is not on the line', () => {
+  it('is a merge this cannot read, not a write that slips past', () => {
+    expect(mergeTargets('gh api -X PUT "repos/{owner}/{repo}/pulls/$number/merge"')).toEqual([
+      { selector: null },
+    ]);
+    expect(mergeTargets('gh api "repos/{owner}/{repo}/pulls/$number/merge"')).toEqual([]);
   });
 });
 
