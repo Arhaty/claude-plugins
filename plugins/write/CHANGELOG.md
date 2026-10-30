@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.0](https://github.com/Arhaty/claude-plugins/compare/write-v0.2.0...write-v0.3.0) (2026-10-30)
+
+
+### Features
+
+* **write:** add gloss, recap and evaluative-tail patterns ([#63](https://github.com/Arhaty/claude-plugins/issues/63)) ([edb2d96](https://github.com/Arhaty/claude-plugins/commit/edb2d969a75dfd9f24b64d5e215a7e1c370bf171))
+
 ## [0.2.0](https://github.com/Arhaty/claude-plugins/compare/write-v0.1.1...write-v0.2.0) (2026-10-26)
 
 
