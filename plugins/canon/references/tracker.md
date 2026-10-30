@@ -49,10 +49,17 @@ request body to fix, and a status set by hand hides it. The client refuses them 
 ## Names
 
 - **The identifier** is `ABC-123`, the team key from `tracker.team` and a number.
-- **The branch** is `<prefix>/<identifier in lowercase>-<slug>`, e.g.
-  `feat/abc-123-rate-limit-reset`. The GitHub integration links any branch whose name contains
-  the identifier, so the prefix rules and the link both hold. Find a branch with
-  `git branch -r --list 'origin/*/abc-123-*'`.
+- **The branch** follows `branches.naming`. Every command that looks for an issue's branch looks
+  for it this way, and nothing else:
+  - **`prefix`, or unset:** `<prefix>/<identifier in lowercase>-<slug>`, e.g.
+    `feat/abc-123-rate-limit-reset`. The GitHub integration links any branch whose name contains
+    the identifier, so the prefix rules and the link both hold. Find it with
+    `git branch -a --list '*/abc-123-*'`.
+  - **`tracker`:** the issue's own `branchName`, as `issue <ID>` returns it, verbatim, e.g.
+    `abc-123-rate-limit-reset`: no prefix and no slug of canon's own. A headless run finds the
+    branch from the issue alone that way. Find it with
+    `git branch -a --list "<branchName>" "origin/<branchName>"`. An empty `branchName` is a stop:
+    say so, never make one up.
 - **The spec** keeps its number, `docs/specs/NNN-<slug>.md`, and carries the identifier on an
   `**Issue:** ABC-123` line directly under its `**Status:**` line.
 - **Commit bodies** carry `Part of ABC-123` beside `Spec: NNN`. It links the commit and moves

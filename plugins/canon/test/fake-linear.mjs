@@ -34,6 +34,7 @@ export function linearState(overrides = {}) {
         id: 'uuid-1',
         team: 'ABC',
         title: 'Rate-limit password reset',
+        branchName: 'abc-1-rate-limit-password-reset',
         description: 'Limit reset requests per account.',
         state: 'Todo',
         labels: [],
@@ -55,6 +56,7 @@ export function fakeLinear(state, { onChange = () => {} } = {}) {
   const shape = ([identifier, issue]) => ({
     id: issue.id,
     identifier,
+    branchName: issue.branchName,
     title: issue.title,
     description: issue.description,
     url: `https://linear.app/example/issue/${identifier}`,

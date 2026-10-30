@@ -44,7 +44,8 @@ const TOP = [
   'tracker',
   'ci',
 ];
-const BRANCHES = ['integration', 'production', 'prefixes', 'deleteAfterMerge'];
+const BRANCHES = ['integration', 'production', 'prefixes', 'naming', 'deleteAfterMerge'];
+const NAMINGS = ['prefix', 'tracker'];
 const TRACKER = ['provider', 'team', 'statuses', 'labelPrefix', 'apiKeyCommand'];
 const CI = ['workflow', 'baseInput'];
 
@@ -175,10 +176,21 @@ export function validate(config) {
   if (isText(branches.integration) && branches.integration === branches.production) {
     errors.push('`branches.integration` and `branches.production` must differ');
   }
+  if (branches.naming !== undefined && !NAMINGS.includes(branches.naming)) {
+    errors.push(`\`branches.naming\` must be one of: ${NAMINGS.join(', ')}`);
+  }
+  const byTracker = branches.naming === 'tracker';
+  if (byTracker && !('tracker' in config)) {
+    errors.push(
+      '`branches.naming` "tracker" needs a `tracker` block, whose issues name the branches'
+    );
+  }
+  // With tracker naming the prefixes go unused, so they may be left out; given, they still parse.
   if (
-    !Array.isArray(branches.prefixes) ||
-    branches.prefixes.length === 0 ||
-    !branches.prefixes.every((p) => isText(p) && /^[a-z0-9-]+$/.test(p))
+    !(byTracker && !('prefixes' in branches)) &&
+    (!Array.isArray(branches.prefixes) ||
+      branches.prefixes.length === 0 ||
+      !branches.prefixes.every((p) => isText(p) && /^[a-z0-9-]+$/.test(p)))
   ) {
     errors.push('`branches.prefixes` must be a non-empty list of lowercase prefixes');
   }
@@ -521,6 +533,26 @@ export function trustKeyCommand(root, argv) {
   const key = trustKey(root);
   trusted[key] = { ...entryFor(trusted, key), apiKeyCommand: argv };
   writeTrust(trusted);
+}
+
+/**
+ * How feature branches are named, for the hooks' messages and the CLAUDE.md section: `rule`
+ * says it in a sentence, `example` is one name in the configured form.
+ */
+export function branchNaming(config) {
+  const { branches, tracker } = config;
+  if (branches.naming === 'tracker') {
+    const example = `${tracker.team.toLowerCase()}-123-short-description`;
+    return {
+      rule: `Branch names are the tracker issue's own branch name, verbatim, e.g. \`${example}\``,
+      example,
+    };
+  }
+  const prefixes = branches.prefixes.map((p) => `\`${p}/\``).join(', ');
+  return {
+    rule: `Branch names take one of these prefixes and a kebab-case description: ${prefixes}`,
+    example: `${branches.prefixes[0]}/short-description`,
+  };
 }
 
 /** Read and parse a hook's stdin payload. `null` when it is not JSON. */
