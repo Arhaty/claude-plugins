@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.2](https://github.com/Arhaty/claude-plugins/compare/canon-v0.5.1...canon-v0.5.2) (2026-10-30)
+
+
+### Bug Fixes
+
+* keep canon's starting points and follow the tracker in setup ([#64](https://github.com/Arhaty/claude-plugins/issues/64)) ([7ad3453](https://github.com/Arhaty/claude-plugins/commit/7ad34537e793ab670b44fd591b2873cf8722d28c))
+
 ## [0.5.1](https://github.com/Arhaty/claude-plugins/compare/canon-v0.5.0...canon-v0.5.1) (2026-10-30)
 
 
