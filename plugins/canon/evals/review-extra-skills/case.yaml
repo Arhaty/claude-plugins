@@ -1,0 +1,30 @@
+schema_version: '1.1'
+name: review-extra-skills
+description: >-
+  /canon:review runs the project's own review command named in review.extraSkills on the same
+  scope, and folds its finding into the report.
+tags: [review, behaviour]
+execution:
+  prompt: /canon:review src/client.ts
+  max_turns: 25
+  timeout_seconds: 600
+  allowed_tools: [Read, Glob, Grep, Skill, Bash]
+context:
+  scaffold_script: scaffold.sh
+graders:
+  - name: runs-the-project-check
+    type: llm
+    focus: trace
+    arm: with-only
+    criteria: >-
+      PASS if the run ran the project's hardcoded-urls check on src/client.ts, by invoking it or by
+      reading .claude/commands/hardcoded-urls.md and following it. FAIL if it never looked at that
+      check.
+  - name: reports-its-finding
+    type: llm
+    weight: 2
+    focus: last_message
+    criteria: >-
+      PASS if the report names the hardcoded URL in src/client.ts (line 1) as a finding, attributed
+      to the hardcoded-urls check, with its consequence. FAIL if the URL is not reported, or the
+      report says nothing was found.

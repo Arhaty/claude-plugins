@@ -15,6 +15,7 @@ Local only: they run Claude on your account and cost money, so CI does not run t
 | `staging-remote-rest`        | In a cloud session, staging makes no `gh pr` or GraphQL call.           |
 | `review-cites-spec`          | Review runs on a prose request and cites the spec and the canon rule.   |
 | `review-canon-paths`         | Checking paths against `docs/canon` runs review.                        |
+| `review-extra-skills`        | Review runs the project's own check from `review.extraSkills`.          |
 | `review-skips-build`         | A build whose `requires` fails is skipped and left to CI, never run.    |
 | `review-near-miss-bugs`      | A bug review of pasted code does not run canon's review.                |
 | `review-near-miss-prose`     | Reviewing a sentence for tone does not run review.                      |
