@@ -5,7 +5,7 @@
   "description": "Per-project settings for the canon Claude Code plugin, written by /canon:setup to .claude/canon.json. Every hook and skill reads branch names, commands and URLs from here; nothing is hardcoded.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["version", "owner", "branches", "packageManager", "commands", "formatFile", "urls"],
+  "required": ["version", "owner", "branches", "packageManager", "commands", "formatFile"],
   "properties": {
     "$schema": {
       "type": "string",
@@ -95,8 +95,7 @@
     "urls": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["preview", "staging", "production"],
-      "description": "Where each build is served, quoted in hand-backs. null when there is none.",
+      "description": "Optional. Where each build is served, quoted in hand-backs. A URL that is null or left out, or the whole block left out, means there is none.",
       "properties": {
         "preview": {
           "type": ["string", "null"],

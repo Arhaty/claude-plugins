@@ -219,12 +219,15 @@ export function validate(config) {
     errors.push('`formatFile` must be a non-empty list of argv strings, or null');
   }
 
+  // Optional, and so is each URL in it: left out is null.
   const urls = config.urls;
-  if (urls === null || typeof urls !== 'object') {
-    errors.push('`urls` must be an object');
+  if (!('urls' in config)) {
+    // Nothing served anywhere, or nothing worth quoting.
+  } else if (!isObject(urls)) {
+    errors.push('`urls` must be an object, or left out');
   } else {
     for (const name of URLS) {
-      if (!(name in urls) || !textOrNull(urls[name])) {
+      if (name in urls && !textOrNull(urls[name])) {
         errors.push(`\`urls.${name}\` must be a URL string or null`);
       }
     }
@@ -319,6 +322,17 @@ export function keyCommandShape(argv) {
     return 'must start with a program name or an absolute path, not a relative path';
   }
   return null;
+}
+
+/**
+ * The config as the skills read it: every optional setting that is left out, filled in with
+ * what leaving it out means, so a skill never has to know which keys may be absent.
+ */
+export function withDefaults(config) {
+  return {
+    ...config,
+    urls: Object.fromEntries(URLS.map((name) => [name, config.urls?.[name] ?? null])),
+  };
 }
 
 /**
