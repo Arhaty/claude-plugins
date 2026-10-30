@@ -164,10 +164,16 @@ file that exists and differs, and writes nothing until each one is approved by n
    node "${CLAUDE_PLUGIN_ROOT}/scripts/scaffold.mjs" plan --root <project root> --answers <file> [--enable-plugin]
    ```
 
-   Each line is `create`, `same`, `keep`, `conflict` or `symlink`. `keep` is a file the project
-   owns once it exists (the domain map and the two index READMEs) and is never written. `symlink`
+   Each line is `create`, `same`, `keep`, `stale`, `conflict`, `symlink` or `case`. `keep` is a file the project
+   owns once it exists (the domain map and the two index READMEs) and is never written. `stale` is
+   such a file whose text depends on settings these answers change, such as `docs/specs/README.md`
+   after a `specs` or `tracker` change: it is kept too. Say it still describes the old settings,
+   diff it against its `content` from `plan --json`, and offer to edit the sections that differ to
+   match, keeping the rest of the project's text. `symlink`
    means the path runs through a link that leads outside the project or nowhere, and nothing is written until the user replaces it with a
-   real file or directory. An invalid answers file exits 2 and names every
+   real file or directory. `case` means the project has that file or a directory above it under
+   another letter case, such as `_template.md`; canon reads the exact name, so nothing is written
+   until the user renames it. An invalid answers file exits 2 and names every
    problem: fix the answer, not the check.
 
 5. **Ask about every conflict, by name.** For each `conflict`, say what it is and what would

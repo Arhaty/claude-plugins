@@ -5,13 +5,13 @@ for implementation work. A spec must be decision-complete before implementation 
 behaviour discovered during implementation is folded back into the spec instead of a separate
 local plan.
 
-See `README.md` for the status lifecycle, numbering and archive rules. The `**Status:**` line
+See `README.md` for the status lifecycle, naming and archive rules. The `**Status:**` line
 stays directly under the H1: commands find it by that prefix.
 
 ---
 
 ```markdown
-# NNN — <Change name>
+# {{specTitle}} — <Change name>
 
 **Status:** draft
 

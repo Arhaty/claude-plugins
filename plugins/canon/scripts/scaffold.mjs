@@ -19,13 +19,21 @@
  * Three files are the project's own once they exist, and are `keep` rather than
  * `conflict`: `.claude/canon-domains.json`, `docs/canon/README.md` and
  * `docs/specs/README.md`. The templates hold an empty map and an empty index, so
- * approving them as a conflict would have wiped what the project had written.
+ * approving them as a conflict would have wiped what the project had written. One
+ * whose template fills differently under the answers than under the project's current
+ * config is `stale`: still kept, with `plan --json` giving the text the answers would
+ * write, so the skill can offer to edit the sections that changed.
  *
  * Nothing is written through a symlink that leads outside the project or nowhere.
  * A path whose file or any directory above it is such a link is `symlink` in the
  * plan, and `apply` writes nothing while any is: a cloned repository can point a
  * link anywhere. A link that stays inside, such as `CLAUDE.md -> AGENTS.md`, is
  * written through.
+ *
+ * Canon reads its files by their exact names, so a path the project holds only under
+ * another letter case, such as `docs/canon/_template.md` or a `.Claude/` directory, is
+ * `case` in the plan, and `apply` writes nothing while any is, `.claude/canon-index.md`
+ * included. The project renames it first.
  *
  * `trust` records the owner's approval of the answers' `formatFile` (or, with
  * `--command apiKeyCommand`, of `tracker.apiKeyCommand`) for this repository in
@@ -51,6 +59,7 @@ import { dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import {
+  COMMANDS,
   CONFIG_PATH,
   DOMAINS_PATH,
   TRUST_FORMAT_VARIABLE,
@@ -69,11 +78,13 @@ const SECTION = join(PLUGIN, 'templates', 'claude-md-section.md');
 const SCHEMA_URL =
   'https://raw.githubusercontent.com/arhaty/claude-plugins/main/plugins/canon/templates/canon.schema.json';
 const PLUGIN_KEY = 'canon@arhaty';
+const ARCHIVE = 'docs/specs/archive/';
 const BEGIN = '<!-- canon:begin -->';
 const END = '<!-- canon:end -->';
 
 /** Files the project fills in after setup: kept as they are once they exist. */
 const KEEP = new Set([DOMAINS_PATH, 'docs/canon/README.md', 'docs/specs/README.md']);
+const INDEX = '.claude/canon-index.md';
 
 function* walk(dir) {
   for (const name of readdirSync(dir).sort()) {
@@ -83,10 +94,53 @@ function* walk(dir) {
   }
 }
 
+/** A directory lister for `root` that reads each directory once: names, or null when absent. */
+function lister(root) {
+  const listings = new Map();
+  return (dir) => {
+    if (!listings.has(dir)) {
+      try {
+        listings.set(dir, readdirSync(join(root, dir)));
+      } catch {
+        listings.set(dir, null);
+      }
+    }
+    return listings.get(dir);
+  };
+}
+
+/**
+ * Where `path` is held under another letter case: `{ wanted, variants }` for the first part of
+ * it that is, such as `{ wanted: '.claude', variants: ['.Claude'] }`, or null. Canon reads its
+ * files by their exact names, so a project's `_template.md` is neither replaced under a name the
+ * plan does not show (macOS) nor joined by a second `_TEMPLATE.md` (Linux): it is renamed first.
+ */
+function caseMismatch(path, names) {
+  let dir = '';
+  for (const part of path.split('/')) {
+    const listed = names(dir);
+    if (listed === null) return null;
+    if (!listed.includes(part)) {
+      const lower = part.toLowerCase();
+      const variants = listed
+        .filter((name) => name.toLowerCase() === lower)
+        .sort()
+        .map((name) => dir + name);
+      return variants.length ? { wanted: dir + part, variants } : null;
+    }
+    dir += `${part}/`;
+  }
+  return null;
+}
+
 /** The values the templates' `{{placeholders}}` take, from a validated config. */
 export function placeholders(config) {
   const code = (value) => `\`${value}\``;
-  const checks = Object.values(config.commands).filter((command) => command !== null);
+  // The checks run before each commit. The build is left out: it runs in the gate, where
+  // `references/gate.md` says when it is skipped, and it can be an object rather than a string.
+  const checks = COMMANDS.map((name) => config.commands[name]).filter(
+    (command) => command !== null
+  );
   return {
     owner: config.owner,
     integration: config.branches.integration,
@@ -97,7 +151,111 @@ export function placeholders(config) {
         : `${config.branches.prefixes.map((p) => code(`${p}/`)).join(', ')} followed by a kebab-case description`,
     checks: checks.length ? checks.map(code).join(', ') : 'none configured in `.claude/canon.json`',
     tracker: config.tracker ? trackerSection(config) : '',
+    ...specsValues(config),
   };
+}
+
+/**
+ * The text that says where a spec lives, how it is drafted and how it ends, which the `specs`
+ * settings and the tracker decide. `references/specs.md` is what the skills follow; this says
+ * the same.
+ */
+function specsValues({ specs, tracker, owner }) {
+  const byBranch = specs?.naming === 'branch';
+  const toTracker = specs?.archive === 'tracker';
+  return {
+    spec: tracker ? `${tracker.team}-123` : byBranch ? '<branch>' : 'NNN',
+    specTitle: byBranch ? '<branch, each / as ->' : 'NNN',
+    specFile: byBranch ? '`<branch>.md`, the branch name with each `/` as `-`' : '`NNN-slug.md`',
+    specPath: byBranch
+      ? '`docs/specs/<branch>.md`, the branch name with each `/` as `-`'
+      : '`docs/specs/NNN-slug.md`',
+    specArchive: toTracker
+      ? 'When it ships, `/canon:staging` posts it to its issue and deletes it: the issue is the archive.'
+      : '`archive/` holds the rest.',
+    specShips: toTracker
+      ? 'posts the spec to its issue, deletes it'
+      : 'sets `shipped`, archives the spec',
+    lifecycle: lifecycle(specs, tracker, owner),
+    specNaming: byBranch
+      ? [
+          '## Naming',
+          '',
+          'A spec is named after its branch, with each `/` as `-`: `feat/rate-limit` writes',
+          '`docs/specs/feat-rate-limit.md`. There is no number. A file of that name already on another',
+          'remote branch is refused.',
+        ].join('\n')
+      : [
+          '## Numbering',
+          '',
+          ...(toTracker
+            ? [
+                'The next number is the highest three-digit prefix ever committed under `docs/specs/`, on any',
+                'branch, plus one: a shipped spec is deleted, and its number is never given out again. No',
+                '`spec-` prefix. A slug that is already taken is refused.',
+              ]
+            : [
+                'The next number is the highest three-digit prefix across `docs/specs/**` (active and archive, and',
+                'on other remote branches) plus one. No `spec-` prefix. A slug that is already taken is refused.',
+              ]),
+        ].join('\n'),
+    specArchiveRule: toTracker
+      ? '`/canon:staging` posts the spec to its issue as a comment, then deletes it in a commit on the branch before it merges. The issue is the archive; `docs/specs/` holds only work in flight.'
+      : '`/canon:staging` sets `shipped` and `git mv`s the spec to `docs/specs/archive/` in a commit on the branch before it merges.',
+  };
+}
+
+/**
+ * The specs README's Lifecycle section: how the status is read, then a table of the statuses,
+ * padded as a Markdown formatter would leave it so a project's format check passes.
+ */
+function lifecycle(specs, tracker, owner) {
+  const toTracker = specs?.archive === 'tracker';
+  const posted = 'posted to its issue as a comment';
+  const rows = [
+    ['Status', 'Set by', 'Means'],
+    [
+      '`draft`',
+      '`/canon:define`',
+      specs?.commitWhileDrafting === false
+        ? 'Being argued out. Left uncommitted on its branch until `/canon:approve` commits it.'
+        : 'Being argued out. Committed and pushed on its branch each round; not yet approved.',
+    ],
+    [
+      '`approved`',
+      '`/canon:approve`',
+      `${owner} read it. \`Still open\` is \`None.\`, committed and pushed.`,
+    ],
+    ['`in-progress`', '`/canon:build`', 'A build has started, in its own commit.'],
+    [
+      '`shipped`',
+      '`/canon:staging`',
+      toTracker
+        ? `Merged. Not set: the spec is ${posted} and deleted, and the issue says it shipped.`
+        : 'Merged. Set in the commit that moves the spec to `archive/`.',
+    ],
+    [
+      '`abandoned`',
+      `${owner} only`,
+      toTracker
+        ? `Dropped. Not set: the spec is ${posted}, and its branch is deleted unmerged.`
+        : 'Dropped. Set from any status, in the commit that moves it to `archive/`.',
+    ],
+  ];
+  const widths = rows[0].map((_, i) => Math.max(...rows.map((row) => row[i].length)));
+  const line = (cells) => `| ${cells.map((cell, i) => cell.padEnd(widths[i])).join(' | ')} |`;
+  const table = [
+    line(rows[0]),
+    `| ${widths.map((w) => '-'.repeat(w)).join(' | ')} |`,
+    ...rows.slice(1).map(line),
+  ];
+  // references/specs.md, which the skills read only when there is a `specs` block, makes the
+  // line optional with a tracker; without that block the line mirrors the issue.
+  const status =
+    tracker && specs
+      ? "With a tracker the `**Status:**` line under the H1 is optional: the issue's status is the\ngate. A spec that has the line keeps it mirroring the issue, and commands find it by that\nprefix, never by line number."
+      : 'The status is the `**Status:**` line directly under the H1. Commands find it by that prefix,\nnever by line number.';
+  return `${status}\n\n${table.join('\n')}`;
 }
 
 /**
@@ -105,7 +263,7 @@ export function placeholders(config) {
  * Kept here rather than in the template so a project without a tracker gets no
  * trace of one.
  */
-function trackerSection({ tracker, owner, branches }) {
+function trackerSection({ tracker, owner, branches, specs }) {
   const name = { linear: 'Linear' }[tracker.provider] ?? tracker.provider;
   const status = (role) => `\`${tracker.statuses[role]}\``;
   return [
@@ -115,7 +273,10 @@ function trackerSection({ tracker, owner, branches }) {
     `\`/canon:define\` from ${status('ready')} to ${status('spec')}, \`/canon:approve\` to ${status('approved')},`,
     `\`/canon:build\` to ${status('building')}, and \`/canon:build\` or \`/canon:ship\` to ${status('blocked')}`,
     `when they need ${owner}. ${name}'s GitHub integration sets ${status('staging')} and ${status('production')}`,
-    "when the pull requests merge, never by hand. The spec's `**Status:**` line mirrors the issue.",
+    // With a `specs` block the skills read references/specs.md, which makes the line optional.
+    specs
+      ? "when the pull requests merge, never by hand. A spec's `**Status:**` line is optional; one that has it mirrors the issue."
+      : "when the pull requests merge, never by hand. The spec's `**Status:**` line mirrors the issue.",
     '',
     branches.naming === 'tracker'
       ? `- Branches are the issue's own branch name, verbatim, e.g. \`${tracker.team.toLowerCase()}-123-<slug>\`. Commit bodies carry`
@@ -169,7 +330,8 @@ function withPluginEnabled(current) {
 
 /**
  * Every file setup would write, as `{ path, content }` with `path` relative to the
- * project root. Pure apart from reading the templates and the files it edits.
+ * project root, and `template` for a file filled from one. Pure apart from reading the
+ * templates and the files it edits.
  */
 export function render(root, config, { enablePlugin = false } = {}) {
   const values = placeholders(config);
@@ -179,7 +341,10 @@ export function render(root, config, { enablePlugin = false } = {}) {
 
   for (const source of walk(TEMPLATES)) {
     const path = relative(TEMPLATES, source).split(sep).join('/');
-    files.push({ path, content: fill(readFileSync(source, 'utf8'), values) });
+    // With the tracker as the archive, `docs/specs/` holds only work in flight.
+    if (path.startsWith(ARCHIVE) && config.specs?.archive === 'tracker') continue;
+    const template = readFileSync(source, 'utf8');
+    files.push({ path, content: fill(template, values), template });
   }
 
   files.push({
@@ -202,35 +367,66 @@ export function render(root, config, { enablePlugin = false } = {}) {
   return files;
 }
 
+/**
+ * The placeholder values of the project's current `.claude/canon.json`, or null when it has
+ * none that is valid. A kept file whose template fills differently from these is `stale`.
+ */
+function previousValues(root) {
+  try {
+    const { $schema, ...config } = JSON.parse(readFileSync(join(root, CONFIG_PATH), 'utf8'));
+    return validate(config).length ? null : placeholders(config);
+  } catch {
+    return null;
+  }
+}
+
 /** `render`, with what would happen to each file. */
 export function plan(root, config, options) {
-  return render(root, config, options).map((file) => {
+  const names = lister(root);
+  const before = previousValues(root);
+  const blocked = (path) => {
+    const link = symlinkIn(root, path);
+    if (link !== null) return { action: 'symlink', link };
+    const mismatch = caseMismatch(path, names);
+    return mismatch === null ? null : { action: 'case', ...mismatch };
+  };
+  const steps = render(root, config, options).map((file) => {
     const target = join(root, file.path);
-    const link = symlinkIn(root, file.path);
-    if (link !== null) return { ...file, action: 'symlink', link };
+    const block = blocked(file.path);
+    if (block !== null) return { ...file, ...block };
     if (!existsSync(target)) return { ...file, action: 'create' };
-    if (KEEP.has(file.path)) return { ...file, action: 'keep' };
+    if (KEEP.has(file.path)) {
+      const changed = before !== null && fill(file.template, before) !== file.content;
+      return { ...file, action: changed ? 'stale' : 'keep' };
+    }
     return { ...file, action: readFileSync(target, 'utf8') === file.content ? 'same' : 'conflict' };
   });
+  // `apply` writes the index after the plan, so the plan shows what would stop that too.
+  const index = blocked(INDEX);
+  if (index !== null) steps.push({ path: INDEX, ...index });
+  return steps;
 }
 
 /**
- * Write the plan. Refuses, writing nothing, while a conflict is not in `allow` or
- * any path runs through a symlink. Then generates `.claude/canon-index.md` when it
- * does not exist yet.
+ * Write the plan. Refuses, writing nothing, while a conflict is not in `allow`, any
+ * path runs through a symlink, or any exists only under another letter case. Then
+ * generates `.claude/canon-index.md` when it does not exist yet.
  */
 export function apply(root, config, { allow = [], ...options } = {}) {
   const steps = plan(root, config, options);
-  const INDEX = '.claude/canon-index.md';
   const links = steps.filter((s) => s.action === 'symlink').map((s) => s.link);
-  const indexLink = symlinkIn(root, INDEX);
-  if (indexLink !== null) links.push(indexLink);
   if (links.length) return { ok: false, symlinks: [...new Set(links)], refused: [], steps };
+  const mismatches = steps.filter((s) => s.action === 'case');
+  if (mismatches.length) {
+    // One line per name to rename, however many files sit below a renamed directory.
+    const cases = new Map(mismatches.map(({ wanted, variants }) => [wanted, { wanted, variants }]));
+    return { ok: false, cases: [...cases.values()], refused: [], steps };
+  }
   const refused = steps.filter((s) => s.action === 'conflict' && !allow.includes(s.path));
   if (refused.length) return { ok: false, refused: refused.map((s) => s.path), steps };
 
   for (const step of steps) {
-    if (step.action === 'same' || step.action === 'keep') continue;
+    if (['same', 'keep', 'stale'].includes(step.action)) continue;
     mkdirSync(dirname(join(root, step.path)), { recursive: true });
     writeFileSync(join(root, step.path), step.content);
   }
@@ -340,7 +536,12 @@ function main(argv) {
   try {
     result =
       options.mode === 'plan'
-        ? plan(root, config, options).map(({ path, action }) => ({ path, action }))
+        ? plan(root, config, options).map(({ path, action, wanted, variants, content }) => ({
+            path,
+            action,
+            ...(action === 'case' && { wanted, variants }),
+            ...(action === 'stale' && { content }),
+          }))
         : apply(root, config, options);
   } catch (error) {
     process.stderr.write(`scaffold: ${error.message}\n`);
@@ -351,7 +552,10 @@ function main(argv) {
     const steps = result;
     if (options.json) process.stdout.write(`${JSON.stringify(steps, null, 2)}\n`);
     else
-      for (const { path, action } of steps) process.stdout.write(`${action.padEnd(8)} ${path}\n`);
+      for (const { path, action, wanted, variants } of steps) {
+        const held = variants ? ` (rename ${variants.join(', ')} to ${wanted})` : '';
+        process.stdout.write(`${action.padEnd(8)} ${path}${held}\n`);
+      }
     return 0;
   }
 
@@ -362,6 +566,16 @@ function main(argv) {
     );
     return 1;
   }
+  if (result.cases?.length) {
+    const lines = result.cases.map(
+      ({ wanted, variants }) => `  ${variants.join(', ')} -> ${wanted}`
+    );
+    process.stderr.write(
+      'scaffold: nothing written. Canon reads these by their exact names, and the project has\n' +
+        `them in another letter case. Rename each, or merge it into the one name, first:\n${lines.join('\n')}\n`
+    );
+    return 1;
+  }
   if (!result.ok) {
     process.stderr.write(
       `scaffold: nothing written. These exist and differ; pass --allow <path> for each one the user\n` +
@@ -369,7 +583,13 @@ function main(argv) {
     );
     return 1;
   }
-  const label = { same: 'unchanged', keep: 'kept', create: 'created', conflict: 'updated' };
+  const label = {
+    same: 'unchanged',
+    keep: 'kept',
+    stale: 'kept',
+    create: 'created',
+    conflict: 'updated',
+  };
   for (const { path, action } of result.steps) {
     process.stdout.write(`${label[action].padEnd(9)} ${path}\n`);
   }
