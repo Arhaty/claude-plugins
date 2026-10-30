@@ -72,6 +72,13 @@ describe('validate', () => {
     expect(validate(prefixed)).toEqual(['`branches.naming` must be one of: prefix, tracker']);
   });
 
+  it('reports a branches block that is not an object instead of throwing', () => {
+    for (const branches of ['main', 1, true]) {
+      expect(() => validate({ ...valid(), branches })).not.toThrow();
+      expect(validate({ ...valid(), branches }).join('\n')).toMatch(/branches\.integration/);
+    }
+  });
+
   it.each([
     ['a non-object', () => [], /JSON object/],
     ['a wrong version', (c) => ({ ...c, version: 2 }), /version/],

@@ -176,7 +176,7 @@ export function validate(config) {
   if (isText(branches.integration) && branches.integration === branches.production) {
     errors.push('`branches.integration` and `branches.production` must differ');
   }
-  if ('naming' in branches && !NAMINGS.includes(branches.naming)) {
+  if (branches.naming !== undefined && !NAMINGS.includes(branches.naming)) {
     errors.push(`\`branches.naming\` must be one of: ${NAMINGS.join(', ')}`);
   }
   const byTracker = branches.naming === 'tracker';
