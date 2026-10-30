@@ -53,7 +53,7 @@ const RECAP = new RegExp(
  * is left alone.
  */
 const TAIL =
-  /(?<=,\s+)(marking|highlighting|underscoring|signall?ing|reflecting|showcasing|cementing)\b(?=\s+(?!(?:and|or)\b)\w)/gi;
+  /(?<=,\s+)(marking|highlighting|underscoring|signal{1,2}ing|reflecting|showcasing|cementing)\b(?=\s+(?!(?:and|or)\b)\w)/gi;
 
 /** `[name, pattern number, regex]`. Case-insensitive unless the regex says otherwise. */
 const HARD = [
