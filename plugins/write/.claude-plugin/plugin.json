@@ -1,6 +1,6 @@
 {
   "name": "write",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Writes and edits text for other readers to the project's style guide. Asked to check a draft, it quotes each line that reads as AI-written.",
   "author": {
     "name": "Arhaty",
