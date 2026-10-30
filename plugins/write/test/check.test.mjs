@@ -47,6 +47,13 @@ describe('hard patterns', () => {
     ['The page serves as an index.', 'copula avoidance'],
     ['She was involved in the migration.', 'vague role'],
     ['The data tells us to wait.', 'false agency'],
+    ['The vote was a defining moment for the town.', 'inflated significance'],
+    ['These were watershed moments for the town.', 'inflated significance'],
+    ['The empty room speaks volumes.', 'inflated significance'],
+    ['The ferry is late. In short, plan for it.', 'recap closer'],
+    ['At the end of the day, the ferry runs less often in winter.', 'recap closer'],
+    ['The cafe opens at six. In other words, it is the first one open.', 'adjacent gloss'],
+    ['Prices rose. What this means is that rent went up.', 'adjacent gloss'],
     ['Sources: https://example.com/?utm_source=chatgpt.com', 'chatbot debris'],
     ['Signed, [Your Name]', 'chatbot debris'],
   ];
@@ -61,6 +68,240 @@ describe('hard patterns', () => {
 
   it('reads mechanical transitions only at the start of a sentence', () => {
     assert.deepEqual(names(hard('We added it, moreover, by hand.')), []);
+  });
+
+  it('reads recap closers only at the start of a sentence', () => {
+    for (const text of [
+      'It was ultimately cheaper than we thought.',
+      'Write in short sentences.',
+      'Keep it in short-term storage.',
+      'Seats are in short supply.',
+      'We did it all in all three regions.',
+    ]) {
+      assert.deepEqual(
+        check(text).filter((f) => f.pattern === 3),
+        [],
+        text
+      );
+    }
+  });
+
+  it('reads "Ultimately," as a recap closer only in the last sentence of a paragraph', () => {
+    assert.deepEqual(
+      check('Ultimately, we chose the cheaper route. It was faster.').filter(
+        (f) => f.pattern === 3
+      ),
+      []
+    );
+    for (const text of [
+      'The ferry won. Ultimately, the ferry won.',
+      'The rule: In short, it works.',
+      'In conclusion, the ferry is late. Plan ahead for winter trips.',
+    ]) {
+      assert.ok(names(hard(text)).includes('recap closer'), text);
+    }
+  });
+
+  it('needs the comma, so a heading, a phrase or a compound is not a recap closer', () => {
+    for (const text of [
+      'Prices rose. In short-term rentals, they doubled.',
+      'All in all-weather tyres matter.',
+      'Ultimately-cheaper plans won.',
+      '## In summary\n\nThe ferry is late.',
+      'In summary form the data is clear.',
+    ]) {
+      assert.deepEqual(hard(text), [], text);
+    }
+  });
+
+  it('reports a recap closer once, under #3', () => {
+    for (const text of ['In short, it works.', 'In conclusion, it works.']) {
+      assert.deepEqual(
+        check(text).map((f) => [f.level, f.pattern, f.name]),
+        [['HARD', 3, 'recap closer']],
+        text
+      );
+    }
+  });
+
+  it('reads a recap closer or a gloss in lowercase, after a list marker or a closing quote', () => {
+    for (const [text, name] of [
+      ['in other words, it works.', 'adjacent gloss'],
+      ['- in short, it works', 'recap closer'],
+      ['The road closed (it flooded.) In short, we waited.', 'recap closer'],
+    ]) {
+      assert.ok(names(hard(text)).includes(name), text);
+    }
+  });
+
+  it('reads a gloss that follows a comma', () => {
+    assert.ok(
+      names(hard('The tide fell, which is to say the boats sat in mud.')).includes('adjacent gloss')
+    );
+  });
+
+  it('needs the comma after a gloss that opens a sentence', () => {
+    for (const text of [
+      '## Put simply\n\nThe ferry is late.',
+      'That is to say nothing of the cost.',
+    ]) {
+      assert.deepEqual(hard(text), [], text);
+    }
+  });
+
+  it('marks an evaluative tail as a place to look, never a hard flag', () => {
+    for (const text of [
+      'The platform reopened in March, marking the end of a closure.',
+      'The platform reopened in March, marking the end of a closure, which had lasted two years.',
+      'Sales doubled, underscoring the demand.',
+      'The lake was still, reflecting the mountains above it.',
+    ]) {
+      assert.deepEqual(hard(text), [], text);
+      assert.ok(
+        check(text).some((f) => f.level === 'LOOK' && f.pattern === 45),
+        text
+      );
+    }
+  });
+
+  it('leaves a bare gerund in a list alone', () => {
+    for (const text of [
+      'The steps are sanding, marking, and painting.',
+      'Prisms work by filtering, reflecting, and refracting light.',
+      'The shop does cutting, marking, drilling.',
+    ]) {
+      assert.deepEqual(
+        check(text).filter((f) => f.pattern === 45),
+        [],
+        text
+      );
+    }
+  });
+
+  it('leaves quoted text alone', () => {
+    for (const text of [
+      'She asked "Why?" and we left.',
+      'She yelled "Stop!" Then he yelled "Run!"',
+    ]) {
+      assert.ok(!check(text).some((f) => f.pattern === 40), text);
+    }
+    assert.deepEqual(hard('The note said "ok." in short, fine.'), []);
+  });
+
+  it('reads "Ultimately," in the last sentence even when a quotation follows it', () => {
+    assert.ok(
+      names(hard('Ultimately, the harbour plan passed. "Finally."')).includes('recap closer')
+    );
+  });
+
+  it('keeps other vocabulary words inside a hard match', () => {
+    const words = check('The fix was robust and seamless alike.')
+      .filter((f) => f.level === 'WORD')
+      .map((f) => f.match);
+    assert.deepEqual(words, ['robust', 'seamless']);
+  });
+
+  it('keeps offsets after a letter that lowercases to two', () => {
+    const flags = check('İstanbul grew, and the plan was paving the way.');
+    assert.deepEqual(
+      flags.map((f) => f.name),
+      ['inflated significance']
+    );
+  });
+
+  it('still reports a word that recurs outside the hard match on the same line', () => {
+    const text = 'Sales doubled, showcasing the demand. We plan to keep showcasing it.';
+    assert.ok(check(text).some((f) => f.level === 'WORD' && f.match === 'showcasing'));
+  });
+
+  it('flags a fragment with a stray space before its stop', () => {
+    assert.ok(check('Big news .').some((f) => f.pattern === 20));
+  });
+
+  it('reports a word inside a hard match once', () => {
+    assert.deepEqual(
+      check('Sales doubled, showcasing the demand.').map((f) => f.name),
+      ['evaluative tail']
+    );
+    assert.deepEqual(hard('Sales doubled, showcasing the demand.'), []);
+  });
+
+  it('reads "the truth is" after a closing parenthesis', () => {
+    assert.ok(
+      names(hard('The road closed (it flooded.) The truth is it broke.')).includes(
+        'directness opener'
+      )
+    );
+  });
+
+  it('flags an unowned majority and a named-sounding authority as #12', () => {
+    for (const text of [
+      'Many people find that a folding bike survives a commute better.',
+      "It's often said that the ferry is late.",
+      'Studies show the ferry is late.',
+    ]) {
+      assert.ok(
+        check(text).some((f) => f.pattern === 12),
+        text
+      );
+    }
+  });
+
+  it('leaves a count of people alone', () => {
+    for (const text of [
+      'How many people came to the meeting yesterday?',
+      'It was the most people we have ever seen.',
+      'Not many people came.',
+      'Very many people came.',
+      'Not many find it useful.',
+    ]) {
+      assert.deepEqual(
+        check(text).filter((f) => f.pattern === 12),
+        [],
+        text
+      );
+    }
+  });
+});
+
+describe('the examples in patterns.md', () => {
+  for (const [bad, good, pattern] of [
+    [
+      'The cafe opens at six. In other words, it is the only place open before the market.',
+      'The cafe opens at six, before anything else near the market.',
+      44,
+    ],
+    [
+      'The platform reopened in March, marking the end of a two-year closure.',
+      'The platform reopened in March. It had been closed for two years.',
+      45,
+    ],
+    [
+      'The ferry runs twice a day. In short, the ferry runs less often in winter.',
+      'The ferry runs twice a day.',
+      3,
+    ],
+  ]) {
+    it(`flags the Bad example for #${pattern} and passes the Good one`, () => {
+      assert.ok(
+        check(bad).some((f) => f.pattern === pattern),
+        names(check(bad)).join()
+      );
+      assert.deepEqual(
+        check(good).filter((f) => f.level !== 'LOOK'),
+        []
+      );
+    });
+  }
+
+  it('leaves a factual rider and "in short supply" alone', () => {
+    assert.deepEqual(hard('The bridge closed at noon, allowing the barge to pass.'), []);
+    assert.deepEqual(
+      check('Seats are in short supply, so we sold them in short order.').filter(
+        (f) => f.level !== 'LOOK'
+      ),
+      []
+    );
   });
 });
 
@@ -119,6 +360,28 @@ describe('what it leaves alone', () => {
   });
 });
 
+describe('interface strings', () => {
+  const strings = ['Send request', 'Sending', 'No messages yet.', 'Nothing here yet.', 'Saved.'];
+
+  it('does not take UI strings in a list for fragments', () => {
+    const text = strings.map((s) => `- ${s}`).join('\n');
+    assert.deepEqual(check(text), []);
+  });
+
+  it('does not take UI strings in a table for fragments', () => {
+    const text = [
+      '| Key | String |',
+      '| --- | --- |',
+      ...strings.map((s, i) => `| key${i} | ${s} |`),
+    ].join('\n');
+    assert.deepEqual(check(text), []);
+  });
+
+  it('flags the same strings as paragraphs, which is why they go in a list', () => {
+    assert.ok(check(strings.join('\n\n')).some((f) => f.pattern === 20));
+  });
+});
+
 describe('document checks', () => {
   it('counts exclamation marks past one', () => {
     assert.ok(check('Done! Shipped!').some((f) => f.name.startsWith('2 exclamation marks')));
@@ -150,10 +413,10 @@ describe('patterns.md agrees with the checker', () => {
     [...PATTERNS.matchAll(/^### (\d+)\. (.+)$/gm)].map((m) => [Number(m[1]), m[2]])
   );
 
-  it('numbers the patterns 1 to 43 with none missing', () => {
+  it('numbers the patterns 1 to 45 with none missing', () => {
     assert.deepEqual(
       [...headings.keys()].sort((a, b) => a - b),
-      Array.from({ length: 43 }, (_, i) => i + 1)
+      Array.from({ length: 45 }, (_, i) => i + 1)
     );
   });
 
@@ -165,6 +428,8 @@ describe('patterns.md agrees with the checker', () => {
       'It drafts in your voice, strips tells, and checks drafts before you see it.',
       '',
       'It ships before you see it.',
+      '',
+      'It opened in May, marking a change. In other words, it moved. In short, it is new.',
     ].join('\n');
     for (const flag of check(sample)) {
       if (flag.pattern !== null) assert.ok(headings.has(flag.pattern), format(flag));
@@ -193,10 +458,26 @@ describe('patterns.md agrees with the checker', () => {
     assert.ok(phrases.length > 10, `${phrases.length} phrases`);
   });
 
+  // A recap closer is flagged only where it opens a paragraph's last sentence (#3).
+  const RECAPS = new Set([
+    'in short',
+    'in summary',
+    'all in all',
+    'ultimately',
+    'at the end of the day',
+    'when all is said and done',
+    'in conclusion',
+  ]);
+  it('lists every recap closer in the vocabulary', () => {
+    for (const recap of RECAPS) assert.ok(phrases.includes(recap), recap);
+  });
   for (const entry of [...words, ...phrases]) {
     it(`flags "${entry}"`, () => {
+      const text = RECAPS.has(entry)
+        ? `It ran. ${entry[0].toUpperCase()}${entry.slice(1)}, it worked.`
+        : `We saw ${entry} here.`;
       assert.ok(
-        check(`We saw ${entry} here.`).some((f) => f.level !== 'LOOK'),
+        check(text).some((f) => f.level !== 'LOOK'),
         entry
       );
     });
@@ -331,16 +612,15 @@ describe('sentence openers', () => {
 
 describe('product copy', () => {
   const featureList = (text) => check(text).filter((f) => f.name === 'feature-list sentence');
-  const NEW = new Set([41, 42, 43]);
+  const NEW = new Set([41, 42, 43, 44, 45]);
   const fresh = (text) =>
     check(text).filter((f) => NEW.has(f.pattern) || (f.name === 'phrase' && f.pattern === null));
 
   for (const text of [
-    "Drafts and edits text in your project's voice, then quotes each line that reads as AI-written and names the pattern.",
-    'Plan each change in a spec, build it behind a pull request, and update docs/canon/ in the same pull request.',
-    "It drafts in your project's voice, strips AI writing tells, and checks a draft against 40 named patterns.",
-    'Write a spec, build it behind a pull request, keep docs/canon/ current, and let hooks guard your branches.',
-    "canon writes one spec per change, carries it through review, staging, and a release pull request, keeps docs/canon/ current as the project's living documentation, and enforces the git rules with hooks.",
+    'Tracks invoices across your accounts, flags the ones past due, then drafts a reminder to each client.',
+    'Connect your bank, track each expense by category, and export a report for your accountant.',
+    'It reads your receipts, matches them to transactions, and files them by month.',
+    'Acme imports statements from every bank, matches each payment to an invoice, sends reminders for the ones past due, and exports a quarterly report for your accountant.',
     'The skill drafts short, then reads its own draft back line by line, rewrites what sounds artificial, and scores it out of 50 on directness, rhythm, trust, authenticity, and density.',
     'It reports each violation with its file, line and rule, can fix naming violations in place, and runs in CI as a single binary.',
     'It drafts the reply, it checks the facts, and it sends the email.',
@@ -360,15 +640,15 @@ describe('product copy', () => {
   });
 
   for (const text of [
-    "write checks a draft for AI writing tells and quotes each line that has one, with the pattern it breaks. New drafts follow your project's style guide.",
-    'Each change starts as a spec and ships in a pull request that also updates docs/canon/. Hooks refuse pushes and merges into your protected branches.',
+    'Acme matches each bank payment to the invoice it settles. When an invoice goes past due, it drafts a reminder for you to send.',
+    'Each expense lands in a category as it clears. The quarterly report is ready for your accountant on the first of the month.',
     'Claude writes a first draft, then rereads it for AI patterns and fixes them.',
     'It can fix the naming violations in place, and it runs in CI as a single binary.',
     'It can fix the naming violations in place, and it runs in CI as a single binary.',
     'It covers emails, posts, docs, READMEs, and replies.',
     'Emails, posts, docs, READMEs, and replies all count.',
-    '1. Cuts a branch, researches, and writes docs/specs/NNN-slug.md.',
-    '- Cuts a branch, researches, and writes docs/specs/NNN-slug.md.',
+    '1. Clones the repository, installs dependencies, and runs the tests.',
+    '- Clones the repository, installs dependencies, and runs the tests.',
   ]) {
     it(`leaves it alone: ${text}`, () => assert.deepEqual(fresh(text), []));
   }

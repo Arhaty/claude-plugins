@@ -71,7 +71,8 @@ DOC   LOOK #38 3 paragraphs end on a short line (budget: 1)
 and the exit code is 1 when one fires. `WORD` is a listed word or phrase, such as a "your voice"
 claim or a rider like "before you see it". `LOOK` is a candidate: a verbless fragment, flat
 sentence rhythm, a punchline closing every paragraph, one sentence listing three or more features,
-or a phrase of four or more words used twice. `#n` is the pattern's number in the list. Every
+an -ing clause that may be an opinion tacked on to a fact, or a phrase of four or more words used
+twice. `#n` is the pattern's number in the list. Every
 flag is a place to look, not a verdict. Code, blockquotes and text in double quotes are skipped.
 
 ## Privacy
