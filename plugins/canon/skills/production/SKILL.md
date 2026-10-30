@@ -29,8 +29,7 @@ Below, `<owner>`, `<integration>` and `<production>` mean its `owner`, `branches
 `branches.production`; `urls.staging` and `urls.production` are quoted when set.
 
 **If it has a `specs` block**, read `${CLAUDE_PLUGIN_ROOT}/references/specs.md` now. It says
-where the branch's spec is, whether its `**Status:**` line is required, when it is committed and
-how it is archived, and it overrides the steps below where they differ.
+where the branch's spec is, when it is committed and how it is archived, and it overrides the steps below where they differ.
 
 **If it has a `tracker` block**, read `${CLAUDE_PLUGIN_ROOT}/references/tracker.md` now. This
 command **never sets an issue's status**: merging the release moves every issue it closes, through

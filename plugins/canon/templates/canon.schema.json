@@ -226,6 +226,11 @@
         }
       }
     },
+    "claudeMd": {
+      "type": "boolean",
+      "default": true,
+      "description": "Optional. false: /canon:setup leaves CLAUDE.md alone, for a project that writes its own workflow section. The skills and hooks work the same either way."
+    },
     "specs": {
       "type": "object",
       "additionalProperties": false,

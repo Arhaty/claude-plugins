@@ -16,8 +16,7 @@ the project needs `/canon:setup`. Otherwise it prints the project's config. Belo
 when unset; `tracker` names every branch after its issue, as `tracker.md` says under **Names**.
 
 **If it has a `specs` block**, read `${CLAUDE_PLUGIN_ROOT}/references/specs.md` now. It says
-where the branch's spec is, whether its `**Status:**` line is required, when it is committed and
-how it is archived, and it overrides the steps below where they differ.
+where the branch's spec is, when it is committed and how it is archived, and it overrides the steps below where they differ.
 
 **If it has a `tracker` block**, read `${CLAUDE_PLUGIN_ROOT}/references/tracker.md` now, then
 follow **With a tracker** below wherever a step names it.
@@ -59,7 +58,8 @@ for a new spec is a stop: ask for the issue.
    identifier in lowercase and the slug from the issue title, or with `branches.naming` set to
    `tracker`, the issue's `branchName` verbatim. A revision round finds it the same way. A branch
    that already exists for the identifier on a new spec is a stop: name it.
-5. **The spec carries `**Issue:** <ID>`** on the line under `**Status:**`.
+5. **The spec carries `**Issue:** <ID>`** on the line under `**Status:**`, or under the H1 when
+   the spec has no status line.
 6. **Fill in the domain labels when the spec is written.** Put every path in `## Where` through
    `.claude/canon-domains.json`; each canon file it names is a label, `<labelPrefix><name>`,
    where `labelPrefix` is `tracker.labelPrefix` (default `domain-`) and `<name>` the file without

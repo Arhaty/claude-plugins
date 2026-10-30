@@ -132,8 +132,21 @@ describe('the spec settings in the skills', () => {
     expect(skill('define')).toMatch(/unless `specs\.commitWhileDrafting` is `false`/);
   });
 
-  it('makes the status line optional only when the tracker carries the status', () => {
-    expect(reference).toMatch(/With a tracker, the `\*\*Status:\*\*` line is optional/);
-    expect(reference).toMatch(/Without a\s+tracker the line is the gate and stays required/);
+  it('leaves the status line to the tracker reference, not to a specs setting', () => {
+    expect(reference).not.toMatch(/`\*\*Status:\*\*` line is optional/);
+    const tracker = read('references/tracker.md');
+    expect(tracker).toMatch(
+      /\*\*The `\*\*Status:\*\*` line is optional\.\*\* A spec without it is complete/
+    );
+    expect(tracker).toMatch(
+      /Without one, none of it applies and the\s+spec's `\*\*Status:\*\*` line is the gate/
+    );
+  });
+
+  it('scopes tracker numbering and abandoning to the tracker archive', () => {
+    expect(reference).toMatch(
+      /\*\*Numbers, with `archive` `"tracker"` and `naming` `"number"`\.\*\*/
+    );
+    expect(reference).toMatch(/\*\*Abandoned, with `archive` `"tracker"`\.\*\*/);
   });
 });

@@ -137,6 +137,14 @@ describe('validate', () => {
     expect(validate({ ...valid(), tracker: TRACKER, specs })).toEqual([error]);
   });
 
+  it('accepts claudeMd as a boolean and refuses anything else', () => {
+    expect(validate({ ...valid(), claudeMd: false })).toEqual([]);
+    expect(validate({ ...valid(), claudeMd: true })).toEqual([]);
+    expect(validate({ ...valid(), claudeMd: 'no' })).toEqual([
+      '`claudeMd` must be true or false, or left out',
+    ]);
+  });
+
   it('refuses archiving to the tracker with no tracker', () => {
     expect(validate({ ...valid(), specs: { archive: 'tracker' } })).toEqual([
       '`specs.archive` "tracker" needs a `tracker` block to post the spec to',

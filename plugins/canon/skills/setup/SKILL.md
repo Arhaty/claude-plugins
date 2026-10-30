@@ -92,6 +92,9 @@ file that exists and differs, and writes nothing until each one is approved by n
      repository that the command reads can change later without asking again.
    - **Whether to enable canon in the project's own `.claude/settings.json`.** That turns canon on
      for everyone who clones the project and has the plugin installed.
+   - **Whether to write canon's section into `CLAUDE.md`**, only when `CLAUDE.md` already
+     describes the project's workflow outside canon's markers. No sets `"claudeMd": false`, and
+     setup leaves `CLAUDE.md` alone from then on. Otherwise leave the key out.
    - **Whether `/canon:staging` should start CI** when nothing has run on the head commit, and
      with which workflow and base input. Only for CI that skips commits pushed after the pull
      request leaves draft; the workflow must declare `workflow_dispatch`. No means no `ci` block,
@@ -164,15 +167,19 @@ file that exists and differs, and writes nothing until each one is approved by n
    node "${CLAUDE_PLUGIN_ROOT}/scripts/scaffold.mjs" plan --root <project root> --answers <file> [--enable-plugin]
    ```
 
-   Each line is `create`, `same`, `keep`, `stale`, `conflict`, `symlink` or `case`. `keep` is a file the project
-   owns once it exists (the domain map and the two index READMEs) and is never written. `stale` is
-   such a file whose text depends on settings these answers change, such as `docs/specs/README.md`
-   after a `specs` or `tracker` change: it is kept too. Say it still describes the old settings,
-   diff it against its `content` from `plan --json`, and offer to edit the sections that differ to
-   match, keeping the rest of the project's text. `symlink`
+   Each line is `create`, `same`, `keep`, `stale`, `leftover`, `conflict`, `symlink` or `case`.
+   `keep` is a starting point the project owns once it exists (the domain map, the two index
+   READMEs, the two `_TEMPLATE.md` files and `.claude/rules/principles.md`) and is never written.
+   `stale` is such a file that still holds canon's text for other `specs` or `tracker` settings,
+   such as the specs README's Lifecycle after a switch to the tracker archive: it is kept too.
+   Say it describes other settings, diff it against its
+   `content` from `plan --json`, and offer to edit the sections that differ to match, keeping the
+   rest of the project's text. `leftover` is `docs/specs/archive/` once the tracker is the
+   archive: say it no longer matches the docs, and leave moving or removing it to the user.
+   `.claude/canon.json` is `same` when it holds the same values in other formatting. `symlink`
    means the path runs through a link that leads outside the project or nowhere, and nothing is written until the user replaces it with a
    real file or directory. `case` means the project has that file or a directory above it under
-   another letter case, such as `_template.md`; canon reads the exact name, so nothing is written
+   another letter case, such as `_template.md` or `.Claude/`; canon reads the exact name, so nothing is written
    until the user renames it. An invalid answers file exits 2 and names every
    problem: fix the answer, not the check.
 

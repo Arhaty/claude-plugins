@@ -16,13 +16,22 @@
  * is not named by an `--allow`, so the skill can show the conflicts, ask, and run
  * again with exactly what was approved.
  *
- * Three files are the project's own once they exist, and are `keep` rather than
- * `conflict`: `.claude/canon-domains.json`, `docs/canon/README.md` and
- * `docs/specs/README.md`. The templates hold an empty map and an empty index, so
- * approving them as a conflict would have wiped what the project had written. One
- * whose template fills differently under the answers than under the project's current
- * config is `stale`: still kept, with `plan --json` giving the text the answers would
- * write, so the skill can offer to edit the sections that changed.
+ * Six files are the project's own once they exist, and are `keep` rather than
+ * `conflict`: `.claude/canon-domains.json`, the two READMEs and the two `_TEMPLATE.md`
+ * files under `docs/`, and `.claude/rules/principles.md`. They are starting points the
+ * project edits, so approving one as a conflict would wipe what the project wrote. One
+ * that still holds, word for word, a paragraph canon writes only under other `specs` or
+ * `tracker` settings, such as the specs README's Lifecycle after a switch to the tracker
+ * archive, is `stale`: still kept, with `plan --json` giving the text the answers would
+ * write, so the skill can offer to edit the sections that differ. Text the project wrote
+ * itself is never evidence, so an edit or a rewrite is never stale.
+ *
+ * `.claude/canon.json` is `same` when it holds the same values in any formatting, so a
+ * formatter's rewrite is not a conflict. With `"claudeMd": false` in the answers,
+ * `CLAUDE.md` is not written at all: the project keeps its own section.
+ *
+ * With `specs.archive` `"tracker"`, an existing `docs/specs/archive/` is `leftover` in
+ * the plan: nothing writes or removes it, and the skill says it no longer matches.
  *
  * Nothing is written through a symlink that leads outside the project or nowhere.
  * A path whose file or any directory above it is such a link is `symlink` in the
@@ -30,10 +39,10 @@
  * link anywhere. A link that stays inside, such as `CLAUDE.md -> AGENTS.md`, is
  * written through.
  *
- * Canon reads its files by their exact names, so a path the project holds only under
- * another letter case, such as `docs/canon/_template.md` or a `.Claude/` directory, is
- * `case` in the plan, and `apply` writes nothing while any is, `.claude/canon-index.md`
- * included. The project renames it first.
+ * The skills and hooks read canon's files by their exact names, so a path the project
+ * holds only under another letter case, such as `docs/specs/_template.md` or a `.Claude/`
+ * directory, is `case` in the plan, and `apply` writes nothing while any is,
+ * `.claude/canon-index.md` included. The project renames it first.
  *
  * `trust` records the owner's approval of the answers' `formatFile` (or, with
  * `--command apiKeyCommand`, of `tracker.apiKeyCommand`) for this repository in
@@ -57,11 +66,13 @@ import {
 } from 'node:fs';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { isDeepStrictEqual } from 'node:util';
 
 import {
   COMMANDS,
   CONFIG_PATH,
   DOMAINS_PATH,
+  ROLES,
   TRUST_FORMAT_VARIABLE,
   commandDigest,
   keyCommandProblem,
@@ -82,8 +93,17 @@ const ARCHIVE = 'docs/specs/archive/';
 const BEGIN = '<!-- canon:begin -->';
 const END = '<!-- canon:end -->';
 
-/** Files the project fills in after setup: kept as they are once they exist. */
-const KEEP = new Set([DOMAINS_PATH, 'docs/canon/README.md', 'docs/specs/README.md']);
+/** Starting points the project edits after setup: kept as they are once they exist. */
+const KEEP = new Set([
+  DOMAINS_PATH,
+  ROLES,
+  'docs/canon/README.md',
+  'docs/canon/_TEMPLATE.md',
+  'docs/specs/README.md',
+  'docs/specs/_TEMPLATE.md',
+  '.claude/rules/principles.md',
+]);
+
 const INDEX = '.claude/canon-index.md';
 
 function* walk(dir) {
@@ -151,7 +171,29 @@ export function placeholders(config) {
         : `${config.branches.prefixes.map((p) => code(`${p}/`)).join(', ')} followed by a kebab-case description`,
     checks: checks.length ? checks.map(code).join(', ') : 'none configured in `.claude/canon.json`',
     tracker: config.tracker ? trackerSection(config) : '',
+    ...loopValues(config),
     ...specsValues(config),
+  };
+}
+
+/**
+ * How the CLAUDE.md loop names the gate and each command's move. With a tracker the issue's
+ * status is the gate, and `references/tracker.md` makes the spec's status line optional.
+ */
+function loopValues({ tracker }) {
+  if (!tracker) {
+    return {
+      statusIntro:
+        "A spec's status is the `**Status:**` line under its title, and each command makes one move:",
+      approveMove: 'sets `approved`, commits and pushes it',
+      buildMove: 'sets `in-progress`',
+    };
+  }
+  const status = (role) => `\`${tracker.statuses[role]}\``;
+  return {
+    statusIntro: "The issue's status is the gate, and each command makes one move:",
+    approveMove: `commits any status-line edit, pushes, and moves the issue to ${status('approved')}`,
+    buildMove: `moves the issue to ${status('building')}`,
   };
 }
 
@@ -166,6 +208,10 @@ function specsValues({ specs, tracker, owner }) {
   return {
     spec: tracker ? `${tracker.team}-123` : byBranch ? '<branch>' : 'NNN',
     specTitle: byBranch ? '<branch, each / as ->' : 'NNN',
+    specRules: byBranch ? 'naming' : 'numbering',
+    statusLineRule: tracker
+      ? "The `**Status:**` line\nis optional: the issue's status is the gate. A spec that has it keeps it directly under the H1,\nmirroring the issue: commands find it by that prefix."
+      : 'The `**Status:**` line\nstays directly under the H1: commands find it by that prefix.',
     specFile: byBranch ? '`<branch>.md`, the branch name with each `/` as `-`' : '`NNN-slug.md`',
     specPath: byBranch
       ? '`docs/specs/<branch>.md`, the branch name with each `/` as `-`'
@@ -200,16 +246,43 @@ function specsValues({ specs, tracker, owner }) {
               ]),
         ].join('\n'),
     specArchiveRule: toTracker
-      ? '`/canon:staging` posts the spec to its issue as a comment, then deletes it in a commit on the branch before it merges. The issue is the archive; `docs/specs/` holds only work in flight.'
-      : '`/canon:staging` sets `shipped` and `git mv`s the spec to `docs/specs/archive/` in a commit on the branch before it merges.',
+      ? '`/canon:staging` posts the spec to its issue as a comment, then deletes it in a commit on the\nbranch before it merges: the issue is the archive,'
+      : '`/canon:staging` sets `shipped` and `git mv`s the spec to `docs/specs/archive/` in a commit on the\nbranch before it merges,',
   };
+}
+
+/**
+ * How many columns `text` takes in a monospace font, as Prettier measures it when it aligns a
+ * table, one grapheme at a time: a joined emoji sequence or an emoji-style symbol takes two, as
+ * does a wide East Asian character; a text-style symbol such as `™` takes one, and a combining
+ * mark adds nothing to the letter it sits on.
+ */
+export function displayWidth(text) {
+  let width = 0;
+  for (const { segment } of new Intl.Segmenter('en', { granularity: 'grapheme' }).segment(text)) {
+    const code = segment.codePointAt(0);
+    const wide =
+      /\p{Emoji_Presentation}|\ufe0f/u.test(segment) ||
+      (code >= 0x1100 && code <= 0x115f) ||
+      (code >= 0x2e80 && code <= 0xa4cf && code !== 0x303f) ||
+      (code >= 0xac00 && code <= 0xd7a3) ||
+      (code >= 0xf900 && code <= 0xfaff) ||
+      (code >= 0xfe30 && code <= 0xfe4f) ||
+      (code >= 0xff00 && code <= 0xff60) ||
+      (code >= 0xffe0 && code <= 0xffe6) ||
+      (code >= 0x20000 && code <= 0x3fffd);
+    width += wide ? 2 : 1;
+  }
+  return width;
 }
 
 /**
  * The specs README's Lifecycle section: how the status is read, then a table of the statuses,
  * padded as a Markdown formatter would leave it so a project's format check passes.
  */
-function lifecycle(specs, tracker, owner) {
+function lifecycle(specs, tracker, rawOwner) {
+  // A `|` in a cell would start a new column.
+  const owner = rawOwner.replaceAll('|', '\\|');
   const toTracker = specs?.archive === 'tracker';
   const posted = 'posted to its issue as a comment';
   const rows = [
@@ -242,19 +315,18 @@ function lifecycle(specs, tracker, owner) {
         : 'Dropped. Set from any status, in the commit that moves it to `archive/`.',
     ],
   ];
-  const widths = rows[0].map((_, i) => Math.max(...rows.map((row) => row[i].length)));
-  const line = (cells) => `| ${cells.map((cell, i) => cell.padEnd(widths[i])).join(' | ')} |`;
+  const widths = rows[0].map((_, i) => Math.max(...rows.map((row) => displayWidth(row[i]))));
+  const pad = (cell, i) => cell + ' '.repeat(widths[i] - displayWidth(cell));
+  const line = (cells) => `| ${cells.map(pad).join(' | ')} |`;
   const table = [
     line(rows[0]),
     `| ${widths.map((w) => '-'.repeat(w)).join(' | ')} |`,
     ...rows.slice(1).map(line),
   ];
-  // references/specs.md, which the skills read only when there is a `specs` block, makes the
-  // line optional with a tracker; without that block the line mirrors the issue.
-  const status =
-    tracker && specs
-      ? "With a tracker the `**Status:**` line under the H1 is optional: the issue's status is the\ngate. A spec that has the line keeps it mirroring the issue, and commands find it by that\nprefix, never by line number."
-      : 'The status is the `**Status:**` line directly under the H1. Commands find it by that prefix,\nnever by line number.';
+  // references/tracker.md makes the line optional whenever there is a tracker.
+  const status = tracker
+    ? "With a tracker the `**Status:**` line under the H1 is optional: the issue's status is the\ngate. A spec that has the line keeps it mirroring the issue, and commands find it by that\nprefix, never by line number."
+    : 'The status is the `**Status:**` line directly under the H1. Commands find it by that prefix,\nnever by line number.';
   return `${status}\n\n${table.join('\n')}`;
 }
 
@@ -263,7 +335,7 @@ function lifecycle(specs, tracker, owner) {
  * Kept here rather than in the template so a project without a tracker gets no
  * trace of one.
  */
-function trackerSection({ tracker, owner, branches, specs }) {
+function trackerSection({ tracker, owner, branches }) {
   const name = { linear: 'Linear' }[tracker.provider] ?? tracker.provider;
   const status = (role) => `\`${tracker.statuses[role]}\``;
   return [
@@ -273,10 +345,7 @@ function trackerSection({ tracker, owner, branches, specs }) {
     `\`/canon:define\` from ${status('ready')} to ${status('spec')}, \`/canon:approve\` to ${status('approved')},`,
     `\`/canon:build\` to ${status('building')}, and \`/canon:build\` or \`/canon:ship\` to ${status('blocked')}`,
     `when they need ${owner}. ${name}'s GitHub integration sets ${status('staging')} and ${status('production')}`,
-    // With a `specs` block the skills read references/specs.md, which makes the line optional.
-    specs
-      ? "when the pull requests merge, never by hand. A spec's `**Status:**` line is optional; one that has it mirrors the issue."
-      : "when the pull requests merge, never by hand. The spec's `**Status:**` line mirrors the issue.",
+    "when the pull requests merge, never by hand. A spec's `**Status:**` line is optional; one that has it mirrors the issue.",
     '',
     branches.naming === 'tracker'
       ? `- Branches are the issue's own branch name, verbatim, e.g. \`${tracker.team.toLowerCase()}-123-<slug>\`. Commit bodies carry`
@@ -352,10 +421,12 @@ export function render(root, config, { enablePlugin = false } = {}) {
     content: `${JSON.stringify({ $schema: SCHEMA_URL, ...config }, null, 2)}\n`,
   });
 
-  files.push({
-    path: 'CLAUDE.md',
-    content: withSection(read('CLAUDE.md'), fill(readFileSync(SECTION, 'utf8'), values)),
-  });
+  if (config.claudeMd !== false) {
+    files.push({
+      path: 'CLAUDE.md',
+      content: withSection(read('CLAUDE.md'), fill(readFileSync(SECTION, 'utf8'), values)),
+    });
+  }
 
   if (enablePlugin) {
     files.push({
@@ -367,23 +438,69 @@ export function render(root, config, { enablePlugin = false } = {}) {
   return files;
 }
 
+/** Collapsed, so a formatter's rewrapping and table padding read as the same text. */
+const collapse = (text) => text.replace(/-{3,}/g, '---').replace(/\s+/g, ' ').trim();
+
+/** A tracker for filling the templates as they read with one, when the config has none. */
+const SAMPLE_TRACKER = {
+  provider: 'linear',
+  team: 'ABC',
+  statuses: Object.fromEntries(ROLES.map((role) => [role, role])),
+};
+
 /**
- * The placeholder values of the project's current `.claude/canon.json`, or null when it has
- * none that is valid. A kept file whose template fills differently from these is `stale`.
+ * The placeholder values `config` would have under every other combination of the settings
+ * that change what the specs README and template say: a tracker or none, and each `specs` value.
  */
-function previousValues(root) {
+function otherSettings(config) {
+  const others = [];
+  for (const tracker of [undefined, config.tracker ?? SAMPLE_TRACKER]) {
+    for (const naming of ['number', 'branch']) {
+      for (const archive of ['repo', 'tracker']) {
+        for (const commitWhileDrafting of [true, false]) {
+          const specs = { naming, archive, commitWhileDrafting };
+          others.push(placeholders({ ...config, tracker, specs }));
+        }
+      }
+    }
+  }
+  return others;
+}
+
+/** The paragraphs of `text`, each collapsed, headings and rules left out. */
+const paragraphsOf = (text) =>
+  text
+    .split(/\n{2,}/)
+    .map(collapse)
+    .filter((p) => p && p !== '---' && !p.startsWith('#'));
+
+/**
+ * Whether the kept file `current` still holds, word for word, a paragraph that `template` fills
+ * only under other settings than `values`: positive evidence that it describes them. Text the
+ * project wrote, or rewrote, never matches one, so an edit is never stale.
+ */
+function isStale(current, template, values, others) {
+  const now = new Set(paragraphsOf(fill(template, values)));
+  const text = collapse(current);
+  return others.some((other) =>
+    paragraphsOf(fill(template, other)).some((p) => !now.has(p) && text.includes(p))
+  );
+}
+
+/** Whether the config at `target` holds the same values as `content`, however it is formatted. */
+function sameConfig(target, content) {
   try {
-    const { $schema, ...config } = JSON.parse(readFileSync(join(root, CONFIG_PATH), 'utf8'));
-    return validate(config).length ? null : placeholders(config);
+    return isDeepStrictEqual(JSON.parse(readFileSync(target, 'utf8')), JSON.parse(content));
   } catch {
-    return null;
+    return false;
   }
 }
 
 /** `render`, with what would happen to each file. */
 export function plan(root, config, options) {
   const names = lister(root);
-  const before = previousValues(root);
+  const values = placeholders(config);
+  const others = otherSettings(config);
   const blocked = (path) => {
     const link = symlinkIn(root, path);
     if (link !== null) return { action: 'symlink', link };
@@ -396,11 +513,18 @@ export function plan(root, config, options) {
     if (block !== null) return { ...file, ...block };
     if (!existsSync(target)) return { ...file, action: 'create' };
     if (KEEP.has(file.path)) {
-      const changed = before !== null && fill(file.template, before) !== file.content;
-      return { ...file, action: changed ? 'stale' : 'keep' };
+      const stale = isStale(readFileSync(target, 'utf8'), file.template, values, others);
+      return { ...file, action: stale ? 'stale' : 'keep' };
     }
-    return { ...file, action: readFileSync(target, 'utf8') === file.content ? 'same' : 'conflict' };
+    const same =
+      file.path === CONFIG_PATH
+        ? sameConfig(target, file.content)
+        : readFileSync(target, 'utf8') === file.content;
+    return { ...file, action: same ? 'same' : 'conflict' };
   });
+  if (config.specs?.archive === 'tracker' && existsSync(join(root, ARCHIVE))) {
+    steps.push({ path: ARCHIVE, action: 'leftover' });
+  }
   // `apply` writes the index after the plan, so the plan shows what would stop that too.
   const index = blocked(INDEX);
   if (index !== null) steps.push({ path: INDEX, ...index });
@@ -426,7 +550,7 @@ export function apply(root, config, { allow = [], ...options } = {}) {
   if (refused.length) return { ok: false, refused: refused.map((s) => s.path), steps };
 
   for (const step of steps) {
-    if (['same', 'keep', 'stale'].includes(step.action)) continue;
+    if (['same', 'keep', 'stale', 'leftover'].includes(step.action)) continue;
     mkdirSync(dirname(join(root, step.path)), { recursive: true });
     writeFileSync(join(root, step.path), step.content);
   }
@@ -587,6 +711,7 @@ function main(argv) {
     same: 'unchanged',
     keep: 'kept',
     stale: 'kept',
+    leftover: 'left',
     create: 'created',
     conflict: 'updated',
   };

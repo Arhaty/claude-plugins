@@ -48,6 +48,7 @@ const TOP = [
   'review',
   'specs',
   'ci',
+  'claudeMd',
 ];
 const BRANCHES = ['integration', 'production', 'prefixes', 'naming', 'deleteAfterMerge'];
 const NAMINGS = ['prefix', 'tracker'];
@@ -249,6 +250,9 @@ export function validate(config) {
   if ('ci' in config) errors.push(...ciErrors(config.ci));
   if ('review' in config) errors.push(...reviewErrors(config.review));
   if ('specs' in config) errors.push(...specsErrors(config.specs, 'tracker' in config));
+  if ('claudeMd' in config && typeof config.claudeMd !== 'boolean') {
+    errors.push('`claudeMd` must be true or false, or left out');
+  }
   return errors;
 }
 

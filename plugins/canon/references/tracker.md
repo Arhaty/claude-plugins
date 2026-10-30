@@ -4,8 +4,13 @@ Read this when `.claude/canon.json` has a `tracker` block. Without one, none of 
 spec's `**Status:**` line is the gate, as before.
 
 With one, **the issue is the record and the gate.** Each command reads the issue's status and
-moves it, and the spec's `**Status:**` line mirrors it. Where the two disagree, the issue wins:
-say so in one line and carry on from the issue's status.
+moves it. Where a spec's `**Status:**` line disagrees, the issue wins: say so in one line and carry
+on from the issue's status.
+
+**The `**Status:**` line is optional.** A spec without it is complete, and no command adds one: the
+steps that would move it (`/canon:approve` step 2, `/canon:build` step 3, `/canon:staging` step 4)
+skip the edit, and a commit that would have held only the edit is not made. A refusal that reads
+the line reads the issue's role instead. A spec with the line keeps it mirroring the issue.
 
 ## The client
 
@@ -61,7 +66,8 @@ request body to fix, and a status set by hand hides it. The client refuses them 
     `git branch -a --list "<branchName>" "origin/<branchName>"`. An empty `branchName` is a stop:
     say so, never make one up.
 - **The spec** keeps its number, `docs/specs/NNN-<slug>.md`, and carries the identifier on an
-  `**Issue:** ABC-123` line directly under its `**Status:**` line.
+  `**Issue:** ABC-123` line directly under its `**Status:**` line, or under the H1 when it has
+  none. Commands find it by that prefix.
 - **Commit bodies** carry `Part of ABC-123` beside `Spec: NNN`. It links the commit and moves
   nothing.
 - **The pull request body** carries `Fixes ABC-123` on a line of its own from the moment it opens.

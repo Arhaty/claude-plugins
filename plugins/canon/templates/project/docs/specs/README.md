@@ -28,5 +28,5 @@ so an open question there becomes a guess.
 
 ## Archive
 
-{{specArchiveRule}} The merged `{{integration}}` holds no active spec for that work, and an active
-spec found on `{{integration}}` is unfinished work.
+{{specArchiveRule}} so the merged `{{integration}}` holds no active spec for that work. An
+active spec found on `{{integration}}` is unfinished work.
