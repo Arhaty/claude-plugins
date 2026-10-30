@@ -42,6 +42,14 @@ core, what matters is..."
 
 The closing line an editor deletes most often. End on the last real point instead.
 
+Same family: the recap closer. "In short", "In summary", "In conclusion", "All in all",
+"Ultimately", "At the end of the day" or "When all is said and done", followed by a restatement
+of the passage.
+
+> Bad: In short, the ferry runs less often in winter.
+
+End on the last real sentence.
+
 ### 4. Faux-insight setups
 
 "What nobody tells you is..." "The part everyone misses..." "Here's what's really going on." "The
@@ -80,9 +88,9 @@ Use the number of items the meaning needs, usually one or two.
 
 ### 10. Inflated significance
 
-"Stands as a testament", "marks a pivotal moment", "underscores the importance", "plays a key
-role", "in an ever-evolving landscape", "highlighting the team's commitment to". Keep the fact,
-drop the significance.
+"Stands as a testament", "marks a pivotal moment", "a defining moment", "a watershed moment",
+"speaks volumes", "underscores the importance", "plays a key role", "in an ever-evolving
+landscape", "highlighting the team's commitment to". Keep the fact, drop the significance.
 
 ### 11. Sales language
 
@@ -93,6 +101,13 @@ drop the significance.
 
 "Experts agree", "studies show", "research suggests", "it's widely known". Name the source and
 what it said, or cut the claim.
+
+Same for the unnamed majority: "many people", "most people", "many find", "some say", "it's often
+said", "people tend to".
+
+> Bad: Many people find that a folding bike survives a commute better.
+
+Name the source, state the claim plainly, or cut it.
 
 ### 13. Chatbot residue
 
@@ -151,7 +166,10 @@ Fold the fact into a real sentence, or cut it if the information appears elsewhe
 heading).
 
 Not a tell: greetings, sign-offs ("Thanks"), headings, bullets, table cells, or a one-word answer
-to a direct question.
+to a direct question. Nor is interface copy written to a length budget: button labels ("Send
+request", "Sending"), empty states ("No messages yet."), status lines, toasts and form errors are
+fragments by design. This pattern targets prose cut up for effect, where the full sentence existed.
+Give the checker interface strings as a list or a table, where it doesn't look for fragments.
 
 ### 21. False agency
 
@@ -183,8 +201,8 @@ one, then back it with a fact ("loads in 200 ms").
 
 ### 26. Mechanical transitions
 
-Sentence-initial "Additionally", "Moreover", "Furthermore", "That said", "With that in mind", "In
-conclusion". Use "and", "but", "so", or nothing. The next thought is usually the transition.
+Sentence-initial "Additionally", "Moreover", "Furthermore", "That said", "With that in mind".
+Use "and", "but", "so", or nothing. The next thought is usually the transition.
 
 ### 27. Rhetorical-question setups
 
@@ -198,33 +216,28 @@ call?") is an ask, and fine.
 One sentence chains three or more capability verbs, often verb-first with no subject. It is the
 default shape of AI product copy, and every product could use it.
 
-> Bad: Drafts and edits text in your project's voice, then quotes each line that reads as
-> AI-written and names the pattern.
+> Bad: Tracks invoices across your accounts, flags the ones past due, then drafts a reminder to
+> each client.
 >
-> Bad: Plan each change in a spec, build it behind a pull request, and update docs/canon/ in the
-> same pull request.
+> Bad: Connect your bank, track each expense by category, and export a report for your
+> accountant.
 >
-> Bad: It drafts in your project's voice, strips AI writing tells, and checks a draft against 40
-> named patterns.
+> Bad: It reads your receipts, matches them to transactions, and files them by month.
 >
-> Bad: Write a spec, build it behind a pull request, keep docs/canon/ current, and let hooks guard
-> your branches.
+> Bad: Acme imports statements from every bank, matches each payment to an invoice, sends
+> reminders for the ones past due, and exports a quarterly report for your accountant.
 >
-> Bad: canon writes one spec per change, carries it through review, staging, and a release pull
-> request, keeps docs/canon/ current as the project's living documentation, and enforces the git
-> rules with hooks.
+> Good: Acme matches each bank payment to the invoice it settles. When an invoice goes past due,
+> it drafts a reminder for you to send.
 >
-> Good: write checks a draft for AI writing tells and quotes each line that has one, with the
-> pattern it breaks. New drafts follow your project's style guide.
->
-> Good: Each change starts as a spec and ships in a pull request that also updates docs/canon/.
-> Hooks refuse pushes and merges into your protected branches.
+> Good: Each expense lands in a category as it clears. The quarterly report is ready for your
+> accountant on the first of the month.
 
 In product, site and README copy, one or two verbs per sentence. Three or more capabilities go in
 a list or a table, never one sentence.
 
 Not a tell: a plain list of nouns ("emails, posts, docs, READMEs, and replies"), or a literal step
-in a numbered procedure ("Cuts a branch, researches, and writes docs/specs/NNN-slug.md").
+in a numbered procedure ("Clones the repository, installs dependencies, and runs the tests").
 
 ### 42. Reassurance rider
 
@@ -238,6 +251,33 @@ seconds", "with no extra work". The phrase-level form of manufactured warmth.
 > Good: Claude writes a first draft, then rereads it for AI patterns and fixes them.
 
 Cut the rider. If the timing is a real fact the reader needs, state it as one.
+
+### 44. Adjacent gloss
+
+A sentence that restates the one before it, introduced by "In other words", "That is to say",
+"Put simply", "Simply put", "To put it another way", "What this means is" or "Which is to say".
+
+> Bad: The cafe opens at six. In other words, it is the only place open before the market.
+>
+> Good: The cafe opens at six, before anything else near the market.
+
+Merge the two or drop the second. #19 covers explaining a number and #39 a point repeated across
+sections. This is the sentence-to-sentence form, and the clearest sign that nobody reread the
+draft.
+
+### 45. Evaluative participle tail
+
+A comma and an -ing clause that interprets the main clause instead of adding a fact: ", marking",
+", highlighting", ", underscoring", ", signaling", ", reflecting", ", showcasing", ", cementing".
+
+> Bad: The platform reopened in March, marking the end of a two-year closure.
+>
+> Good: The platform reopened in March. It had been closed for two years.
+
+Two facts joined this way are one fact and one opinion about it. Make the second a sentence or cut
+it. Factual riders (", allowing you to", ", ensuring") stay in #33, and so does a literal
+participle ("The lake was still, reflecting the mountains"). The checker can't tell the two apart,
+so it marks each one as a place to look.
 
 ## Tier 3: weak alone, count when stacked
 
@@ -267,8 +307,9 @@ drafts replies. The system files them." Repeat the noun.
 
 ### 33. Shallow -ing riders
 
-"..., ensuring...", "..., allowing you to...", "..., reflecting...", "..., showcasing..." tacked
-on for depth. Cut, or make it a real clause.
+"..., ensuring...", "..., allowing you to...", "..., enabling..." tacked on for depth. Cut, or
+make it a real clause. A rider that interprets instead of adding a fact (", marking") is #45 and
+fires on sight.
 
 ### 34. Curly quotes
 
@@ -330,7 +371,9 @@ low-hanging fruit, take it to the next level, unlock the full potential, the rea
 its core, in your voice, in your brand voice, in your project's voice, in your own words, sounds
 like you, sounds just like you (name where the voice comes from: "writes to your project's style
 guide"), before you see it, before it reaches you, before it hands anything back, so you don't
-have to, without lifting a finger, in seconds, with no extra work (riders, #42).
+have to, without lifting a finger, in seconds, with no extra work (riders, #42), in short, in
+summary, all in all, ultimately, at the end of the day, when all is said and done, in conclusion
+(recap closers, #3), a defining moment, speaks volumes, a watershed moment (#10).
 
 Filler swaps: "in order to" is "to". "Due to the fact that" is "because". "It's important to note
 that" goes. "A number of" is the number.

@@ -29,6 +29,32 @@ const escape = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const whole = (text, suffix = '') =>
   new RegExp(`(?<![\\w-])${escape(text)}${suffix}(?![\\w-])`, 'gi');
 
+/**
+ * The start of a sentence, a list item, a heading or what follows a colon, as a lookbehind. A
+ * sentence may end inside a closing parenthesis or quote: `it closed.) In short`.
+ */
+const OPENS = String.raw`(?<=^(?:[ \t]*(?:[-*+]|\d+\.|#{1,6})[ \t]+)?|[.!?:][)\]"'”’]*\s+)`;
+
+/**
+ * A recap closer (#3): one of these, opening a sentence, with its comma. The comma is what makes
+ * it an opener: "## In summary" is a heading, "In summary form" a phrase. "Ultimately," counts
+ * only in a paragraph's last sentence; earlier, it is an ordinary adverb.
+ */
+const RECAP = new RegExp(
+  `${OPENS}(in short|in summary|in conclusion|all in all|ultimately|at the end of the day|` +
+    `when all is said and done),`,
+  'gi'
+);
+
+/**
+ * An -ing clause after a comma that may interpret the clause before it (#45). A LOOK, not a hard
+ * flag: "reflecting the mountains" is a fact, "reflecting the team's commitment" an opinion, and
+ * only a reader can tell them apart. A bare gerund in a list ("sanding, marking, and painting")
+ * is left alone.
+ */
+const TAIL =
+  /(?<=,\s+)(marking|highlighting|underscoring|signal{1,2}ing|reflecting|showcasing|cementing)\b(?=\s+(?!(?:and|or)\b)\w)/gi;
+
 /** `[name, pattern number, regex]`. Case-insensitive unless the regex says otherwise. */
 const HARD = [
   ['dash', 7, /[—]|(?<!\d\s?)–|–(?!\s?\d)| -- /g],
@@ -48,7 +74,7 @@ const HARD = [
       `\\bhonestly\\b|\\bto be (honest|frank)\\b|\\blet me be (honest|clear)\\b|` +
         `\\bhere${APOS}s the thing\\b|\\blet${APOS}s be real\\b|` +
         // Only as an opener: "what the thing is" is an ordinary clause.
-        `(?<=^(?:[ \\t]*(?:[-*+]|\\d+\\.|#{1,6})[ \\t]+)?|[.!?:]\\s+)(?:but |and |so )?the (thing|truth) is\\b`,
+        `${OPENS}(?:but |and |so )?the (thing|truth) is\\b`,
       'gi'
     ),
   ],
@@ -103,7 +129,20 @@ const HARD = [
   [
     'mechanical transition',
     26,
-    /(?<=^(?:[ \t]*(?:[-*+]|\d+\.|#{1,6})[ \t]+)?|[.!?]\s+)(Additionally|Moreover|Furthermore|In conclusion|With that in mind|That said),/g,
+    new RegExp(`${OPENS}(Additionally|Moreover|Furthermore|With that in mind|That said),`, 'g'),
+  ],
+  [
+    'adjacent gloss',
+    44,
+    new RegExp(
+      // As with a recap closer, the comma makes it an opener: "## Put simply" is a heading, and
+      // "That is to say nothing of" an idiom.
+      `${OPENS}(?:(In other words|That is to say|Put simply|Simply put|To put it another way|` +
+        `Which is to say),|What this means is that\\b)` +
+        // Mid-sentence, a gloss follows a comma: "The tide fell, which is to say the boats sat".
+        `|(?<=,\\s+)(in other words|which is to say)\\b`,
+      'gi'
+    ),
   ],
   [
     'read-this-way line',
@@ -113,7 +152,7 @@ const HARD = [
   [
     'inflated significance',
     10,
-    /\btestament to\b|\bpivotal moment\b|\bplays an? (key|vital|crucial|pivotal) role\b|\bunderscores\b|\bever-evolving\b|\bindelible\b|\bsetting the stage\b|\bpaving the way\b/gi,
+    /\btestament to\b|\bpivotal moment\b|\bplays an? (key|vital|crucial|pivotal) role\b|\bunderscores\b|\bever-evolving\b|\bindelible\b|\bsetting the stage\b|\bpaving the way\b|\b(defining|watershed) moments?\b|\b(speaks?|spoke|speaking) volumes\b/gi,
   ],
   ['copula avoidance', 17, /\b(serves|stands|acts|functions) as\b|\bboasts\b/gi],
   [
@@ -166,7 +205,9 @@ const PHRASES = [
 
 /**
  * Phrases matched on lowercased text with straight apostrophes, as `[label, pattern, regex]`.
- * The "your voice" claim fits every writing product; a rider soothes and adds no fact (#42).
+ * The "your voice" claim fits every writing product; a rider soothes and adds no fact (#42); an
+ * unowned majority claims support nobody can check (#12). Recap closers are read only where they
+ * open a sentence, as hard flags (#3).
  */
 const CLAIMS = [
   ['in your voice', null, /\bin your (?:own |brand |[\w-]+'s )?voice\b/g],
@@ -181,6 +222,21 @@ const CLAIMS = [
     'in seconds',
     'with no extra work',
   ].map((phrase) => [phrase, 42, whole(phrase)]),
+  ...[
+    'experts agree',
+    'studies show',
+    'research suggests',
+    "it's widely known",
+    'some say',
+    "it's often said",
+    'people tend to',
+  ].map((phrase) => [phrase, 12, whole(phrase)]),
+  // Counting, not appeal: "how many people came", "not many find it", "the most people we saw".
+  ...['many people', 'many find', 'most people'].map((phrase) => [
+    phrase,
+    12,
+    new RegExp(`(?<!\\b(?:how|as|so|too|the|not|very|that|this) )${whole(phrase).source}`, 'g'),
+  ]),
 ];
 
 /**
@@ -420,23 +476,42 @@ export function check(text) {
         found.push([m.index + lead, 'HARD', name, pattern, m[0].trim()]);
       }
     }
+    const sentences = sentencesAt(prose);
+    const last = sentences.at(-1);
+    for (const m of prose.matchAll(RECAP)) {
+      if (/^ultimately/i.test(m[1]) && m.index < last.index) continue;
+      found.push([m.index, 'HARD', 'recap closer', 3, m[0]]);
+    }
+    for (const m of prose.matchAll(TAIL))
+      found.push([m.index, 'LOOK', 'evaluative tail', 45, m[0]]);
+    // A word that is exactly what a pattern matched is reported once, by the pattern: ",
+    // showcasing the demand" is #45, not also the vocabulary word.
+    const spans = new Set(found.map(([index, , , , match]) => `${index}:${match.length}`));
+    const word = (m) => !spans.has(`${m.index}:${m[0].length}`);
     const seen = new Set();
-    for (const [word, re] of VOCAB_RES) {
+    for (const [entry, re] of VOCAB_RES) {
       for (const m of prose.matchAll(re)) {
-        const key = `${lineAt(m.index)} ${word}`;
-        if (!seen.has(key)) found.push([m.index, 'WORD', 'vocabulary', null, word]);
-        seen.add(key);
+        const key = `${lineAt(m.index)} ${entry}`;
+        if (!seen.has(key) && word(m)) {
+          found.push([m.index, 'WORD', 'vocabulary', null, entry]);
+          seen.add(key);
+        }
       }
     }
-    const low = prose.toLowerCase().replace(/\u2019/g, "'");
+    // Lowercased letter by letter, so every offset still matches `prose`.
+    const low = prose.replace(/[A-Z\u2019]/g, (c) => (c === '\u2019' ? "'" : c.toLowerCase()));
     for (const [phrase, re] of PHRASE_RES) {
-      for (const m of low.matchAll(re)) found.push([m.index, 'WORD', 'phrase', null, phrase]);
+      for (const m of low.matchAll(re)) {
+        if (word(m)) found.push([m.index, 'WORD', 'phrase', null, phrase]);
+      }
     }
     for (const [phrase, pattern, re] of CLAIMS) {
-      for (const m of low.matchAll(re)) found.push([m.index, 'WORD', 'phrase', pattern, phrase]);
+      for (const m of low.matchAll(re)) {
+        if (word(m)) found.push([m.index, 'WORD', 'phrase', pattern, phrase]);
+      }
     }
     if (!block.structure) {
-      for (const s of sentencesAt(prose)) {
+      for (const s of sentences) {
         const words = s.text.match(/[\w'%$-]+/g) ?? [];
         if (
           words.length > 0 &&
