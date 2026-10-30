@@ -1,6 +1,6 @@
 {
   "name": "canon",
-  "version": "0.4.4",
+  "version": "0.5.0",
   "description": "A spec, build, review, canon workflow for Claude Code: specs plan the work, docs/canon records how the project works today, and hooks enforce the git rules.",
   "author": {
     "name": "Arhaty",
@@ -10,7 +10,14 @@
   "privacyPolicyUrl": "https://github.com/arhaty/claude-plugins/tree/main/plugins/canon#privacy",
   "repository": "https://github.com/arhaty/claude-plugins",
   "license": "MIT",
-  "keywords": ["workflow", "specs", "documentation", "git", "hooks", "code-review"],
+  "keywords": [
+    "workflow",
+    "specs",
+    "documentation",
+    "git",
+    "hooks",
+    "code-review"
+  ],
   "metadata": {
     "requires": "Claude Code, macOS or Linux, Node 20 or later, the GitHub CLI signed in, and a GitHub repository with an integration branch and a production branch",
     "setupCommand": "/canon:setup"

@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.5.0](https://github.com/Arhaty/claude-plugins/compare/canon-v0.4.4...canon-v0.5.0) (2026-10-30)
+
+
+### Features
+
+* add a build step and a required check to canon's gate ([#57](https://github.com/Arhaty/claude-plugins/issues/57)) ([2ba58c3](https://github.com/Arhaty/claude-plugins/commit/2ba58c317f7dc4916bb24c6347ddb446d42200be))
+* let a cloud environment approve canon's formatter ([#58](https://github.com/Arhaty/claude-plugins/issues/58)) ([8eecfd9](https://github.com/Arhaty/claude-plugins/commit/8eecfd9e6dfb20660abcaf9c3c8ac4c00a68d97a))
+* let a project add its own checks to canon's review ([#59](https://github.com/Arhaty/claude-plugins/issues/59)) ([30ad6f8](https://github.com/Arhaty/claude-plugins/commit/30ad6f84b23a176605be905990044971e335cfd0))
+* let canon archive specs to the tracker ([#56](https://github.com/Arhaty/claude-plugins/issues/56)) ([c905a70](https://github.com/Arhaty/claude-plugins/commit/c905a709e4fdddb97c3f6d7e6544a705a4d1fba9))
+* make canon's GitHub calls work in a Claude Code cloud session ([#53](https://github.com/Arhaty/claude-plugins/issues/53)) ([540f345](https://github.com/Arhaty/claude-plugins/commit/540f3458f28a67bed89b4457c0a40ecb9a627bed))
+* make canon's urls block optional ([#54](https://github.com/Arhaty/claude-plugins/issues/54)) ([5db759b](https://github.com/Arhaty/claude-plugins/commit/5db759bf4d6c8cc00499be47d49fef7d38a6aba1))
+* name canon branches after the tracker issue ([#55](https://github.com/Arhaty/claude-plugins/issues/55)) ([8310e6b](https://github.com/Arhaty/claude-plugins/commit/8310e6b8a044d028a702403b3c62f7f18004d949))
+
 ## [0.4.4](https://github.com/Arhaty/claude-plugins/compare/canon-v0.4.3...canon-v0.4.4) (2026-10-25)
 
 ### Bug Fixes
