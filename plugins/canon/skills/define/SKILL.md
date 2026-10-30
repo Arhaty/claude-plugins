@@ -12,7 +12,8 @@ Write the spec for **$ARGUMENTS**.
 Run `node "${CLAUDE_PLUGIN_ROOT}/scripts/config.mjs"`. If it fails, stop and pass its message on:
 the project needs `/canon:setup`. Otherwise it prints the project's config. Below, `<owner>`,
 `<integration>` and `<production>` mean its `owner`, `branches.integration` and
-`branches.production`, and `<prefixes>` its `branches.prefixes`.
+`branches.production`, and `<prefixes>` its `branches.prefixes`. `branches.naming` is `prefix`
+when unset; `tracker` names every branch after its issue, as `tracker.md` says under **Names**.
 
 **If it has a `tracker` block**, read `${CLAUDE_PLUGIN_ROOT}/references/tracker.md` now, then
 follow **With a tracker** below wherever a step names it.
@@ -38,7 +39,8 @@ for a new spec is a stop: ask for the issue.
    the brief; a comment from the owner refines it.
 2. **Check the role before anything else.**
    - **New spec: the role must be `ready`**, or `spec` with no spec for it anywhere: no branch
-     `*/<id>-*` on the remote or here, and no spec file naming `<ID>`. That is a define that
+     for it on the remote or here (found as `tracker.md` says under **Names**), and no spec file
+     naming `<ID>`. That is a define that
      stopped before writing one; carry on from it as a new spec, on its branch if it cut one.
      `spec` with a spec already has one waiting to be read, so it wants `/canon:approve` or a
      revision round on that spec; `approved` wants `/canon:build`;
@@ -49,9 +51,10 @@ for a new spec is a stop: ask for the issue.
      longer exists. `building` or later stops, as `in-progress` does.
 3. **Set `spec` once the checks pass, before the research**: `set-state <ID> spec`. It is the board
    saying the issue is being worked, and where it rests until `/canon:approve`.
-4. **The slug comes from the issue title**, and the branch is `<prefix>/<id>-<slug>` with the
-   identifier in lowercase. A revision round finds it with `git branch -a --list '*/<id>-*'`. A
-   branch that already exists for the identifier on a new spec is a stop: name it.
+4. **The branch is named as `tracker.md` says under Names**: `<prefix>/<id>-<slug>` with the
+   identifier in lowercase and the slug from the issue title, or with `branches.naming` set to
+   `tracker`, the issue's `branchName` verbatim. A revision round finds it the same way. A branch
+   that already exists for the identifier on a new spec is a stop: name it.
 5. **The spec carries `**Issue:** <ID>`** on the line under `**Status:**`.
 6. **Fill in the domain labels when the spec is written.** Put every path in `## Where` through
    `.claude/canon-domains.json`; each canon file it names is a label, `<labelPrefix><name>`,
@@ -107,7 +110,7 @@ for a new spec is a stop: ask for the issue.
    already does half the work.
 
    The branch is `<prefix>/<slug>`, with a prefix from `<prefixes>` matching what the change is.
-   With a tracker it is `<prefix>/<id>-<slug>`. Say which in one line.
+   With a tracker it is named as **With a tracker** step 4 says. Say which in one line.
 
    **New spec:**
 
@@ -120,7 +123,8 @@ for a new spec is a stop: ask for the issue.
    `git push -u origin HEAD`. Tracking `origin/<integration>` would make a bare `git push` aim at
    `<integration>`, which the push hook refuses.
 
-   **Revision round:** find the branch that holds the spec (`git branch -a --list '*/<slug>'`),
+   **Revision round:** find the branch that holds the spec (`git branch -a --list '*/<slug>'`, or
+   with a tracker as `tracker.md` says under **Names**),
    check it out and bring `<integration>` in. Every round pushed it, so another session or
    container picks it up from `origin/$branch`:
 

@@ -80,7 +80,9 @@ file that exists and differs, and writes nothing until each one is approved by n
    - **Typecheck, lint, format-check and test commands**, each a command or none.
    - **Preview URL pattern** with `{branch}`, or none if feature branches get no preview. Also
      the staging and production URLs, or none.
-   - **Branch prefixes**: default `feat`, `fix`, `chore`, `refactor`, `docs`.
+   - **Branch prefixes**: default `feat`, `fix`, `chore`, `refactor`, `docs`. With a tracker, ask
+     too whether branches take the tracker issue's own branch name instead (`branches.naming`:
+     `"tracker"`), as Linear's `branchName` gives it; the prefixes may then be left out.
    - **Per-file formatter** (argv list) or none. If one is set, show the exact argv and ask
      whether to approve running it after every edit. Only that approval, recorded outside the
      repository, lets the hook run it; a changed command needs approving again. Say plainly that

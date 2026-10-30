@@ -41,7 +41,7 @@ import { existsSync, statSync } from 'node:fs';
 import { userInfo } from 'node:os';
 import { dirname, resolve, sep } from 'node:path';
 
-import { canonical, loadConfig, projectRoot, readPayload } from './lib/config.mjs';
+import { branchNaming, canonical, loadConfig, projectRoot, readPayload } from './lib/config.mjs';
 import { invocations } from './lib/merge-command.mjs';
 import { writesToWorktree } from './lib/writes-to-worktree.mjs';
 
@@ -171,7 +171,7 @@ if (bash) {
 // situation this hook has an opinion about.
 if (!PROTECTED.has(branch)) allow();
 
-const prefixes = branches.prefixes.map((p) => `\`${p}/\``).join(', ');
+const naming = branchNaming(state.config);
 console.error(
   (bash
     ? `Refusing to run a command that writes while \`${branch}\` is checked out:\n  ${command}\n\n`
@@ -179,7 +179,7 @@ console.error(
     'Work belongs on a feature branch, made before the first edit rather than before the\n' +
     'commit. Nothing is lost by switching now: `git checkout -b` carries uncommitted\n' +
     'changes across.\n\n' +
-    `Branch names take one of these prefixes and a kebab-case description: ${prefixes}.\n` +
+    `${naming.rule}, as in \`git checkout -b ${naming.example}\`.\n` +
     `Branch off \`${branches.integration}\`, never off \`${branches.production}\` and never off ` +
     'another feature branch.\n\n' +
     'Tell the user which branch you created and why, rather than doing it silently.\n\n' +
