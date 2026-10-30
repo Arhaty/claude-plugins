@@ -21,7 +21,7 @@ import { dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 import { trustKey, validate } from '../hooks/lib/config.mjs';
-import { apply, fill, plan } from '../scripts/scaffold.mjs';
+import { apply, displayWidth, fill, plan, render } from '../scripts/scaffold.mjs';
 import { CONFIG, ROOT, TRACKER, afterEach, beforeEach, describe, expect, it } from './helpers.mjs';
 
 const EXPECTED = [
@@ -266,7 +266,17 @@ describe('scaffold', () => {
       expect(claude).toMatch(/from `Todo` to `In Spec`/);
       expect(claude).toMatch(/`<prefix>\/abc-123-<slug>`/);
       expect(claude).toMatch(/`Fixes ABC-123`/);
-      expect(claude).toMatch(/The spec's `\*\*Status:\*\*` line mirrors the issue\./);
+      expect(claude).toMatch(
+        /A spec's `\*\*Status:\*\*` line is optional; one that has it mirrors/
+      );
+      expect(claude).toMatch(/The issue's status is the gate, and each command makes one move:/);
+      expect(claude).toMatch(
+        /`\/canon:approve`\*\* refuses an open spec, then commits any status-line edit, pushes, and moves the issue to `Approved`/
+      );
+      expect(claude).toMatch(/`\/canon:build ABC-123`\*\* moves the issue to `In Progress`/);
+      expect(claude).not.toMatch(
+        /A spec's status is the `\*\*Status:\*\*` line|sets `in-progress`/
+      );
       expect(claude).toMatch(/re-run the command\.\n\n### Branches and commits/);
       const written = JSON.parse(readFileSync(join(other, '.claude/canon.json'), 'utf8'));
       expect(written.tracker).toEqual(TRACKER);
@@ -302,21 +312,35 @@ describe('scaffold', () => {
     expect(claude).not.toMatch(/object Object|pnpm build/);
   });
 
-  it('refuses a file the project spells in another case, writing nothing, until it is renamed', () => {
-    mkdirSync(join(root, 'docs/canon'), { recursive: true });
-    writeFileSync(join(root, 'docs/canon/_template.md'), 'ours\n');
-    const step = plan(root, config()).find((s) => s.path === 'docs/canon/_TEMPLATE.md');
+  it('refuses a starting point the project spells in another case, since the skills read it', () => {
+    mkdirSync(join(root, 'docs/specs'), { recursive: true });
+    writeFileSync(join(root, 'docs/specs/_template.md'), 'ours\n');
+    expect(plan(root, config()).find((s) => s.path === 'docs/specs/_TEMPLATE.md').action).toBe(
+      'case'
+    );
+    mkdirSync(join(root, '.claude/Rules'), { recursive: true });
+    writeFileSync(join(root, '.claude/Rules/principles.md'), 'ours\n');
+    const step = plan(root, config()).find((s) => s.path === '.claude/rules/principles.md');
     expect(step.action).toBe('case');
-    expect(step.wanted).toBe('docs/canon/_TEMPLATE.md');
-    expect(step.variants).toEqual(['docs/canon/_template.md']);
+    expect(step.wanted).toBe('.claude/rules');
+    expect(apply(root, config()).ok).toBe(false);
+  });
 
-    const result = apply(root, config(), { allow: ['docs/canon/_TEMPLATE.md'] });
+  it('refuses a file canon reads by name in another case, writing nothing, until it is renamed', () => {
+    mkdirSync(join(root, 'docs/canon'), { recursive: true });
+    writeFileSync(join(root, 'docs/canon/readme.md'), 'ours\n');
+    const step = plan(root, config()).find((s) => s.path === 'docs/canon/README.md');
+    expect(step.action).toBe('case');
+    expect(step.wanted).toBe('docs/canon/README.md');
+    expect(step.variants).toEqual(['docs/canon/readme.md']);
+
+    const result = apply(root, config(), { allow: ['docs/canon/README.md'] });
     expect(result.ok).toBe(false);
     expect(result.cases).toEqual([
-      { wanted: 'docs/canon/_TEMPLATE.md', variants: ['docs/canon/_template.md'] },
+      { wanted: 'docs/canon/README.md', variants: ['docs/canon/readme.md'] },
     ]);
-    expect(readdirSync(join(root, 'docs/canon'))).toEqual(['_template.md']);
-    expect(readFileSync(join(root, 'docs/canon/_template.md'), 'utf8')).toBe('ours\n');
+    expect(readdirSync(join(root, 'docs/canon'))).toEqual(['readme.md']);
+    expect(readFileSync(join(root, 'docs/canon/readme.md'), 'utf8')).toBe('ours\n');
     expect(existsSync(join(root, '.claude'))).toBe(false);
 
     const answers = join(tmpdir(), `canon-answers-${process.pid}.json`);
@@ -328,7 +352,7 @@ describe('scaffold', () => {
         { encoding: 'utf8' }
       );
       expect(cli.status).toBe(1);
-      expect(cli.stderr).toMatch(/docs\/canon\/_template\.md -> docs\/canon\/_TEMPLATE\.md/);
+      expect(cli.stderr).toMatch(/docs\/canon\/readme\.md -> docs\/canon\/README\.md/);
     } finally {
       rmSync(answers);
     }
@@ -336,7 +360,9 @@ describe('scaffold', () => {
 
   it('refuses a directory the project spells in another case, naming it once', () => {
     mkdirSync(join(root, '.Claude'));
-    const steps = plan(root, config()).filter((s) => s.path.startsWith('.claude/'));
+    const steps = plan(root, config()).filter(
+      (s) => s.path.startsWith('.claude/') && s.path !== '.claude/rules/principles.md'
+    );
     expect(steps.length > 1).toBe(true);
     expect(steps.every((s) => s.action === 'case' && s.wanted === '.claude')).toBe(true);
     expect(apply(root, config()).cases).toEqual([{ wanted: '.claude', variants: ['.Claude'] }]);
@@ -373,6 +399,144 @@ describe('scaffold', () => {
     expect(readFileSync(path, 'utf8')).toBe(before);
   });
 
+  it('keeps a specs README stale until it matches, even after apply writes the new config', () => {
+    apply(root, config());
+    const tracked = { ...config(), tracker: TRACKER, specs: { archive: 'tracker' } };
+    const allow = ['CLAUDE.md', '.claude/canon.json'];
+    expect(apply(root, tracked, { allow }).ok).toBe(true);
+    const readme = () => plan(root, tracked).find((s) => s.path === 'docs/specs/README.md');
+    expect(readme().action).toBe('stale');
+    writeFileSync(join(root, 'docs/specs/README.md'), readme().content);
+    expect(readme().action).toBe('keep');
+  });
+
+  it('marks a specs README stale when canon.json was edited by hand', () => {
+    apply(root, config());
+    const edited = { ...config(), specs: { naming: 'branch' } };
+    writeFileSync(join(root, '.claude/canon.json'), JSON.stringify(edited));
+    expect(plan(root, edited).find((s) => s.path === 'docs/specs/README.md').action).toBe('stale');
+  });
+
+  it('never marks a README the project rewrote from scratch stale', () => {
+    apply(root, config());
+    writeFileSync(join(root, 'docs/specs/README.md'), '# Our specs\n\nWe write them our way.\n');
+    const tracked = { ...config(), tracker: TRACKER, specs: { naming: 'branch' } };
+    expect(plan(root, tracked).find((s) => s.path === 'docs/specs/README.md').action).toBe('keep');
+  });
+
+  it('reads a README rewrapped by a formatter as unchanged', () => {
+    apply(root, config());
+    const path = join(root, 'docs/specs/README.md');
+    writeFileSync(
+      path,
+      readFileSync(path, 'utf8')
+        .replace(/ {2,}\|/g, ' |')
+        .replace(/-{3,}/g, '---')
+    );
+    expect(plan(root, config()).find((s) => s.path === 'docs/specs/README.md').action).toBe('keep');
+  });
+
+  it('keeps the starting points once they exist, and marks a spec template stale', () => {
+    apply(root, config());
+    for (const path of [
+      'docs/canon/_TEMPLATE.md',
+      'docs/specs/_TEMPLATE.md',
+      '.claude/rules/principles.md',
+    ]) {
+      writeFileSync(join(root, path), `${readFileSync(join(root, path), 'utf8')}\nOur note.\n`);
+    }
+    const steps = plan(root, { ...config(), owner: 'Grace', specs: { naming: 'branch' } });
+    const action = (path) => steps.find((s) => s.path === path).action;
+    expect(action('docs/canon/_TEMPLATE.md')).toBe('keep');
+    expect(action('docs/specs/_TEMPLATE.md')).toBe('stale');
+    // Only the spec and tracker settings make a file stale; a new owner name does not.
+    expect(action('.claude/rules/principles.md')).toBe('keep');
+    expect(steps.some((s) => s.action === 'conflict' && s.path.endsWith('_TEMPLATE.md'))).toBe(
+      false
+    );
+  });
+
+  it("never marks a file stale for the project's own edits under unchanged settings", () => {
+    apply(root, config());
+    const principles = join(root, '.claude/rules/principles.md');
+    writeFileSync(
+      principles,
+      readFileSync(principles, 'utf8').replace(
+        /^- \*\*Never block/m,
+        '- **Our own rule.**\n- **Never block'
+      )
+    );
+    const template = join(root, 'docs/specs/_TEMPLATE.md');
+    writeFileSync(template, '# Our own spec format\n\nWrite whatever.\n\n---\n\nThe end.\n');
+    const readme = join(root, 'docs/specs/README.md');
+    writeFileSync(
+      readme,
+      readFileSync(readme, 'utf8').replace('Being argued out.', 'Under discussion.')
+    );
+    for (const settings of [config(), { ...config(), specs: { archive: 'repo' } }]) {
+      const steps = plan(root, settings);
+      expect(steps.filter((s) => s.action === 'stale').map((s) => s.path)).toEqual([]);
+    }
+  });
+
+  it('reads canon.json as the same when only its formatting differs', () => {
+    apply(root, config());
+    const path = join(root, '.claude/canon.json');
+    writeFileSync(path, JSON.stringify(JSON.parse(readFileSync(path, 'utf8'))));
+    expect(plan(root, config()).find((s) => s.path === '.claude/canon.json').action).toBe('same');
+    expect(
+      plan(root, { ...config(), owner: 'Grace' }).find((s) => s.path === '.claude/canon.json')
+        .action
+    ).toBe('conflict');
+  });
+
+  it('leaves CLAUDE.md alone when the config says so', () => {
+    writeFileSync(join(root, 'CLAUDE.md'), '# Ours\n');
+    const own = { ...config(), claudeMd: false };
+    expect(plan(root, own).some((s) => s.path === 'CLAUDE.md')).toBe(false);
+    expect(apply(root, own).ok).toBe(true);
+    expect(readFileSync(join(root, 'CLAUDE.md'), 'utf8')).toBe('# Ours\n');
+  });
+
+  it('shows a leftover archive folder once the tracker is the archive, and leaves it', () => {
+    apply(root, config());
+    writeFileSync(join(root, 'docs/specs/archive/001-old.md'), '# 001\n');
+    const tracked = { ...config(), tracker: TRACKER, specs: { archive: 'tracker' } };
+    expect(plan(root, tracked).find((s) => s.path === 'docs/specs/archive/').action).toBe(
+      'leftover'
+    );
+    expect(apply(root, tracked, { allow: ['CLAUDE.md', '.claude/canon.json'] }).ok).toBe(true);
+    expect(existsSync(join(root, 'docs/specs/archive/001-old.md'))).toBe(true);
+    expect(plan(root, config()).some((s) => s.action === 'leftover')).toBe(false);
+  });
+
+  it('writes the same text for an empty specs block as for none', () => {
+    const files = (c) => Object.fromEntries(render(root, c).map((f) => [f.path, f.content]));
+    const none = files({ ...config(), tracker: TRACKER });
+    const empty = files({ ...config(), tracker: TRACKER, specs: {} });
+    for (const path of ['CLAUDE.md', 'docs/specs/README.md', 'docs/specs/_TEMPLATE.md']) {
+      expect(empty[path], path).toBe(none[path]);
+    }
+  });
+
+  it('pads the lifecycle table by display width, and escapes a pipe in the owner', () => {
+    for (const owner of [
+      '田中',
+      'Jose\u0301',
+      'A|B',
+      'Ana \u{1f468}\u200d\u{1f469}\u200d\u{1f467}',
+      'Acme™',
+      'Ada 🚀',
+    ]) {
+      const rows = render(root, { ...config(), owner })
+        .find((f) => f.path === 'docs/specs/README.md')
+        .content.split('\n')
+        .filter((line) => line.startsWith('|'));
+      expect(new Set(rows.map(displayWidth)).size, owner).toBe(1);
+      expect(new Set(rows.map((r) => r.split(/(?<!\\)\|/).length)).size, owner).toBe(1);
+    }
+  });
+
   it('shows a canon index in another case in the plan, not only in apply', () => {
     mkdirSync(join(root, '.claude'));
     writeFileSync(join(root, '.claude/Canon-Index.md'), 'ours\n');
@@ -405,10 +569,28 @@ describe('scaffold', () => {
     expect(new Set(rows.map((row) => row.length)).size).toBe(1);
   });
 
-  it('requires the status line with a tracker unless the specs reference applies', () => {
+  it('makes the status line optional with any tracker, and required without one', () => {
     apply(root, { ...config(), tracker: TRACKER });
     const readme = readFileSync(join(root, 'docs/specs/README.md'), 'utf8');
-    expect(readme).toMatch(/The status is the `\*\*Status:\*\*` line directly under the H1/);
+    expect(readme).toMatch(/`\*\*Status:\*\*` line under the H1 is optional/);
+    const template = readFileSync(join(root, 'docs/specs/_TEMPLATE.md'), 'utf8');
+    expect(template).toMatch(
+      /The `\*\*Status:\*\*` line\nis optional: the issue's status is the gate/
+    );
+    expect(template).not.toMatch(/stays directly under the H1/);
+
+    const other = mkdtempSync(join(tmpdir(), 'canon-scaffold-'));
+    try {
+      apply(other, config());
+      expect(readFileSync(join(other, 'docs/specs/README.md'), 'utf8')).toMatch(
+        /The status is the `\*\*Status:\*\*` line directly under the H1/
+      );
+      expect(readFileSync(join(other, 'docs/specs/_TEMPLATE.md'), 'utf8')).toMatch(
+        /The `\*\*Status:\*\*` line\nstays directly under the H1/
+      );
+    } finally {
+      rmSync(other, { recursive: true, force: true });
+    }
   });
 
   it('describes an uncommitted draft when specs are not committed while drafting', () => {

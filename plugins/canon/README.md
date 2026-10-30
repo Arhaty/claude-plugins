@@ -61,7 +61,7 @@ It then writes:
 | `docs/canon/README.md`, `docs/canon/_TEMPLATE.md` | The canon index and the format each canon file follows.                      |
 | `docs/specs/README.md`, `docs/specs/_TEMPLATE.md` | The spec lifecycle and template.                                             |
 | `docs/specs/archive/`                             | Where shipped specs go.                                                      |
-| `CLAUDE.md`                                       | A workflow section between `<!-- canon:begin -->` and `<!-- canon:end -->`.  |
+| `CLAUDE.md`                                       | A workflow section between the canon markers, unless `"claudeMd": false`.    |
 | `.claude/canon-domains.json`                      | Maps repository paths to the canon file that governs them. Starts empty.     |
 | `~/.claude/canon/trusted.json`                    | Outside the project, only if you approved a formatter or an API key command. |
 | `.claude/canon-index.md`                          | Every canon claim on one line, generated, for scoped reviews.                |
@@ -70,9 +70,12 @@ It then writes:
 
 **Setup never overwrites a file without asking.** It plans first, lists every file that exists
 and would change, and writes nothing until you approve each one by name. In `CLAUDE.md` it only
-touches its own marked section. An existing `.claude/canon-domains.json`, `docs/canon/README.md`
-or `docs/specs/README.md` is kept as it is, never offered for replacement. It refuses to write
-through a symlink that leads outside the project or nowhere. It doesn't commit.
+touches its own marked section. The starting points the project edits, the domain map, both
+READMEs, both `_TEMPLATE.md` files and `.claude/rules/principles.md`, are kept as they are once
+they exist, never offered for replacement. When one still holds canon's text for other `specs`
+or `tracker` settings, setup names it and offers to edit the sections that differ. A project that keeps its own workflow
+section in `CLAUDE.md` sets `"claudeMd": false`, and setup leaves `CLAUDE.md` alone. It refuses
+to write through a symlink that leads outside the project or nowhere. It doesn't commit.
 
 [templates/canon.schema.json](templates/canon.schema.json) documents every field of
 `.claude/canon.json`.
@@ -174,8 +177,8 @@ settings or run in a permission mode that allows them.
 canon can use Linear as the record and the gate instead of the spec file. Leave the `tracker`
 block out of `.claude/canon.json` and nothing below applies.
 
-With a tracker, each command reads the issue's status and moves it, and the spec's `**Status:**`
-line mirrors it. Status names differ per team, so `.claude/canon.json` maps canon's roles to
+With a tracker, each command reads the issue's status and moves it. The spec's `**Status:**` line
+is optional; one that has it mirrors the issue. Status names differ per team, so `.claude/canon.json` maps canon's roles to
 yours, and `/canon:setup` offers your team's real names:
 
 | Role         | Moved there by                                    | canon refuses                                     |

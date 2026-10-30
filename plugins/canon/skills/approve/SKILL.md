@@ -40,12 +40,12 @@ Below, `<owner>`, `<integration>` and `<production>` mean its `owner`, `branches
 `branches.production`.
 
 **If it has a `specs` block**, read `${CLAUDE_PLUGIN_ROOT}/references/specs.md` now. It says
-where the branch's spec is, whether its `**Status:**` line is required, when it is committed and
-how it is archived, and it overrides the steps below where they differ.
+where the branch's spec is, when it is committed and how it is archived, and it overrides the steps below where they differ.
 
 **If it has a `tracker` block**, read `${CLAUDE_PLUGIN_ROOT}/references/tracker.md` now. Approval
-is then the issue's status, not the spec line: the line still moves to `approved`, as a mirror,
-and the issue moves to `approved` after the push. `<ID>` below is the spec's `**Issue:**` line.
+is then the issue's status, not the spec line. A spec with a `**Status:**` line still moves it to
+`approved`, as a mirror; one without skips steps 2 and 3, as `tracker.md` says. The issue moves
+to `approved` after the push. `<ID>` below is the spec's `**Issue:**` line.
 
 ## Refuse to approve if
 

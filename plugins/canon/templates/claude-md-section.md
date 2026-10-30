@@ -21,12 +21,12 @@ the branch names and check commands; `/canon:setup` changes them.
 
 ### The loop
 
-A spec's status is the `**Status:**` line under its title, and each command makes one move:
+{{statusIntro}}
 
 1. **`/canon:define <idea>`** cuts a branch from `origin/{{integration}}`, researches, and writes
    the spec. It asks {{owner}} questions in rounds until `Still open` is empty.
-2. **`/canon:approve`** refuses an open spec, then sets `approved`, commits and pushes it.
-3. **`/canon:build {{spec}}`** sets `in-progress` and builds to the spec behind a draft pull request.
+2. **`/canon:approve`** refuses an open spec, then {{approveMove}}.
+3. **`/canon:build {{spec}}`** {{buildMove}} and builds to the spec behind a draft pull request.
 4. **`/canon:review`** checks the branch against this project's own rules and the spec.
    `/code-review` finds correctness bugs; run both.
 5. **`/canon:canon`** writes what the branch settled into `docs/canon/`.

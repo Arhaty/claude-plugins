@@ -21,15 +21,6 @@ the skills describe, and the whole block left out is all of them: `naming` `"num
   - **A command that takes a spec number** (`/canon:build`, `/canon:ship`, `/canon:review`) takes
     the issue identifier with a tracker, and the branch name without one.
 
-## The status line
-
-**With a tracker, the `**Status:**` line is optional.** The issue's role is the status and the
-gate. A spec without the line is complete, and no command adds one: the steps that would move it
-(`/canon:approve` step 2, `/canon:build` step 3, `/canon:staging` step 4) skip the edit, and a
-commit that would have held only the edit is not made. A refusal that reads the line reads the
-issue's role instead. A spec with the line keeps it mirroring the issue, as before. Without a
-tracker the line is the gate and stays required.
-
 ## Drafting: `specs.commitWhileDrafting`
 
 - **`true`**: `/canon:define` commits and pushes the spec every round, as it describes.
@@ -62,7 +53,7 @@ tracker the line is the gate and stays required.
   posted to instead of an archived path, and `/canon:production` counts a spec deleted from
   `docs/specs/` in the release as one that shipped.
 
-- **Numbers, with `tracker` and `naming` `"number"`.** A shipped spec leaves `docs/specs/`, so the
+- **Numbers, with `archive` `"tracker"` and `naming` `"number"`.** A shipped spec leaves `docs/specs/`, so the
   files alone would give its number out again. `/canon:define` step 3 takes the highest
   three-digit prefix ever committed under `docs/specs/`, on any branch, plus one:
 
@@ -74,7 +65,7 @@ tracker the line is the gate and stays required.
   In a shallow clone (`git rev-parse --is-shallow-repository` prints `true`), run
   `git fetch --unshallow origin` first: the history is the record.
 
-- **Abandoned, with `tracker`.** On the owner's instruction only, post the spec to its issue,
+- **Abandoned, with `archive` `"tracker"`.** On the owner's instruction only, post the spec to its issue,
   stopping if the post fails, then delete its branch unmerged:
 
   ```bash
