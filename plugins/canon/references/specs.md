@@ -61,3 +61,26 @@ tracker the line is the gate and stays required.
   not set to `shipped` first: the issue says it. The hand-back names the issue the spec was
   posted to instead of an archived path, and `/canon:production` counts a spec deleted from
   `docs/specs/` in the release as one that shipped.
+
+- **Numbers, with `tracker` and `naming` `"number"`.** A shipped spec leaves `docs/specs/`, so the
+  files alone would give its number out again. `/canon:define` step 3 takes the highest
+  three-digit prefix ever committed under `docs/specs/`, on any branch, plus one:
+
+  ```bash
+  git -c core.quotePath=false log --all --format= --name-only -- docs/specs \
+    | grep -oE '^docs/specs/[0-9]{3}-' | grep -oE '[0-9]{3}' | sort -n | tail -1
+  ```
+
+  In a shallow clone (`git rev-parse --is-shallow-repository` prints `true`), run
+  `git fetch --unshallow origin` first: the history is the record.
+
+- **Abandoned, with `tracker`.** On the owner's instruction only, post the spec to its issue,
+  stopping if the post fails, then delete its branch unmerged:
+
+  ```bash
+  { printf 'Abandoned.\n\n'; cat "$spec"; } | node "${CLAUDE_PLUGIN_ROOT}/scripts/tracker.mjs" comment <ID>
+  ```
+
+  The status line is not set: the integration branch never held the spec, and the comment is the
+  only copy. The owner cancels the issue in the tracker. With the branch gone, the spec's number
+  can be given out again; none of its commits reached `<integration>`, so nothing there collides.
