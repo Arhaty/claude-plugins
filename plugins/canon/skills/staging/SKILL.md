@@ -43,6 +43,10 @@ Below, `<owner>`, `<integration>` and `<production>` mean its `owner`, `branches
 replaced) and `urls.staging` are where the work can be seen, when they are set. A `ci` block
 names the workflow step 6 starts when nothing has run on the head commit.
 
+**If it has a `specs` block**, read `${CLAUDE_PLUGIN_ROOT}/references/specs.md` now. It says
+where the branch's spec is, whether its `**Status:**` line is required, when it is committed and
+how it is archived, and it overrides the steps below where they differ.
+
 **If it has a `tracker` block**, read `${CLAUDE_PLUGIN_ROOT}/references/tracker.md` now. This
 command **never sets the issue's status**: the merge does, through the tracker's GitHub
 integration, from the `Fixes <ID>` line in the pull request body. `<ID>` is the spec's
@@ -122,7 +126,8 @@ resolve a conflict by taking one side wholesale.
 
 **3. Commit anything uncommitted**, following the project's commit conventions.
 
-**4. Mark the spec shipped and archive it, in its own commit.** The branch's spec is the one
+**4. Mark the spec shipped and archive it, in its own commit**, or with `specs.archive` set to
+`tracker`, post it to the issue and delete it, as `specs.md` says. The branch's spec is the one
 active `docs/specs/NNN-*.md` it adds:
 
 ```bash
