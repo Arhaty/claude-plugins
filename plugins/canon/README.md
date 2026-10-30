@@ -268,6 +268,27 @@ The rules act on the closing word in the pull request body:
 A merge event doesn't replay: an issue the merge didn't move stays where it is, and the fix is the
 rule or the body, next time. canon reports it and leaves the status alone.
 
+## Where specs live
+
+By default a spec is `docs/specs/NNN-<slug>.md`, committed and pushed every round of
+`/canon:define`, and moved to `docs/specs/archive/` when `/canon:staging` merges it. A `specs`
+block changes any of the three:
+
+```json
+"specs": { "naming": "branch", "archive": "tracker", "commitWhileDrafting": false }
+```
+
+- **`naming: "branch"`** names the file after its branch, `docs/specs/abc-123-rate-limit.md`,
+  with no number.
+- **`archive: "tracker"`** makes the issue the archive: `/canon:staging` posts the spec to it as a
+  comment, then deletes the file in a commit that merges with the work, so `docs/specs/` only holds
+  work in flight. If the post fails it stops and deletes nothing. Needs a tracker.
+- **`commitWhileDrafting: false`** leaves the draft uncommitted while `/canon:define` iterates;
+  `/canon:approve` makes the first commit and push.
+
+With a tracker, the issue carries the status, so a spec's `**Status:**` line is optional.
+[references/specs.md](references/specs.md) has the detail the skills follow.
+
 ## CI that skips later commits
 
 Some projects run CI only when a pull request opens or leaves draft, and on `workflow_dispatch`,
