@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.1](https://github.com/Arhaty/claude-plugins/compare/canon-v0.5.0...canon-v0.5.1) (2026-10-30)
+
+
+### Bug Fixes
+
+* make canon setup follow the build and specs settings ([#61](https://github.com/Arhaty/claude-plugins/issues/61)) ([2b70f25](https://github.com/Arhaty/claude-plugins/commit/2b70f25903d48328b5656511728819ef653c9559))
+
 ## [0.5.0](https://github.com/Arhaty/claude-plugins/compare/canon-v0.4.4...canon-v0.5.0) (2026-10-30)
 
 
