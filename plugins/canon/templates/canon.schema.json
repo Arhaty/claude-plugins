@@ -48,6 +48,11 @@
           "enum": ["prefix", "tracker"],
           "default": "prefix",
           "description": "How a feature branch is named. \"prefix\": <prefix>/<slug>, or <prefix>/<id>-<slug> with a tracker. \"tracker\": the tracker issue's own branch name, verbatim, e.g. Linear's branchName \"abc-123-rate-limit-reset\"; it needs a tracker block, and every branch then starts from an issue."
+        },
+        "deleteAfterMerge": {
+          "type": "boolean",
+          "default": true,
+          "description": "Whether /canon:staging deletes the feature branch on GitHub after it merges. false leaves it for the project to delete, e.g. with a scheduled sweep: a Claude Code cloud session's GitHub proxy refuses a ref deletion with a 403, which /canon:staging reports as a warning."
         }
       }
     },
