@@ -48,6 +48,55 @@ describe('validate', () => {
     expect(validate(full)).toEqual([]);
   });
 
+  it('takes a build command in either form, and a required check', () => {
+    const config = valid();
+    for (const build of [
+      null,
+      'pnpm build',
+      { command: 'pnpm build' },
+      {
+        command: 'pnpm build',
+        env: { SITE_URL: 'https://s.example.com' },
+        requires: 'supabase status',
+      },
+    ]) {
+      expect(validate({ ...config, commands: { ...config.commands, build } })).toEqual([]);
+    }
+    expect(
+      validate({
+        ...config,
+        ci: { workflow: 'ci.yml', baseInput: 'base', requiredCheck: 'Verify' },
+      })
+    ).toEqual([]);
+  });
+
+  it.each([
+    [{ command: '' }, '`commands.build.command` must be a command string'],
+    [
+      { command: 'b', env: { 'BAD-NAME': 'x' } },
+      '`commands.build.env` must map variable names to string values',
+    ],
+    [
+      { command: 'b', env: { A: 1 } },
+      '`commands.build.env` must map variable names to string values',
+    ],
+    [{ command: 'b', requires: '' }, '`commands.build.requires` must be a command string'],
+    [{ command: 'b', cwd: 'x' }, '`commands.build.cwd` is not a known key'],
+    [
+      ['pnpm', 'build'],
+      '`commands.build` must be a command string, null, or { command, env, requires }',
+    ],
+  ])('refuses the build %s', (build, error) => {
+    const config = valid();
+    expect(validate({ ...config, commands: { ...config.commands, build } })).toEqual([error]);
+  });
+
+  it('refuses an empty required check', () => {
+    expect(
+      validate({ ...valid(), ci: { workflow: 'ci.yml', baseInput: null, requiredCheck: ' ' } })
+    ).toEqual(['`ci.requiredCheck` must be the name of a check run, e.g. "Verify"']);
+  });
+
   it('takes a specs block, each setting optional', () => {
     const config = { ...valid(), tracker: TRACKER };
     for (const specs of [
@@ -205,8 +254,8 @@ describe('validate', () => {
     ],
     [
       'an unknown commands key',
-      (c) => ({ ...c, commands: { ...c.commands, build: 'make' } }),
-      /`commands\.build` is not/,
+      (c) => ({ ...c, commands: { ...c.commands, deploy: 'make' } }),
+      /`commands\.deploy` is not/,
     ],
     [
       'an unknown urls key',
