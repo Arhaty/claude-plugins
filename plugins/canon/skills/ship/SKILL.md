@@ -64,8 +64,10 @@ Decisions table and the canon. Sort every finding into four buckets and post the
 dismissed included, as one pull request comment per round, headed with the round number:
 
 ```bash
-gh pr comment <number> --body-file <file>
+gh api -X POST "repos/{owner}/{repo}/issues/<number>/comments" -F body=@<file> --jq .html_url
 ```
+
+REST, not `gh pr comment`: this runs in a cloud session too, whose GitHub proxy refuses GraphQL.
 
 - **Act on.** A correctness bug, a security gap, a canon rule broken, a spec requirement missing
   or wrong. More than five entries means you are not filtering.

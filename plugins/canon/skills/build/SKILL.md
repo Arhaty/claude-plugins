@@ -100,8 +100,12 @@ the spec line.
 6. **Open a draft pull request into `<integration>`**, before writing code:
 
    ```bash
-   gh pr create --draft --base <integration> --head "$branch" --title "<type>: <subject>" --body-file <file>
+   gh api -X POST "repos/{owner}/{repo}/pulls" -F draft=true -f base=<integration> \
+     -f head="$branch" -f title="<type>: <subject>" -F body=@<file> --jq '.number, .html_url'
    ```
+
+   Every GitHub call in this command is `gh api` REST, never `gh pr`, except marking ready in
+   step 10: a Claude Code cloud session's GitHub proxy refuses the GraphQL `gh pr` uses.
 
    The body covers what changed, why and how to verify, then a last line `Spec: NNN`. With a
    tracker, a line `Fixes <ID>` goes above it from the moment the pull request opens: it is what
@@ -133,7 +137,18 @@ the spec line.
 9. **Run the gate.** Every configured check must pass before the pull request leaves draft. A
    check that is not configured is reported as absent.
 
-10. **Mark the pull request ready**: `gh pr ready <number>`.
+10. **Mark the pull request ready.**
+
+    In a cloud session, where `printenv CLAUDE_CODE_REMOTE` prints `true`, use the proxy's route:
+
+    ```bash
+    gh api -X POST "repos/{owner}/{repo}/pulls/<number>/ccr/ready_for_review"
+    ```
+
+    Anywhere else, `gh pr ready <number>`. Two forms, because GitHub's REST API has no
+    ready-for-review endpoint: the cloud session's proxy adds one, and outside it `gh pr ready` is
+    the only way. Run the one that applies on its own: wrapped in an `if`, it no longer matches
+    the `gh pr ready` grant and asks for permission.
 
     **The canon hook may refuse this** when the branch touched a path mapped in
     `.claude/canon-domains.json` and no `docs/canon/` file. That is expected: the canon is

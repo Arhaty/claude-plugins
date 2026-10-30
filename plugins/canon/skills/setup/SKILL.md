@@ -149,8 +149,10 @@ file that exists and differs, and writes nothing until each one is approved by n
    }
    ```
 
-   Leave `tracker` out entirely when the owner wants none, and `ci` likewise. Setup does not ask
-   about `specs`: keep an existing config's block as it is, and leave it out otherwise.
+   Leave `tracker` out entirely when the owner wants none, and `ci` likewise. Keep every other
+   key an existing config has, such as `branches.deleteAfterMerge` or the `specs` block, as it
+   is: setup does not ask about them, and dropping one changes what the skills do. With no
+   `specs` block, leave it out.
 
    Write it outside the project (your scratchpad or `$TMPDIR`), then:
 
