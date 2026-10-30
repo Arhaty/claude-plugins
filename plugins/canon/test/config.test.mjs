@@ -46,6 +46,15 @@ describe('validate', () => {
     expect(validate(full)).toEqual([]);
   });
 
+  it('takes deleteAfterMerge either way, and leaves it out by default', () => {
+    for (const deleteAfterMerge of [true, false]) {
+      const config = valid();
+      config.branches.deleteAfterMerge = deleteAfterMerge;
+      expect(validate(config)).toEqual([]);
+    }
+    expect('deleteAfterMerge' in valid().branches).toBe(false);
+  });
+
   it.each([
     ['a non-object', () => [], /JSON object/],
     ['a wrong version', (c) => ({ ...c, version: 2 }), /version/],
@@ -74,6 +83,16 @@ describe('validate', () => {
     ['formatFile as a string', (c) => ({ ...c, formatFile: 'prettier --write' }), /formatFile/],
     ['an empty formatFile', (c) => ({ ...c, formatFile: [] }), /formatFile/],
     ['an unknown top-level key', (c) => ({ ...c, formatfile: null }), /`formatfile` is not/],
+    [
+      'a deleteAfterMerge that is not a boolean',
+      (c) => ({ ...c, branches: { ...c.branches, deleteAfterMerge: 'no' } }),
+      /deleteAfterMerge/,
+    ],
+    [
+      'branches that is not an object',
+      (c) => ({ ...c, branches: 'main' }),
+      /branches\.integration/,
+    ],
     [
       'an unknown branches key',
       (c) => ({ ...c, branches: { ...c.branches, release: 'x' } }),

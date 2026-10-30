@@ -6,11 +6,10 @@ disable-model-invocation: true
 allowed-tools:
   - Bash(node "${CLAUDE_PLUGIN_ROOT}/scripts/config.mjs")
   - Bash(node "${CLAUDE_PLUGIN_ROOT}/scripts/tracker.mjs" *)
+  - Bash(node "${CLAUDE_PLUGIN_ROOT}/scripts/gh-get.mjs" *)
   - Bash(git ls-tree *)
   - Bash(git fetch origin)
   - Bash(gh run list *)
-  - Bash(gh pr list *)
-  - Bash(gh pr view *)
   - Read
   - Grep
   - Glob
@@ -104,29 +103,36 @@ git log --first-parent --merges --format=%s origin/<production>..origin/<integra
 an assertion: a merge with no identifier (a dependency bump, a hotfix) is found only in its own
 body.
 
-**2. Open or update the release pull request.** No checkout needed: `--head` does the work.
+**2. Open or update the release pull request.** No checkout needed: `head` does the work. Every
+GitHub call here is `gh api` REST, never `gh pr`: a Claude Code cloud session's GitHub proxy
+refuses the GraphQL `gh pr` uses. Reads go through `gh-get.mjs`, which runs `gh api` with GET
+and is pre-approved; writes stay `gh api -X`, which asks.
 
 ```bash
-gh pr list --base <production> --head <integration> --state open
+node "${CLAUDE_PLUGIN_ROOT}/scripts/gh-get.mjs" "repos/{owner}/{repo}/pulls?base=<production>&head={owner}:<integration>&state=open" \
+  --jq '.[] | {number, url: .html_url}'
 ```
 
-If one is open, **replace its description with the fresh manifest** (`gh pr edit <number>
---body-file <file>`): a stale manifest is read as the list of what is going live. With a tracker,
+If one is open, **replace its description with the fresh manifest**
+(`gh api -X PATCH "repos/{owner}/{repo}/pulls/<number>" -F body=@<file> --jq .html_url`): a stale
+manifest is read as the list of what is going live. With a tracker,
 **rebuild the `Fixes` block from the log every time**, never carry the old one forward: later
 merges bring later issues, and a body that drops the block moves nothing on merge. Otherwise:
 
 ```bash
-gh pr create --base <production> --head <integration> --title "release: <date>" --body-file <file>
+gh api -X POST "repos/{owner}/{repo}/pulls" -f base=<production> -f head=<integration> \
+  -f title="release: <date>" -F body=@<file> --jq '.number, .html_url'
 ```
 
-Never `--fill`, which throws the manifest away, and never `--delete-branch`.
+The body is always the manifest, never one generated from the commits, and `<integration>` is
+never deleted.
 
 **3. Watch CI on the release head**, polling a bounded call with a widening gap rather than an
 unbounded watch:
 
 ```bash
-sha=$(gh pr view <number> --json headRefOid -q .headRefOid)
-gh api "repos/{owner}/{repo}/commits/$sha/check-runs" --jq '[.check_runs[]
+sha=$(node "${CLAUDE_PLUGIN_ROOT}/scripts/gh-get.mjs" "repos/{owner}/{repo}/pulls/<number>" --jq .head.sha)
+node "${CLAUDE_PLUGIN_ROOT}/scripts/gh-get.mjs" "repos/{owner}/{repo}/commits/$sha/check-runs" --jq '[.check_runs[]
   | select(.status == "completed" and (.conclusion | IN("success", "skipped", "neutral") | not))
   | {name, conclusion, url: .html_url}]'
 ```
@@ -135,7 +141,8 @@ Give up after about fifteen minutes and say where to look. If the head moves twi
 say the release head is still moving and stop chasing it. **Do not fix anything on this branch**:
 the route is a new branch from `<integration>`, `/canon:staging`, and the release updates itself.
 
-**4. Never merge.** Not with `gh pr merge`, not with `--auto`, not because CI is green. The
+**4. Never merge.** Not with `gh pr merge` or its REST form, not with auto-merge, not because CI
+is green. The
 `protect-merge` hook refuses it, and that is the design: this is the one thing handed to a person.
 
 ## Hand back

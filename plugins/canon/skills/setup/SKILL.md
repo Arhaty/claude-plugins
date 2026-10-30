@@ -149,7 +149,9 @@ file that exists and differs, and writes nothing until each one is approved by n
    }
    ```
 
-   Leave `tracker` out entirely when the owner wants none, and `ci` likewise.
+   Leave `tracker` out entirely when the owner wants none, and `ci` likewise. Keep every other
+   key an existing config has, such as `branches.deleteAfterMerge`, as it is: setup does not ask
+   about it, and dropping it changes what the skills do.
 
    Write it outside the project (your scratchpad or `$TMPDIR`), then:
 
