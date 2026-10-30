@@ -863,8 +863,9 @@ const API_BODY = new Set(['-f', '--raw-field', '-F', '--field', '--input']);
  * Relative, or a full URL on api.github.com or an Enterprise host's `/api/v3`.
  * The last group is the merge itself or the `ccr/auto_merge` route a Claude Code
  * cloud session's proxy adds, which merges the pull request once its checks pass.
- * No session here runs in the cloud, and the route is guarded anyway: a guard that
- * reads one spelling of a merge and not another is the gap these hooks keep closing.
+ * The skills run in cloud sessions and never call it, and it is guarded anyway: a
+ * guard that reads one spelling of a merge and not another is the gap these hooks
+ * keep closing.
  */
 const API_MERGE =
   /^(?:https?:\/\/[^/]+(?:\/api\/v3)?)?\/?(?:repos\/(?<owner>[^/]+)\/(?<repo>[^/]+)|repositories\/(?<id>\d+))\/pulls\/(?<number>[^/?]+)\/(?<route>merge|ccr\/auto_merge)\/?(?:\?.*)?$/;
