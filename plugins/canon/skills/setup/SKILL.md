@@ -150,7 +150,9 @@ file that exists and differs, and writes nothing until each one is approved by n
    ```
 
    Leave `tracker` out entirely when the owner wants none, and `ci` likewise. `urls` may be left
-   out too, or any URL in it: left out means none.
+   out too, or any URL in it: left out means none. Keep every other key an existing config has,
+   such as `branches.deleteAfterMerge`, as it is: setup does not ask about it, and dropping it
+   changes what the skills do.
 
    Write it outside the project (your scratchpad or `$TMPDIR`), then:
 

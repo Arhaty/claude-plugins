@@ -6,6 +6,7 @@ disable-model-invocation: true
 allowed-tools:
   - Bash(node "${CLAUDE_PLUGIN_ROOT}/scripts/config.mjs")
   - Bash(node "${CLAUDE_PLUGIN_ROOT}/scripts/tracker.mjs" *)
+  - Bash(node "${CLAUDE_PLUGIN_ROOT}/scripts/gh-get.mjs" *)
   - Bash(git fetch --quiet --prune origin)
   - Bash(git fetch --prune origin)
   - Bash(git push -u origin HEAD)
@@ -13,9 +14,6 @@ allowed-tools:
   - Bash(git branch --show-current)
   - Bash(git for-each-ref *)
   - Bash(git merge-base --is-ancestor *)
-  - Bash(gh pr view *)
-  - Bash(gh pr list *)
-  - Bash(gh pr checks *)
   - Bash(gh pr ready *)
   - Read
   - Grep
@@ -56,6 +54,14 @@ Merging needs the API. Without an authenticated `gh`, say so and give the pull r
 owner can merge it. **Do not work around it with `git merge` and a push**: the push hook refuses
 the push to `<integration>`, and a local merge produces no pull request and no CI run.
 
+**Every GitHub call here is `gh api` REST, never `gh pr`.** A Claude Code cloud session's GitHub
+proxy refuses GraphQL, and `gh pr create`, `view`, `edit`, `checks` and `merge` all use it. The
+one exception is marking ready in step 5, which has no REST endpoint outside the cloud. `{owner}`,
+`{repo}` and `{branch}` are filled in by `gh api` from the checkout.
+
+**Reads go through `gh-get.mjs`**, which runs `gh api` with GET and refuses anything else, so it
+is pre-approved and a poll never waits on a prompt. Writes stay `gh api -X`, which asks.
+
 ## Refuse to merge if
 
 Check all of these before merging, and stop at the first that fails.
@@ -91,9 +97,10 @@ Check all of these before merging, and stop at the first that fails.
 - **With a tracker, the pull request body does not close the issue**: no `Fixes <ID>` line, or
   the identifier sits beside a contributing word (`Part of`, `ref`, `related to`,
   `contributes to`, `towards`), which links the pull request and stops the merge moving the
-  issue. Read it with `gh pr view <number> --json body -q .body`. This one is free to fix and
-  this command fixes it: rewrite the body with a `Fixes <ID>` line and no contributing word for
-  `<ID>` (`gh pr edit <number> --body-file <file>`), then carry on. After the merge it cannot be
+  issue. Read it with `gh-get.mjs "repos/{owner}/{repo}/pulls/<number>" --jq .body`. This one
+  is free to fix and this command fixes it: rewrite the body with a `Fixes <ID>` line and no contributing
+  word for `<ID>` (`gh api -X PATCH "repos/{owner}/{repo}/pulls/<number>" -F body=@<file>`),
+  then carry on. After the merge it cannot be
   fixed: a merge event does not replay.
 
 ## Steps
@@ -139,18 +146,47 @@ documented nowhere.
 
 ```bash
 git push -u origin HEAD
-gh pr view --json number,state,baseRefName,mergeable,url
+node "${CLAUDE_PLUGIN_ROOT}/scripts/gh-get.mjs" "repos/{owner}/{repo}/pulls?head={owner}:{branch}&state=open" --jq '.[].number'
 ```
 
-If none is open, `gh pr create --base <integration>` with a body covering what changed, why and
-how to verify, and with a tracker a `Fixes <ID>` line. Then `gh pr ready <number>`, which is idempotent: `/canon:build` leaves the pull
-request in draft when the canon hook refused the ready mark.
+No number means none is open. Otherwise read it by that number, which the list does not carry
+`mergeable` for:
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/scripts/gh-get.mjs" "repos/{owner}/{repo}/pulls/<number>" \
+  --jq '{state, draft, base: .base.ref, mergeable, mergeable_state, url: .html_url}'
+```
+
+**Write the number into every later command as a literal**, never a shell variable: the merge
+hook refuses a pull request it cannot read off the command.
+
+If none is open, open one against `<integration>`. REST has no `--fill`, so write the title and a body covering what
+changed, why and how to verify, and with a tracker a `Fixes <ID>` line:
+
+```bash
+gh api -X POST "repos/{owner}/{repo}/pulls" -f base=<integration> -f head=<branch> \
+  -f title="<type>: <subject>" -F body=@<file> --jq .number
+```
+
+Then mark it ready, which is idempotent: `/canon:build` leaves the pull request in draft when the
+canon hook refused the ready mark.
+
+In a cloud session, where `printenv CLAUDE_CODE_REMOTE` prints `true`, use the proxy's route:
+
+```bash
+gh api -X POST "repos/{owner}/{repo}/pulls/<number>/ccr/ready_for_review"
+```
+
+Anywhere else, `gh pr ready <number>`. GitHub's REST API has no ready-for-review endpoint: the
+cloud session's proxy adds that route, and outside it `gh pr ready` is the only way. Run the one
+that applies on its own: wrapped in an `if`, it no longer matches the `gh pr ready` grant and asks
+for permission.
 
 **6. Wait for CI on the head commit.** Read the head and the buckets every query below sorts a
 run into:
 
 ```bash
-sha=$(gh pr view <number> --json headRefOid -q .headRefOid)
+sha=$(node "${CLAUDE_PLUGIN_ROOT}/scripts/gh-get.mjs" "repos/{owner}/{repo}/pulls/<number>" --jq .head.sha)
 buckets='if .status != "completed" or .conclusion == "action_required" then "pending"
   elif .conclusion == "success" then "success"
   elif (.conclusion | IN("skipped", "neutral", "cancelled", "stale")) then "ignored"
@@ -169,7 +205,7 @@ the merge commit step 1 pushed. Below, `<workflow>` and `<baseInput>` are `ci.wo
 `ci.baseInput`. Read the configured workflow's runs on the head:
 
 ```bash
-runs=$(gh api --paginate "repos/{owner}/{repo}/actions/workflows/<workflow>/runs?head_sha=$sha&per_page=100" \
+runs=$(node "${CLAUDE_PLUGIN_ROOT}/scripts/gh-get.mjs" --paginate "repos/{owner}/{repo}/actions/workflows/<workflow>/runs?head_sha=$sha&per_page=100" \
   --jq ".workflow_runs[] | $buckets") \
   && if [ -z "$runs" ]; then echo none; else sort <<<"$runs" | uniq -c; fi
 ```
@@ -189,7 +225,7 @@ answer as final. Otherwise one read is enough.
 - **Nothing else (`none`, or only `ignored`): dispatch, once for this head.**
 
 ```bash
-branch=$(gh api "repos/{owner}/{repo}/pulls/<number>" \
+branch=$(node "${CLAUDE_PLUGIN_ROOT}/scripts/gh-get.mjs" "repos/{owner}/{repo}/pulls/<number>" \
   --jq 'select(.head.repo.full_name == .base.repo.full_name) | .head.ref')
 gh api -X POST "repos/{owner}/{repo}/actions/workflows/<workflow>/dispatches" \
   -f ref="$branch" -f "inputs[<baseInput>]=<integration>"
@@ -214,18 +250,13 @@ workflow that diffs against the base to skip work: a dispatched run carries no
 After a dispatch, read the workflow query every 15 seconds until it shows the run. **Never
 dispatch a second time for the same head.** A minute with still no run on `$sha`:
 
-- **The head moved** (`gh pr view <number> --json headRefOid` no longer gives `$sha`): the
-  dispatch ran on the new tip. That is step 7: go back to step 5.
+- **The head moved** (`gh-get.mjs "repos/{owner}/{repo}/pulls/<number>" --jq .head.sha` no
+  longer gives `$sha`): the dispatch ran on the new tip. That is step 7: go back to step 5.
 - **Otherwise the run failed to start:** say so and stop.
 
-**Then wait for the checks.** Without a `ci` block, watch them:
-
-```bash
-gh pr checks <number> --watch --fail-fast -i 5
-```
-
-With one, poll the two queries every 30 seconds instead: a dispatched run may not appear in the
-pull request's checks, so the watch can end before it starts. The queries decide either way.
+**Then wait for the checks**: read the check-run query below every 30 seconds, and with a `ci`
+block the workflow query too. A dispatched run may not appear in the pull request's checks, and
+`gh pr checks` is GraphQL, so the queries decide.
 
 **Only a success on the head SHA is a pass.** An empty rollup, a missing run and a run that
 ended `skipped` or `neutral` are not: none of them shows the code passed. Nor is one quick check
@@ -233,7 +264,7 @@ that succeeded while the rest are still running or have failed. Read every check
 SHA:
 
 ```bash
-runs=$(gh api --paginate "repos/{owner}/{repo}/commits/$sha/check-runs?per_page=100" \
+runs=$(node "${CLAUDE_PLUGIN_ROOT}/scripts/gh-get.mjs" --paginate "repos/{owner}/{repo}/commits/$sha/check-runs?per_page=100" \
   --jq ".check_runs[] | $buckets") \
   && if [ -z "$runs" ]; then echo none; else sort <<<"$runs" | uniq -c; fi
 ```
@@ -252,18 +283,36 @@ say where to look.
 **7. If anything in steps 5 or 6 produced a commit, go back to step 5.** Green checks on a commit
 that is no longer the head verify nothing.
 
-**8. Merge on the head CI verified, and delete the branch.**
+**8. Merge on the head CI verified.**
 
 ```bash
-sha=$(gh pr view <number> --json headRefOid -q .headRefOid)
-gh pr merge <number> --merge --delete-branch --match-head-commit "$sha"
+sha=$(node "${CLAUDE_PLUGIN_ROOT}/scripts/gh-get.mjs" "repos/{owner}/{repo}/pulls/<number>" --jq .head.sha)
+gh api -X PUT "repos/{owner}/{repo}/pulls/<number>/merge" \
+  -f merge_method=merge -f sha="$sha" --jq .merged
 ```
 
-`--merge`, not `--squash`: `/canon:production` finds work that reached `<integration>` without a
+Read `sha` here, and run step 6's check-run query on it once more first. Anything but a pass
+goes back to step 6 rather than the merge: a new `sha` means the branch moved since CI ran, and
+on the same `sha` a check failed or is still running, which step 6 reports or waits for. Anything but
+`true` from the merge is a refusal: say GitHub's message and stop.
+
+`merge_method=merge`, not `squash`: `/canon:production` finds work that reached `<integration>` without a
 pull request by listing non-merge commits on its first-parent path, and that only works while
 reviewed work arrives as merge commits. If the repository does not allow merge commits, merge the
 way it does allow and say in the hand-back that the production check is weaker for it.
-`--match-head-commit` makes GitHub refuse if the branch moved since CI ran.
+`sha` makes GitHub refuse if the branch moved since it was read.
+
+**Then delete the remote branch, unless `branches.deleteAfterMerge` is `false`.** Unset is `true`.
+
+```bash
+gh api -X DELETE "repos/{owner}/{repo}/git/refs/heads/<branch>"
+```
+
+**A failure here is a warning, never a failed merge**: the work has landed. A `403` is a cloud
+session's proxy, which refuses a ref deletion; a `422` means the repository's own auto-delete got
+there first. Say which in the hand-back and carry on. With `deleteAfterMerge` set to `false`,
+leave the remote branch alone: the project deletes merged branches its own way, such as a
+scheduled sweep.
 
 **9. Clean up locally.**
 
@@ -274,6 +323,7 @@ git checkout <integration> && git pull --ff-only && git branch -d <branch>
 ## Hand back
 
 - What changed, in one line.
+- Whether the remote branch was deleted, left for the project's sweep, or could not be deleted.
 - The spec it shipped, by number and archived path, or that the branch had none.
 - That it merged, and where to see it: `urls.staging` if set. If `urls.preview` is null, say the
   branch had no preview, so the integration deployment is the first served build of the work.
