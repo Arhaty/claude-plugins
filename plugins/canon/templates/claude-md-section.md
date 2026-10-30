@@ -47,7 +47,7 @@ Small fixes and tweaks do not need a spec. Feature work does: if there is none, 
 - `{{production}}` is production. `{{integration}}` is integration. Neither takes a direct push or
   a direct edit.
 - Branch from `origin/{{integration}}`, never from `{{production}}` or another feature branch.
-  Branch names: {{prefixes}} followed by a kebab-case description.
+  Branch names: {{branchNames}}.
 - Push with `git push -u origin HEAD`, never a bare `git push`.
 - Pull requests go into `{{integration}}`. The release pull request from `{{integration}}` into
   `{{production}}` is merged by {{owner}} and nobody else.

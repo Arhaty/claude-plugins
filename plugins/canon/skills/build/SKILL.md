@@ -35,9 +35,10 @@ the spec line.
    git checkout -B "$branch" "origin/$branch"
    ```
 
-   With a tracker the branch is `<prefix>/<id>-<slug>`: list it with
-   `git branch -r --list 'origin/*/<id>-*'`, identifier in lowercase, and the spec is the one on it
-   whose `**Issue:**` line names `<ID>`.
+   With a tracker, find the branch as `tracker.md` says under **Names**:
+   `git branch -r --list 'origin/*/<id>-*'`, identifier in lowercase, or with `branches.naming`
+   set to `tracker`, `git branch -r --list "origin/<branchName>"` with the `branchName` that
+   `issue <ID>` returns. The spec is the one on it whose `**Issue:**` line names `<ID>`.
 
    No match, or more than one, is a stop. Confirm the branch is based on `<integration>`, never on
    `<production>` or another feature branch. `-B` from the remote ref is what picks up an approval

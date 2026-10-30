@@ -7,7 +7,7 @@
  *     "states": ["Todo", "In Spec", ...],
  *     "labels": ["domain-auth", ...],
  *     "issues": {
- *       "ABC-7": { "title": "...", "description": "...", "state": "Todo",
+ *       "ABC-7": { "title": "...", "description": "...", "state": "Todo", "branchName": "...",
  *                  "labels": [], "comments": [{ "body": "...", "createdAt": "..." }] }
  *     }
  *   }
@@ -28,6 +28,15 @@ export const KEY_VARIABLE = null;
 export const FIXTURE_PATH = '.claude/tracker-fixture.json';
 
 export class FixtureError extends Error {}
+
+/** `ABC-7` titled "Rate-limit password resets" is `abc-7-rate-limit-password-resets`. */
+export function defaultBranchName(id, title) {
+  const slug = title
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-|-$/g, '');
+  return slug ? `${id.toLowerCase()}-${slug}` : id.toLowerCase();
+}
 
 export function createClient({ root, team }) {
   const file = join(root, FIXTURE_PATH);
@@ -62,6 +71,8 @@ export function createClient({ root, team }) {
       const { issue, id } = find(identifier);
       return {
         identifier: id,
+        // Linear's default form when the fixture names none: the identifier, then the title.
+        branchName: issue.branchName ?? defaultBranchName(id, issue.title ?? ''),
         title: issue.title ?? '',
         description: issue.description ?? '',
         url: `fixture:${id}`,
