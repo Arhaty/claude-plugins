@@ -30,7 +30,8 @@ import { basename, dirname, join, resolve, sep } from 'node:path';
 export const CONFIG_PATH = '.claude/canon.json';
 export const DOMAINS_PATH = '.claude/canon-domains.json';
 
-const COMMANDS = ['typecheck', 'lint', 'format', 'test'];
+/** The required commands, in gate order. */
+export const COMMANDS = ['typecheck', 'lint', 'format', 'test'];
 /** Optional commands, which may be left out. */
 const OPTIONAL_COMMANDS = ['build'];
 const URLS = ['preview', 'staging', 'production'];
