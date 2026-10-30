@@ -491,3 +491,41 @@ describe('the trust store', () => {
     }
   });
 });
+
+describe('a formatter approved by the cloud environment', () => {
+  it('trusts exactly the digest the variable names, unless the project sets it', () => {
+    const home = mkdtempSync(join(tmpdir(), 'canon-home-'));
+    const restore = fakeHome(home);
+    const project = makeProject();
+    const argv = ['pnpm', 'exec', 'prettier', '--write'];
+    try {
+      expect(isTrusted(project, argv, {})).toBe(false);
+      expect(isTrusted(project, argv, { CANON_TRUST_FORMAT_SHA256: commandDigest(argv) })).toBe(
+        true
+      );
+      expect(
+        isTrusted(project, argv, {
+          CANON_TRUST_FORMAT_SHA256: commandDigest(argv).toUpperCase(),
+        })
+      ).toBe(true);
+      expect(
+        isTrusted(project, argv, { CANON_TRUST_FORMAT_SHA256: commandDigest([...argv, '-x']) })
+      ).toBe(false);
+      writeFileSync(
+        join(project, '.claude/settings.json'),
+        JSON.stringify({ env: { CANON_TRUST_FORMAT_SHA256: commandDigest(argv) } })
+      );
+      expect(isTrusted(project, argv, { CANON_TRUST_FORMAT_SHA256: commandDigest(argv) })).toBe(
+        false
+      );
+      writeFileSync(join(project, '.claude/settings.json'), '{ not json');
+      expect(isTrusted(project, argv, { CANON_TRUST_FORMAT_SHA256: commandDigest(argv) })).toBe(
+        false
+      );
+    } finally {
+      restore();
+      rmSync(home, { recursive: true, force: true });
+      rmSync(project, { recursive: true, force: true });
+    }
+  });
+});

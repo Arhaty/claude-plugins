@@ -23,6 +23,10 @@
  * by its worktrees, not by another clone) and the sha256 of the argv list. The hook runs only on an exact match: a command that changes, from a
  * pull, a branch switch or an edit, turns the hook off until setup asks again.
  *
+ * A cloud container never has that file. There, `CANON_TRUST_FORMAT_SHA256` set to the same
+ * sha256 in the cloud environment's settings is the approval; set in the project's own
+ * `.claude/settings*.json`, it is the repository approving itself, and ignored.
+ *
  * Exit code is always 0. A formatter that fails is not a reason to fail the edit,
  * and the project's format check is there to catch what this misses.
  */
