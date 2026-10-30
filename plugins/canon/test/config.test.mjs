@@ -89,6 +89,11 @@ describe('validate', () => {
       /deleteAfterMerge/,
     ],
     [
+      'branches that is not an object',
+      (c) => ({ ...c, branches: 'main' }),
+      /branches\.integration/,
+    ],
+    [
       'an unknown branches key',
       (c) => ({ ...c, branches: { ...c.branches, release: 'x' } }),
       /`branches\.release` is not/,

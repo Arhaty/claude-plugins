@@ -122,7 +122,9 @@ describe('GitHub calls work in a cloud session, which refuses GraphQL', () => {
 
   it.each(['staging', 'build'])('%s marks ready through the proxy in the cloud', (name) => {
     const text = skill(name);
-    expect(text).toContain('if [ "$CLAUDE_CODE_REMOTE" = true ]; then');
+    expect(text).toContain('`printenv CLAUDE_CODE_REMOTE` prints `true`');
+    // A compound command no longer matches the `gh pr ready` grant.
+    expect(text).not.toMatch(/if \[ "\$CLAUDE_CODE_REMOTE"/);
     expect(text).toContain(
       'gh api -X POST "repos/{owner}/{repo}/pulls/<number>/ccr/ready_for_review"'
     );
@@ -134,6 +136,12 @@ describe('GitHub calls work in a cloud session, which refuses GraphQL', () => {
     expect(staging).toMatch(/unless `branches\.deleteAfterMerge` is `false`/);
     expect(staging).toMatch(/A failure here is a warning, never a failed merge/);
     expect(staging).not.toContain('--delete-branch');
+  });
+
+  it('never names the pull request by a shell variable, which protect-merge refuses', () => {
+    const staging = skill('staging');
+    expect(staging).not.toMatch(/\bnumber=\$\(|\$number\b|pulls\/\$/);
+    expect(staging).toMatch(/Write the number into every later command as a literal/);
   });
 });
 

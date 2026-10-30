@@ -135,16 +135,16 @@ the spec line.
 
 10. **Mark the pull request ready.**
 
+    In a cloud session, where `printenv CLAUDE_CODE_REMOTE` prints `true`, use the proxy's route:
+
     ```bash
-    if [ "$CLAUDE_CODE_REMOTE" = true ]; then
-      gh api -X POST "repos/{owner}/{repo}/pulls/<number>/ccr/ready_for_review"
-    else
-      gh pr ready <number>
-    fi
+    gh api -X POST "repos/{owner}/{repo}/pulls/<number>/ccr/ready_for_review"
     ```
 
-    Two forms, because GitHub's REST API has no ready-for-review endpoint: the cloud session's
-    proxy adds one, and outside it `gh pr ready` is the only way.
+    Anywhere else, `gh pr ready <number>`. Two forms, because GitHub's REST API has no
+    ready-for-review endpoint: the cloud session's proxy adds one, and outside it `gh pr ready` is
+    the only way. Run the one that applies on its own: wrapped in an `if`, it no longer matches
+    the `gh pr ready` grant and asks for permission.
 
     **The canon hook may refuse this** when the branch touched a path mapped in
     `.claude/canon-domains.json` and no `docs/canon/` file. That is expected: the canon is

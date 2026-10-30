@@ -142,13 +142,21 @@ documented nowhere.
 
 ```bash
 git push -u origin HEAD
-number=$(gh api "repos/{owner}/{repo}/pulls?head={owner}:{branch}&state=open" --jq '.[0].number // empty')
-gh api "repos/{owner}/{repo}/pulls/$number" \
+gh api "repos/{owner}/{repo}/pulls?head={owner}:{branch}&state=open" --jq '.[].number'
+```
+
+No number means none is open. Otherwise read it by that number, which the list does not carry
+`mergeable` for:
+
+```bash
+gh api "repos/{owner}/{repo}/pulls/<number>" \
   --jq '{state, draft, base: .base.ref, mergeable, mergeable_state, url: .html_url}'
 ```
 
-The list carries no `mergeable`, so the second read is by number. If none is open, open one
-against `<integration>`. REST has no `--fill`, so write the title and a body covering what
+**Write the number into every later command as a literal**, never a shell variable: the merge
+hook refuses a pull request it cannot read off the command.
+
+If none is open, open one against `<integration>`. REST has no `--fill`, so write the title and a body covering what
 changed, why and how to verify, and with a tracker a `Fixes <ID>` line:
 
 ```bash
@@ -159,16 +167,16 @@ gh api -X POST "repos/{owner}/{repo}/pulls" -f base=<integration> -f head=<branc
 Then mark it ready, which is idempotent: `/canon:build` leaves the pull request in draft when the
 canon hook refused the ready mark.
 
+In a cloud session, where `printenv CLAUDE_CODE_REMOTE` prints `true`, use the proxy's route:
+
 ```bash
-if [ "$CLAUDE_CODE_REMOTE" = true ]; then
-  gh api -X POST "repos/{owner}/{repo}/pulls/<number>/ccr/ready_for_review"
-else
-  gh pr ready <number>
-fi
+gh api -X POST "repos/{owner}/{repo}/pulls/<number>/ccr/ready_for_review"
 ```
 
-GitHub's REST API has no ready-for-review endpoint: the cloud session's proxy adds that route, and
-outside it `gh pr ready` is the only way.
+Anywhere else, `gh pr ready <number>`. GitHub's REST API has no ready-for-review endpoint: the
+cloud session's proxy adds that route, and outside it `gh pr ready` is the only way. Run the one
+that applies on its own: wrapped in an `if`, it no longer matches the `gh pr ready` grant and asks
+for permission.
 
 **6. Wait for CI on the head commit.** Read the head and the buckets every query below sorts a
 run into:
@@ -280,8 +288,9 @@ gh api -X PUT "repos/{owner}/{repo}/pulls/<number>/merge" \
   -f merge_method=merge -f sha="$sha" --jq .merged
 ```
 
-Read `sha` here, and run step 6's check-run query on it once more first: anything but a pass
-means the branch moved since CI ran, and step 6 runs again rather than the merge. Anything but
+Read `sha` here, and run step 6's check-run query on it once more first. Anything but a pass
+goes back to step 6 rather than the merge: a new `sha` means the branch moved since CI ran, and
+on the same `sha` a check failed or is still running, which step 6 reports or waits for. Anything but
 `true` from the merge is a refusal: say GitHub's message and stop.
 
 `merge_method=merge`, not `squash`: `/canon:production` finds work that reached `<integration>` without a

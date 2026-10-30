@@ -182,7 +182,7 @@ export function validate(config) {
   ) {
     errors.push('`branches.prefixes` must be a non-empty list of lowercase prefixes');
   }
-  if ('deleteAfterMerge' in branches && typeof branches.deleteAfterMerge !== 'boolean') {
+  if (branches.deleteAfterMerge !== undefined && typeof branches.deleteAfterMerge !== 'boolean') {
     errors.push('`branches.deleteAfterMerge` must be true or false, or left out');
   }
 
