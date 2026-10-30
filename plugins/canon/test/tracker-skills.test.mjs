@@ -101,3 +101,39 @@ describe('the tracker in the skills', () => {
     expect(skill('production')).toMatch(/rebuild the `Fixes` block from the log every time/);
   });
 });
+
+describe('the spec settings in the skills', () => {
+  const reference = read('references/specs.md');
+
+  it('sends every skill that finds or moves a spec to the shared reference', () => {
+    for (const name of ['define', 'approve', 'build', 'review', 'staging', 'production', 'ship']) {
+      expect(skill(name), name).toContain('${CLAUDE_PLUGIN_ROOT}/references/specs.md');
+    }
+  });
+
+  it('names a spec after its branch when asked, with no number', () => {
+    expect(reference).toContain('spec="docs/specs/$(git branch --show-current | tr / -).md"');
+    expect(reference).toMatch(/`\/canon:define` takes no number/);
+  });
+
+  it('posts the spec to the issue before deleting it, and never deletes one not posted', () => {
+    const post = reference.indexOf('comment <ID>');
+    const remove = reference.indexOf('git rm -q -- "$spec"');
+    expect(post).toBeGreaterThanOrEqual(0);
+    expect(post).toBeLessThan(remove);
+    expect(reference).toMatch(/Post first, and stop if the post fails/);
+    expect(reference).toMatch(/Never delete a spec that was not posted/);
+  });
+
+  it('leaves the draft uncommitted until approve makes the first commit and push', () => {
+    expect(reference).toMatch(/commits and pushes nothing, in any round/);
+    expect(reference).toMatch(/That push is the first/);
+    expect(skill('approve')).toMatch(/unless `specs\.commitWhileDrafting` is `false`/);
+    expect(skill('define')).toMatch(/unless `specs\.commitWhileDrafting` is `false`/);
+  });
+
+  it('makes the status line optional only when the tracker carries the status', () => {
+    expect(reference).toMatch(/With a tracker, the `\*\*Status:\*\*` line is optional/);
+    expect(reference).toMatch(/Without a\s+tracker the line is the gate and stays required/);
+  });
+});

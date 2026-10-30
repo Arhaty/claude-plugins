@@ -97,6 +97,39 @@ describe('validate', () => {
     ).toEqual(['`ci.requiredCheck` must be the name of a check run, e.g. "Verify"']);
   });
 
+  it('takes a specs block, each setting optional', () => {
+    const config = { ...valid(), tracker: TRACKER };
+    for (const specs of [
+      {},
+      { naming: 'branch' },
+      { archive: 'tracker', commitWhileDrafting: false },
+      { naming: 'number', archive: 'repo', commitWhileDrafting: true },
+    ]) {
+      expect(validate({ ...config, specs }), JSON.stringify(specs)).toEqual([]);
+    }
+  });
+
+  it.each([
+    [{ naming: 'slug' }, '`specs.naming` must be one of: number, branch'],
+    [{ archive: 'linear' }, '`specs.archive` must be one of: repo, tracker'],
+    [
+      { commitWhileDrafting: 'no' },
+      '`specs.commitWhileDrafting` must be true or false, or left out',
+    ],
+    [{ status: 'optional' }, '`specs.status` is not a known key'],
+  ])('refuses specs %s', (specs, error) => {
+    expect(validate({ ...valid(), tracker: TRACKER, specs })).toEqual([error]);
+  });
+
+  it('refuses archiving to the tracker with no tracker', () => {
+    expect(validate({ ...valid(), specs: { archive: 'tracker' } })).toEqual([
+      '`specs.archive` "tracker" needs a `tracker` block to post the spec to',
+    ]);
+    expect(validate({ ...valid(), specs: null })).toEqual([
+      '`specs` must be an object, or left out',
+    ]);
+  });
+
   it('takes tracker naming, with or without prefixes, only beside a tracker', () => {
     const named = { ...valid(), tracker: TRACKER };
     named.branches = { integration: 'staging', production: 'main', naming: 'tracker' };

@@ -214,6 +214,28 @@
         }
       }
     },
+    "specs": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Optional. Where a spec lives and how it ends; references/specs.md in the plugin has the detail. Leave it out for numbered specs, committed every round and archived in the repository.",
+      "properties": {
+        "naming": {
+          "enum": ["number", "branch"],
+          "default": "number",
+          "description": "\"number\": docs/specs/NNN-<slug>.md. \"branch\": docs/specs/<branch>.md, named after the spec's branch with each / as -, and with no number."
+        },
+        "archive": {
+          "enum": ["repo", "tracker"],
+          "default": "repo",
+          "description": "\"repo\": /canon:staging marks the spec shipped and moves it to docs/specs/archive/. \"tracker\": it posts the spec to the issue as a comment and deletes the file in a commit that merges with the work, refusing to delete when the post failed. Needs a tracker block."
+        },
+        "commitWhileDrafting": {
+          "type": "boolean",
+          "default": true,
+          "description": "true: /canon:define commits and pushes the spec every round. false: the spec stays uncommitted while it is drafted, and /canon:approve makes the first commit and push."
+        }
+      }
+    },
     "ci": {
       "type": "object",
       "additionalProperties": false,
