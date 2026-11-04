@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.0](https://github.com/Arhaty/claude-plugins/compare/canon-v0.5.2...canon-v0.6.0) (2026-11-04)
+
+
+### Features
+
+* **canon:** name what ships in the release pull request title ([#68](https://github.com/Arhaty/claude-plugins/issues/68)) ([6cf5b89](https://github.com/Arhaty/claude-plugins/commit/6cf5b89286db5005305b8817c7d72dc347fadb83))
+
 ## [0.5.2](https://github.com/Arhaty/claude-plugins/compare/canon-v0.5.1...canon-v0.5.2) (2026-10-30)
 
 
