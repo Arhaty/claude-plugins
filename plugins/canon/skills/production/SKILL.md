@@ -116,16 +116,33 @@ node "${CLAUDE_PLUGIN_ROOT}/scripts/gh-get.mjs" "repos/{owner}/{repo}/pulls?base
   --jq '.[] | {number, url: .html_url}'
 ```
 
-If one is open, **replace its description with the fresh manifest**
-(`gh api -X PATCH "repos/{owner}/{repo}/pulls/<number>" -F body=@<file> --jq .html_url`): a stale
-manifest is read as the list of what is going live. With a tracker,
+If one is open, **replace its title and description from the fresh manifest**
+(`gh api -X PATCH "repos/{owner}/{repo}/pulls/<number>" -f title='release: <keywords>' -F body=@<file> --jq .html_url`):
+a stale manifest is read as the list of what is going live, and a stale title names only the
+first part of it. With a tracker,
 **rebuild the `Fixes` block from the log every time**, never carry the old one forward: later
 merges bring later issues, and a body that drops the block moves nothing on merge. Otherwise:
 
 ```bash
 gh api -X POST "repos/{owner}/{repo}/pulls" -f base=<production> -f head=<integration> \
-  -f title="release: <date>" -F body=@<file> --jq '.number, .html_url'
+  -f title='release: <keywords>' -F body=@<file> --jq '.number, .html_url'
 ```
+
+The title is `release: <keywords>`: two to four short phrases from the manifest naming what
+ships (`release: minimal CLAUDE.md, first canon files`). Shipped specs come first, then the pull
+requests that changed the most lines. Each first-parent commit is one pull request, merged or
+squashed, and lock files are left out of the count:
+
+```bash
+git log --first-parent --diff-merges=first-parent --format=%s --shortstat \
+  origin/<production>..origin/<integration> -- . ':!*.lock' ':!*-lock.*'
+```
+
+A pull request with nothing for a user to see, such as a dependency bump or a CI change, is never
+a keyword. When more ships than fits, name the largest and leave the rest to the body. Plain
+words only: no apostrophes or other quotes, backticks or `$`, which break the shell command, and
+no issue identifier, which a tracker integration reads as a link from the release pull request
+to that issue.
 
 The body is always the manifest, never one generated from the commits, and `<integration>` is
 never deleted.
