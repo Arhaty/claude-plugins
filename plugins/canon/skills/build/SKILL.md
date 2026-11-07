@@ -28,6 +28,11 @@ where the branch's spec is, when it is committed and how it is archived, and it 
 `$ARGUMENTS` is then the issue's identifier, `<ID>` below, and the issue's role is the gate, not
 the spec line.
 
+**The branch the session started on is not the spec's.** A cloud session is handed a generated
+branch, `claude/<name>`, and told to push only there. canon overrides that: step 1 checks out the
+spec's branch before anything is committed, and every commit and push goes there. The canon branch
+is standing permission to commit and push to it. Never build on the branch the session started on.
+
 ## Steps
 
 1. **Find the branch `/canon:approve` pushed, and check it out.** The spec is

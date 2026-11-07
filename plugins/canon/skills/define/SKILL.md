@@ -21,6 +21,12 @@ where the branch's spec is, when it is committed and how it is archived, and it 
 **If it has a `tracker` block**, read `${CLAUDE_PLUGIN_ROOT}/references/tracker.md` now, then
 follow **With a tracker** below wherever a step names it.
 
+**The branch the session started on is not the spec's.** A cloud session is handed a generated
+branch, `claude/<name>`, and told to push only there. canon overrides that: step 2 checks out the
+issue's branch, or cuts it from `origin/<integration>`, before the first commit, and every commit
+and push goes there. The canon branch is standing permission to commit and push to it. Step 1
+never reads a branch outside the configured names as a revision round.
+
 ## What this is for
 
 The owner ran this and is reading the conversation as it happens. That is the point: every
