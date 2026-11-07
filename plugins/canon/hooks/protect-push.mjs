@@ -73,7 +73,7 @@ const ALLOW_FORCE = process.env.ALLOW_FORCE_PUSH === '1';
 const ALLOW_PROTECTED = process.env.ALLOW_PROTECTED_PUSH === '1';
 
 try {
-  const { pushTargets, readRefspec } = await import('./lib/push-command.mjs');
+  const { bareTargets, pushTargets } = await import('./lib/push-command.mjs');
   const { configProblem, loadConfig, projectRoot, readPayload } = await import('./lib/config.mjs');
 
   const payload = await readPayload();
@@ -171,12 +171,6 @@ try {
 
   for (const one of push.pushes) {
     const dir = resolve(cwd, one.dir ?? '.');
-    // The command's own config wins over the repository's, as it does in git.
-    const setting = (key) => one.config[key.toLowerCase()] ?? git(dir, 'config', key);
-    const settings = (key) =>
-      key.toLowerCase() in one.config
-        ? [one.config[key.toLowerCase()]]
-        : git(dir, 'config', '--get-all', key).split('\n').filter(Boolean);
     // After a `cd` this cannot follow, nothing here knows which checkout's `HEAD`
     // or upstream the push reads.
     if (!one.dirKnown && (one.bare || one.targets.includes('HEAD'))) {
@@ -212,23 +206,16 @@ try {
      * itself or to its upstream, depending on `push.default`, every matching branch
      * under `matching`, or whatever `remote.<name>.push` says, which replaces both.
      * Git refuses some of these itself under the default `simple`; agreeing with it
-     * costs nothing.
+     * costs nothing. `bareTargets` lists every candidate.
      */
-    if (setting('push.default') === 'matching') {
-      fail(BOTH, '`push.default=matching`, which pushes every matching branch');
+    const bare = bareTargets(one, current, {
+      get: (key) => git(dir, 'config', key),
+      getAll: (key) => git(dir, 'config', '--get-all', key).split('\n').filter(Boolean),
+    });
+    for (const { branch, via } of bare.found) {
+      if (PROTECTED.has(branch)) fail(branch, via);
     }
-    if (PROTECTED.has(current)) fail(current, 'the current branch');
-    const upstream = current
-      ? setting(`branch.${current}.merge`).replace(/^(?:refs\/)?heads\//, '')
-      : '';
-    if (PROTECTED.has(upstream)) fail(upstream, `this branch's upstream (\`${upstream}\`)`);
-
-    for (const refspec of settings(`remote.${one.remote ?? 'origin'}.push`)) {
-      const read = readRefspec(refspec);
-      const branch = read.target === 'HEAD' ? current : read.target;
-      if (read.everyBranch) fail(BOTH, `\`remote.${one.remote ?? 'origin'}.push\``);
-      if (PROTECTED.has(branch)) fail(branch, `\`remote.${one.remote ?? 'origin'}.push\``);
-    }
+    if (bare.everyBranch) fail(BOTH, bare.everyVia);
   }
 
   allow();

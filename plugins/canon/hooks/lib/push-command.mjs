@@ -101,21 +101,18 @@ function commandConfig(env) {
 }
 
 /**
- * One `git push`, or `null` when the invocation is some other git command.
- * `dirKnown` is false after a `cd` earlier in the call, unless an absolute `-C`
- * names the directory outright.
+ * Git's own options before the subcommand: the subcommand and its index, the
+ * directory the `-C` options name (`null` for none), whether that directory is
+ * known, and each `-c key=value` as written. `dirKnown` is false after a `cd`
+ * earlier in the call, unless an absolute `-C` names the directory outright.
+ *
+ * Exported so every hook that asks which checkout a git command runs in reads the
+ * options the same way.
  */
-function readPush({ argv, env, appended, dirKnown: known = true }) {
+export function gitCall(argv, known = true) {
   let dir = null;
   let dirKnown = known;
-  const config = commandConfig(env);
-  // The same, word for word, for `ci-watch` to hand back to git: `config` lowercases the whole
-  // key, and reads a `-c key` with no value as empty where git reads it as true.
-  const configArgs = Object.entries(env).flatMap(([name, key]) => {
-    const index = /^GIT_CONFIG_KEY_(\d+)$/.exec(name)?.[1];
-    return index === undefined ? [] : [`${key}=${env[`GIT_CONFIG_VALUE_${index}`] ?? ''}`];
-  });
-
+  const settings = [];
   let i = 1;
   while (i < argv.length && argv[i].startsWith('-')) {
     const [name] = argv[i].split('=');
@@ -125,16 +122,36 @@ function readPush({ argv, env, appended, dirKnown: known = true }) {
         if (to.startsWith('/')) dirKnown = true;
         dir = dir === null || to.startsWith('/') ? to : `${dir}/${to}`;
       }
-      if (name === '-c') {
-        const [key, ...value] = (argv[i + 1] ?? '').split('=');
-        config[key.toLowerCase()] = value.join('=');
-        configArgs.push(argv[i + 1] ?? '');
-      }
+      if (name === '-c') settings.push(argv[i + 1] ?? '');
       i += 1;
     }
     i += 1;
   }
-  if (argv[i] !== 'push') return null;
+  return { subcommand: argv[i], index: i, dir, dirKnown, settings };
+}
+
+/**
+ * One `git push`, or `null` when the invocation is some other git command.
+ *
+ * Exported for `branch-command.mjs`, which reads each push beside the commits of
+ * the same call.
+ */
+export function readPush({ argv, env, appended, dirKnown: known = true }) {
+  const config = commandConfig(env);
+  // The same, word for word, for `ci-watch` to hand back to git: `config` lowercases the whole
+  // key, and reads a `-c key` with no value as empty where git reads it as true.
+  const configArgs = Object.entries(env).flatMap(([name, key]) => {
+    const index = /^GIT_CONFIG_KEY_(\d+)$/.exec(name)?.[1];
+    return index === undefined ? [] : [`${key}=${env[`GIT_CONFIG_VALUE_${index}`] ?? ''}`];
+  });
+
+  const { subcommand, index: i, dir, dirKnown, settings } = gitCall(argv, known);
+  for (const setting of settings) {
+    const [key, ...value] = setting.split('=');
+    config[key.toLowerCase()] = value.join('=');
+    configArgs.push(setting);
+  }
+  if (subcommand !== 'push') return null;
 
   let force = false;
   let everyBranch = false;
@@ -218,6 +235,58 @@ function readPush({ argv, env, appended, dirKnown: known = true }) {
     force,
     unresolved,
   };
+}
+
+/**
+ * Where a push with no refspec may write, for `protect-push.mjs` and
+ * `require-canon-branch.mjs` alike: the current branch, its upstream, and every
+ * `remote.<name>.push` refspec of the remote the push goes to, each with how it was
+ * reached. `everyBranch` is set, with `everyVia`, when `push.default=matching` or a
+ * wildcard `remote.<name>.push` writes every branch.
+ *
+ * Which of these git actually uses depends on `push.default`. Every candidate is
+ * returned rather than the one git picks: a guard that judges them all is never
+ * wrong about a push it allows, and git itself refuses most of the others under the
+ * default `simple`.
+ *
+ * The remote is the one the command names, else `branch.<current>.pushRemote`,
+ * `remote.pushDefault`, `branch.<current>.remote`, then `origin`, as git picks it.
+ * The command's own config wins over the repository's: `get(key)` and `getAll(key)`
+ * read the repository's, and keys are compared lowercased, as `push.config` holds them.
+ */
+export function bareTargets(push, current, { get, getAll }) {
+  const setting = (key) => push.config[key.toLowerCase()] ?? get(key);
+  const settings = (key) =>
+    key.toLowerCase() in push.config ? [push.config[key.toLowerCase()]] : getAll(key);
+
+  if (setting('push.default') === 'matching') {
+    return {
+      found: [],
+      everyBranch: true,
+      everyVia: '`push.default=matching`, which pushes every matching branch',
+    };
+  }
+
+  const found = [];
+  if (current) found.push({ branch: current, via: 'the current branch' });
+  const upstream = current ? branchName(setting(`branch.${current}.merge`)) : '';
+  if (upstream) found.push({ branch: upstream, via: `this branch's upstream (\`${upstream}\`)` });
+
+  const remote =
+    push.remote ??
+    ((current &&
+      (setting(`branch.${current}.pushRemote`) ||
+        setting('remote.pushDefault') ||
+        setting(`branch.${current}.remote`))) ||
+      'origin');
+  const via = `\`remote.${remote}.push\``;
+  let everyBranch = false;
+  for (const refspec of settings(`remote.${remote}.push`)) {
+    const read = readRefspec(refspec);
+    if (read.everyBranch) everyBranch = true;
+    else found.push({ branch: read.target === 'HEAD' ? current : read.target, via });
+  }
+  return { found, everyBranch, everyVia: everyBranch ? via : null };
 }
 
 /**
