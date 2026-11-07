@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.7.0](https://github.com/Arhaty/claude-plugins/compare/canon-v0.6.0...canon-v0.7.0) (2026-11-07)
+
+
+### Features
+
+* **canon:** keep commits and pushes on a canon branch ([#70](https://github.com/Arhaty/claude-plugins/issues/70)) ([a062def](https://github.com/Arhaty/claude-plugins/commit/a062def487bf50df8d44dfb60e4249e82f7ee05a))
+
 ## [0.6.0](https://github.com/Arhaty/claude-plugins/compare/canon-v0.5.2...canon-v0.6.0) (2026-11-04)
 
 
