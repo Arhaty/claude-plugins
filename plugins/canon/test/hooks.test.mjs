@@ -637,6 +637,263 @@ describe('protect-push', () => {
 });
 
 /**
+ * Commits and pushes stay on a branch canon names: the cloud session's generated branch is the
+ * case it exists for. Each case runs the hook against a scratch repository on the branch named.
+ */
+describe('require-canon-branch', () => {
+  let repo;
+  const on = (branch) => repo.git('checkout', '-q', '-B', branch);
+  const check = (command, options = {}) =>
+    run('require-canon-branch.mjs', command, 'exit 1', {
+      cwd: repo.dir,
+      project: repo.dir,
+      ...options,
+    });
+  const status = (command, options) => check(command, options).status;
+
+  beforeEach(() => {
+    repo = scratchRepo();
+  });
+  afterEach(() => rmSync(repo.dir, { recursive: true, force: true }));
+
+  it('refuses a commit and a push from a cloud session branch', () => {
+    on('claude/x');
+    expect(status('git commit -m "feat: x"')).toBe(2);
+    expect(status('git push -u origin HEAD')).toBe(2);
+    expect(status('git push')).toBe(2);
+    expect(status('git add . && git commit -m x && git push -u origin HEAD')).toBe(2);
+    expect(status('bash -c "git commit -m x"')).toBe(2);
+    expect(status('git -C . commit -m x')).toBe(2);
+  });
+
+  it('says which branch, which prefixes, how to get onto the right one, and the bypass', () => {
+    on('claude/dreamy-fermat-5ft31e');
+    const { stderr } = check('git commit -m x');
+    expect(stderr).toMatch(/`claude\/dreamy-fermat-5ft31e` is checked out/);
+    expect(stderr).toContain('`feat/`, `fix/`, `chore/`, `refactor/`, `docs/`');
+    expect(stderr).toContain('git checkout -b feat/short-description --no-track origin/staging');
+    expect(stderr).toContain('ALLOW_UNLISTED_BRANCH=1');
+  });
+
+  it('allows a commit and a push from a canon branch', () => {
+    on('feat/abc-1-x');
+    expect(status('git commit -m "feat: x"')).toBe(0);
+    expect(status('git push -u origin HEAD')).toBe(0);
+    expect(status('git push origin feat/abc-1-x')).toBe(0);
+    expect(status('git push origin HEAD:fix/other')).toBe(0);
+  });
+
+  it('refuses a push that writes a branch outside the allowlist, from a canon branch', () => {
+    on('feat/abc-1-x');
+    expect(status('git push origin HEAD:claude/x')).toBe(2);
+    expect(status('git push origin HEAD:refs/heads/claude/x')).toBe(2);
+    expect(status('git push -u origin feat/abc-1-x:claude/x')).toBe(2);
+    expect(status('git push origin HEAD:feature')).toBe(2);
+    expect(check('git push origin HEAD:claude/x').stderr).toMatch(/`claude\/x` is where it writes/);
+  });
+
+  it('reads the git command, not text that mentions push or claude/', () => {
+    on('feat/abc-1-x');
+    expect(status('git commit -m "never push to claude/x"')).toBe(0);
+    expect(status("git commit -m 'docs: git push origin HEAD:claude/x is refused'")).toBe(0);
+    expect(
+      status('git commit -m "$(cat <<\'EOF\'\nfix: x\n\ngit push origin HEAD:claude/x\nEOF\n)"')
+    ).toBe(0);
+    expect(status('echo "git push origin HEAD:claude/x"')).toBe(0);
+    expect(status('grep -rn "claude/" . && git log --oneline')).toBe(0);
+    on('claude/x');
+    expect(status('git status && git log --oneline -3 && git diff')).toBe(0);
+    expect(status('git checkout -b feat/abc-1-x --no-track origin/staging')).toBe(0);
+    expect(status('echo "git commit"')).toBe(0);
+  });
+
+  it('allows deleting a stray branch from the remote, and pushing a tag', () => {
+    on('feat/abc-1-x');
+    expect(status('git push origin --delete claude/x')).toBe(0);
+    expect(status('git push origin :claude/x')).toBe(0);
+    repo.git('tag', 'v1.0.0');
+    expect(status('git push origin v1.0.0')).toBe(0);
+    expect(status('git push origin refs/tags/v1.0.0')).toBe(0);
+    expect(status('git push --tags')).toBe(0);
+  });
+
+  it('honours ALLOW_UNLISTED_BRANCH on the command or in the session', () => {
+    on('claude/x');
+    expect(status('ALLOW_UNLISTED_BRANCH=1 git commit -m x')).toBe(0);
+    expect(status('ALLOW_UNLISTED_BRANCH=1 git push -u origin HEAD')).toBe(0);
+    expect(status('git commit -m x', { env: { ALLOW_UNLISTED_BRANCH: '1' } })).toBe(0);
+    // The bypass covers the command it is set on, not the next one.
+    expect(status('ALLOW_UNLISTED_BRANCH=1 git commit -m x && git push -u origin HEAD')).toBe(2);
+  });
+
+  it('allows everything in a project with no canon.json', () => {
+    on('claude/x');
+    rmSync(join(repo.dir, '.claude'), { recursive: true, force: true });
+    rmSync(join(repo.dir, 'docs'), { recursive: true, force: true });
+    expect(status('git commit -m x')).toBe(0);
+    expect(status('git push -u origin HEAD')).toBe(0);
+    expect(status('git push origin HEAD:claude/x')).toBe(0);
+  });
+
+  it('leaves the integration and production branches to the other hooks', () => {
+    on('staging');
+    expect(status('git commit -m x')).toBe(0);
+    on('main');
+    expect(status('git commit -m x')).toBe(0);
+    on('feat/abc-1-x');
+    expect(status('git push origin HEAD:main')).toBe(0);
+  });
+
+  it('takes the prefixes from canon.json, never a fixed list', () => {
+    writeFileSync(
+      join(repo.dir, '.claude/canon.json'),
+      JSON.stringify({ ...CONFIG, branches: { ...CONFIG.branches, prefixes: ['work'] } })
+    );
+    on('feat/abc-1-x');
+    expect(status('git commit -m x')).toBe(2);
+    on('work/abc-1-x');
+    expect(status('git commit -m x')).toBe(0);
+  });
+
+  it('with tracker naming, allows the issue branch and refuses the rest', () => {
+    writeFileSync(
+      join(repo.dir, '.claude/canon.json'),
+      JSON.stringify({
+        ...CONFIG,
+        branches: { integration: 'staging', production: 'main', naming: 'tracker' },
+        tracker: TRACKER,
+      })
+    );
+    on('abc-123-rate-limit');
+    expect(status('git commit -m x')).toBe(0);
+    on('claude/abc-ish');
+    expect(status('git commit -m x')).toBe(2);
+    // A generated branch named after the issue is still a generated branch.
+    on('claude/abc-123-add-login-x7q');
+    expect(status('git commit -m x')).toBe(2);
+    // Linear's default puts the user name first; any one segment but a generator's is fine.
+    on('ada/abc-123-rate-limit');
+    expect(status('git commit -m x')).toBe(0);
+    on('a/b/abc-123-x');
+    expect(status('git commit -m x')).toBe(2);
+    on('abcd-123-x');
+    expect(status('git commit -m x')).toBe(2);
+  });
+
+  it('judges a push by what it writes, not by what is checked out', () => {
+    on('feat/abc-1-x');
+    on('claude/x');
+    expect(status('git push -u origin feat/abc-1-x')).toBe(0);
+    expect(status('git push origin --delete claude/x')).toBe(0);
+    expect(status('git push')).toBe(2);
+    expect(status('git push origin claude/x')).toBe(2);
+  });
+
+  it('refuses a push of every branch while a non-canon branch exists locally', () => {
+    on('claude/x');
+    on('feat/abc-1-x');
+    expect(status('git push --all origin')).toBe(2);
+    expect(status("git push origin 'refs/heads/*:refs/heads/*'")).toBe(2);
+    expect(status('git -c push.default=matching push')).toBe(2);
+    repo.git('branch', '-D', 'claude/x');
+    repo.git('branch', '-D', 'feature');
+    expect(status('git push --all origin')).toBe(0);
+  });
+
+  it('follows a bare push to where configuration sends it', () => {
+    on('feat/abc-1-x');
+    repo.git('config', 'branch.feat/abc-1-x.merge', 'refs/heads/claude/x');
+    // Every candidate is judged, as protect-push judges them: under the default `simple`
+    // git refuses this push itself, so refusing it here costs nothing.
+    expect(status('git push')).toBe(2);
+    expect(status('git -c push.default=upstream push')).toBe(2);
+    repo.git('config', 'push.default', 'upstream');
+    expect(status('git push')).toBe(2);
+    expect(status('git push -u origin HEAD')).toBe(0);
+    repo.git('config', 'push.default', 'simple');
+    repo.git('config', 'remote.origin.push', 'HEAD:claude/y');
+    expect(status('git push')).toBe(2);
+  });
+
+  it('leaves another repository alone', () => {
+    const other = mkdtempSync(join(tmpdir(), 'canon-other-'));
+    spawnSync('git', ['-C', other, 'init', '-q', '-b', 'master']);
+    on('feat/abc-1-x');
+    expect(status(`git -C ${other} commit -m x`)).toBe(0);
+    expect(status(`git -C ${other} push -u origin HEAD`)).toBe(0);
+    rmSync(other, { recursive: true, force: true });
+  });
+
+  it('judges a worktree of this project by its own branch', () => {
+    on('feat/abc-1-x');
+    const tree = mkdtempSync(join(tmpdir(), 'canon-tree-'));
+    rmSync(tree, { recursive: true, force: true });
+    repo.git('worktree', 'add', '-q', '-b', 'claude/x', tree);
+    expect(status(`git -C ${tree} commit -m x`)).toBe(2);
+    repo.git('worktree', 'remove', '--force', tree);
+  });
+
+  it('refuses the other commands that commit on a non-canon branch', () => {
+    on('claude/x');
+    for (const command of [
+      'git merge origin/staging',
+      'git cherry-pick abc123',
+      'git revert HEAD',
+      'git am < x.patch',
+      'git pull',
+      'git rebase --continue',
+    ]) {
+      expect(status(command), command).toBe(2);
+    }
+    expect(check('git revert HEAD').stderr).toMatch(/Refusing `git revert`/);
+    expect(status('git merge --abort')).toBe(0);
+    expect(status('git cherry-pick --quit')).toBe(0);
+    on('feat/abc-1-x');
+    expect(status('git merge --no-edit origin/staging')).toBe(0);
+  });
+
+  it('follows a bare push to the remote git would pick', () => {
+    on('feat/abc-1-x');
+    repo.git('config', 'remote.pushDefault', 'fork');
+    repo.git('config', 'remote.fork.push', 'HEAD:claude/x');
+    expect(status('git push')).toBe(2);
+    expect(status('git -c remote.Fork.push=HEAD:claude/x push Fork')).toBe(2);
+    expect(status('git push origin')).toBe(0);
+  });
+
+  it('tells a session already on its branch to push it to its own name', () => {
+    on('feat/abc-1-x');
+    const { stderr } = check('git push origin HEAD:claude/x');
+    expect(stderr).toContain('git push -u origin HEAD');
+    expect(stderr).not.toMatch(/cherry-pick/);
+    on('claude/x');
+    expect(check('git push -u origin HEAD').stderr).toMatch(/cherry-pick/);
+  });
+
+  it('refuses an MCP GitHub write to a non-canon branch of this repository only', () => {
+    repo.git('remote', 'add', 'origin', 'https://github.com/o/r.git');
+    const mcp = (tool, input) => status({ tool_name: tool, tool_input: input, cwd: repo.dir });
+    const write = { owner: 'o', repo: 'r', path: 'a', content: 'x', message: 'm' };
+    expect(mcp('mcp__github__push_files', { ...write, branch: 'claude/x' })).toBe(2);
+    expect(mcp('mcp__github__create_or_update_file', { ...write, branch: 'claude/x' })).toBe(2);
+    expect(mcp('mcp__github__create_branch', { owner: 'O', repo: 'R', branch: 'claude/x' })).toBe(
+      2
+    );
+    expect(mcp('mcp__github__push_files', { ...write, branch: 'feat/abc-1-x' })).toBe(0);
+    expect(mcp('mcp__github__push_files', { ...write, owner: 'other', branch: 'claude/x' })).toBe(
+      0
+    );
+  });
+
+  it('fails open where it cannot read the branch', () => {
+    on('claude/x');
+    expect(status('cd sub && git commit -m x')).toBe(0);
+    repo.git('checkout', '-q', '--detach');
+    expect(status('git commit -m x')).toBe(0);
+  });
+});
+
+/**
  * Claude Code reads any exit but 2 as permission, so a guard that throws would let every call
  * through. Each case runs the real hook from a copy of the hooks directory with one helper module
  * replaced, and expects a refusal on a guarded call and a plain one alike, because a crashed
@@ -680,6 +937,25 @@ describe('a crashed guard refuses', () => {
       expect(result.status, command).toBe(2);
       expect(result.stderr).toMatch(/crashed/);
     }
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it.each([
+    ['throws', "export const commitsAndPushes = () => { throw new Error('broken') }\n"],
+    ['fails to link', 'export {}\n'],
+    ['has a syntax error', 'export const commitsAndPushes = (\n'],
+  ])('require-canon-branch refuses every call when branch-command.mjs %s', (_, source) => {
+    const dir = brokenHooks('branch-command.mjs', source);
+    for (const command of ['git commit -m x', 'ls']) {
+      const result = run('require-canon-branch.mjs', command, 'exit 1', { hooksDir: dir });
+      expect(result.status, command).toBe(2);
+      expect(result.stderr).toMatch(/crashed/);
+    }
+    const bypassed = run('require-canon-branch.mjs', 'git commit -m x', 'exit 1', {
+      hooksDir: dir,
+      env: { ALLOW_UNLISTED_BRANCH: '1' },
+    });
+    expect(bypassed.status).toBe(0);
     rmSync(dir, { recursive: true, force: true });
   });
 

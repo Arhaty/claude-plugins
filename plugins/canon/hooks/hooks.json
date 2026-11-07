@@ -1,5 +1,5 @@
 {
-  "description": "canon: keep work off the integration and production branches, refuse pushes and production merges, require a canon update with governed changes, format edited files, and report red CI",
+  "description": "canon: keep work off the integration and production branches, refuse pushes and production merges, keep commits and pushes on a canon branch, require a canon update with governed changes, format edited files, and report red CI",
   "hooks": {
     "UserPromptSubmit": [
       {
@@ -42,6 +42,12 @@
           },
           {
             "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/require-canon-branch.mjs\"",
+            "timeout": 15,
+            "statusMessage": "Checking the branch name"
+          },
+          {
+            "type": "command",
             "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/protect-merge.mjs\"",
             "timeout": 20,
             "statusMessage": "Checking the merge target"
@@ -51,6 +57,17 @@
             "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/require-canon.mjs\"",
             "timeout": 20,
             "statusMessage": "Checking the canon"
+          }
+        ]
+      },
+      {
+        "matcher": "mcp__.*__(push_files|create_or_update_file|delete_file|create_branch)",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/require-canon-branch.mjs\"",
+            "timeout": 15,
+            "statusMessage": "Checking the branch name"
           }
         ]
       },

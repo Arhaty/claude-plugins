@@ -22,6 +22,7 @@ import {
   prInvocations,
   prSubcommand,
 } from '../hooks/lib/merge-command.mjs';
+import { branchAllowed, commitsAndPushes, writtenBranches } from '../hooks/lib/branch-command.mjs';
 import { pushTargets } from '../hooks/lib/push-command.mjs';
 import { writesToWorktree } from '../hooks/lib/writes-to-worktree.mjs';
 
@@ -1209,5 +1210,63 @@ describe('writesToWorktree, both directions', () => {
   });
   it.each(WRITES)('writes: %s', (command) => {
     expect(writesToWorktree(command)).toBe(true);
+  });
+});
+
+describe('commitsAndPushes', () => {
+  const kinds = (command) => commitsAndPushes(command).map((call) => call.kind);
+
+  it('finds real commits and pushes only', () => {
+    expect(kinds('git commit -m x && git push -u origin HEAD')).toEqual(['commit', 'push']);
+    expect(kinds('git -C sub -c user.name=x commit')).toEqual(['commit']);
+    expect(kinds('bash -c "git push origin HEAD"')).toEqual(['push']);
+    expect(kinds('git commit -m "then git push to claude/x"')).toEqual(['commit']);
+    expect(kinds('echo "git push origin HEAD:claude/x"')).toEqual([]);
+    expect(kinds('git log --grep=commit && git status')).toEqual([]);
+    expect(kinds('git commit-tree HEAD^{tree}')).toEqual([]);
+  });
+
+  it('keeps the bypass set on the one command', () => {
+    const [commit, push] = commitsAndPushes('ALLOW_UNLISTED_BRANCH=1 git commit -m x; git push');
+    expect(commit.env.ALLOW_UNLISTED_BRANCH).toBe('1');
+    expect(push.env.ALLOW_UNLISTED_BRANCH).toBeUndefined();
+  });
+
+  it('lists the branches a push writes, not the ones it deletes', () => {
+    const written = (command) => writtenBranches(commitsAndPushes(command)[0].push);
+    expect(written('git push origin HEAD:claude/x')).toEqual(['claude/x']);
+    expect(written('git push -u origin HEAD')).toEqual(['HEAD']);
+    expect(written('git push origin :claude/x')).toEqual([]);
+    expect(written('git push -d origin claude/x')).toEqual([]);
+    expect(written('git push')).toEqual([]);
+  });
+});
+
+describe('branchAllowed', () => {
+  const config = {
+    branches: { integration: 'staging', production: 'main', prefixes: ['feat', 'fix'] },
+  };
+  const tracker = {
+    branches: { integration: 'staging', production: 'main', naming: 'tracker' },
+    tracker: { team: 'ABC' },
+  };
+
+  it.each([
+    ['feat/abc-1-x', config, true],
+    ['fix/y', config, true],
+    ['staging', config, true],
+    ['main', config, true],
+    ['claude/dreamy-fermat-5ft31e', config, false],
+    ['feature/x', config, false],
+    ['feat', config, false],
+    ['abc-12-x', tracker, true],
+    ['ada/abc-12-x', tracker, true],
+    ['a/b/abc-12-x', tracker, false],
+    ['claude/abc-12-add-login-x7q', tracker, false],
+    ['ABC-12', tracker, true],
+    ['claude/x', tracker, false],
+    ['xabc-12-x', tracker, false],
+  ])('%s', (branch, cfg, allowed) => {
+    expect(branchAllowed(branch, cfg)).toBe(allowed);
   });
 });
