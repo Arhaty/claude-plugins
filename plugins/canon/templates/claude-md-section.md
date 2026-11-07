@@ -46,6 +46,9 @@ Small fixes and tweaks do not need a spec. Feature work does: if there is none, 
   a direct edit.
 - Branch from `origin/{{integration}}`, never from `{{production}}` or another feature branch.
   Branch names: {{branchNames}}.
+- A cloud session's generated branch (`claude/<name>`) is never used. Before the first commit,
+  check out the issue's canon branch; this is standing permission to commit and push there
+  instead.
 - Push with `git push -u origin HEAD`, never a bare `git push`.
 - Pull requests go into `{{integration}}`. The release pull request from `{{integration}}` into
   `{{production}}` is merged by {{owner}} and nobody else.
@@ -55,10 +58,10 @@ Small fixes and tweaks do not need a spec. Feature work does: if there is none, 
 ### What the hooks refuse
 
 The plugin's hooks refuse an edit while `{{integration}}` or `{{production}}` is checked out, a push
-to either, any force push, any merge into `{{production}}`, and a pull request that changes a
-governed path with no canon update. Each refusal names its bypass. Setting a bypass without saying
-in one line which change it covers and why defeats the check. The hooks are a seatbelt, not a
-boundary: branch protection on GitHub is what actually prevents a bad change reaching
-`{{production}}`.
+to either, any force push, a commit or push from a branch outside the names above, any merge
+into `{{production}}`, and a pull request that changes a governed path with no canon update. Each
+refusal names its bypass. Setting a bypass without saying in one line which change it covers and
+why defeats the check. The hooks are a seatbelt, not a boundary: branch protection on GitHub is
+what actually prevents a bad change reaching `{{production}}`.
 
 <!-- canon:end -->

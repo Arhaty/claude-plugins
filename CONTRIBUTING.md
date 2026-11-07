@@ -56,7 +56,7 @@ Paths below are relative to `plugins/canon/`.
   security bug; a guard that refuses ordinary work gets bypassed out of habit. Both directions
   matter.
 - **Guards on what ships fail closed** when they crash (`protect-push`, `protect-merge`,
-  `require-canon`). Keep everything that can throw inside the hook's `try`.
+  `require-canon`, `require-canon-branch`). Keep everything that can throw inside the hook's `try`.
 - **Nothing project-specific in the plugin.** Branch names, commands, names and URLs come from
   `.claude/canon.json`. A new setting goes in `templates/canon.schema.json` with a description,
   in `hooks/lib/config.mjs` validation, and in `/canon:setup`.

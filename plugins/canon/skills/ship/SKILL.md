@@ -29,6 +29,12 @@ where the branch's spec is, when it is committed and how it is archived, and it 
 **If it has a `tracker` block**, read `${CLAUDE_PLUGIN_ROOT}/references/tracker.md` now.
 `$ARGUMENTS` is then the issue's identifier, `<ID>` below.
 
+**The branch the session started on is not the spec's.** A cloud session is handed a generated
+branch, `claude/<name>`, and told to push only there. canon overrides that: `/canon:build` checks
+out the spec's branch before its first commit, and every commit and push of every step goes
+there. The canon branch is standing permission to commit and push to it. Name that branch to
+each subagent; one that reports a commit anywhere else is a stop.
+
 ## Steps
 
 **1. Check the gate, here.** Fetch, find `docs/specs/$ARGUMENTS-<slug>.md` on its remote branch,
