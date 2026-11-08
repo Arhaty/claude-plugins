@@ -49,12 +49,21 @@ const TOP = [
   'specs',
   'ci',
   'claudeMd',
+  'autonomy',
 ];
 const BRANCHES = ['integration', 'production', 'prefixes', 'naming', 'deleteAfterMerge'];
 const NAMINGS = ['prefix', 'tracker'];
 const TRACKER = ['provider', 'team', 'statuses', 'labelPrefix', 'apiKeyCommand'];
 const CI = ['workflow', 'baseInput', 'requiredCheck'];
 const SPECS = ['naming', 'archive', 'commitWhileDrafting'];
+const AUTONOMY = ['specReview', 'pickup', 'staleHours'];
+
+/**
+ * What leaving `autonomy` out means: the owner runs every step, as before the setting existed.
+ * `staleHours` is how long a `building` issue may go without a commit or an update before
+ * `/canon:pickup` takes its run for dead.
+ */
+export const AUTONOMY_DEFAULTS = { specReview: false, pickup: false, staleHours: 3 };
 
 /**
  * The issue trackers a `tracker` block may name. One module each in `scripts/tracker/`.
@@ -174,7 +183,8 @@ export function validate(config) {
     ...unknownKeys(config.tracker?.statuses, ROLES, 'tracker.statuses.'),
     ...unknownKeys(config.ci, CI, 'ci.'),
     ...unknownKeys(config.review, ['extraSkills'], 'review.'),
-    ...unknownKeys(config.specs, SPECS, 'specs.')
+    ...unknownKeys(config.specs, SPECS, 'specs.'),
+    ...unknownKeys(config.autonomy, AUTONOMY, 'autonomy.')
   );
   if (config.version !== 1) errors.push('`version` must be 1');
   if (!isText(config.owner)) errors.push('`owner` must be a non-empty string');
@@ -252,6 +262,29 @@ export function validate(config) {
   if ('specs' in config) errors.push(...specsErrors(config.specs, 'tracker' in config));
   if ('claudeMd' in config && typeof config.claudeMd !== 'boolean') {
     errors.push('`claudeMd` must be true or false, or left out');
+  }
+  if ('autonomy' in config) errors.push(...autonomyErrors(config.autonomy, 'tracker' in config));
+  return errors;
+}
+
+/**
+ * Problems with the optional `autonomy` block. Absent, or each switch false, means the owner
+ * runs every step. Pickup reads the tracker's board, so it needs one; spec review does not.
+ */
+function autonomyErrors(autonomy, hasTracker) {
+  if (!isObject(autonomy)) return ['`autonomy` must be an object, or left out'];
+  const errors = [];
+  for (const key of ['specReview', 'pickup']) {
+    if (key in autonomy && typeof autonomy[key] !== 'boolean') {
+      errors.push(`\`autonomy.${key}\` must be true or false, or left out`);
+    }
+  }
+  if (autonomy.pickup === true && !hasTracker) {
+    errors.push('`autonomy.pickup` needs a `tracker` block, whose board it picks issues from');
+  }
+  const hours = autonomy.staleHours;
+  if ('staleHours' in autonomy && !(Number.isFinite(hours) && hours > 0 && hours <= 72)) {
+    errors.push('`autonomy.staleHours` must be a number of hours above 0 and at most 72');
   }
   return errors;
 }
@@ -417,6 +450,7 @@ export function withDefaults(config) {
   return {
     ...config,
     urls: Object.fromEntries(URLS.map((name) => [name, config.urls?.[name] ?? null])),
+    autonomy: { ...AUTONOMY_DEFAULTS, ...config.autonomy },
   };
 }
 

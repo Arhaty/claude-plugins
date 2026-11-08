@@ -275,6 +275,30 @@
           "description": "The workflow_dispatch input that takes the base branch, e.g. \"base\", given the integration branch on each dispatch. For a workflow that diffs against the base to skip work: a dispatched run carries no pull_request.base.sha. null when the workflow declares no such input; GitHub refuses an input the workflow does not declare."
         }
       }
+    },
+    "autonomy": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Optional. Which steps Claude runs without the owner. Leave it out, or set each switch false, and the owner runs every step as before.",
+      "properties": {
+        "specReview": {
+          "type": "boolean",
+          "default": false,
+          "description": "true: once the owner's questions are answered, /canon:define has the spec reviewed in a fresh context, fixes what the canon, the code or the Decisions table settles, asks the owner about the rest, and reports the review in its hand-over. Works without a tracker."
+        },
+        "pickup": {
+          "type": "boolean",
+          "default": false,
+          "description": "true: /canon:pickup builds the next approved issue on the tracker with /canon:ship, one per run, usually from a schedule. Needs a tracker block."
+        },
+        "staleHours": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 72,
+          "default": 3,
+          "description": "How long an issue in the building role may go without a commit on its branch or an update to the issue before /canon:pickup takes its run for dead and blocks it. Until then, a building issue means a run is live, and pickup stops."
+        }
+      }
     }
   }
 }
