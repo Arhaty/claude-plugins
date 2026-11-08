@@ -439,5 +439,26 @@ describe('the autonomous flow', () => {
     expect(pickup).toContain('Reply \\`resume\\` to carry on from the branch');
     expect(pickup).toMatch(/One line, `Nothing to build\.`/);
     expect(pickup).toMatch(/\*\*One issue per run\.\*\* Never loop back to step 1/);
+    // Moving back to approved would carry on from the dead branch, not start over.
+    expect(pickup).not.toMatch(/back to approved to start over/);
+  });
+
+  it('claims the picked issue before shipping, and notes each step so the run stays live', () => {
+    const pickup = skill('pickup');
+    const claim = pickup.indexOf('set-state <ID> building');
+    expect(claim).toBeGreaterThanOrEqual(0);
+    expect(claim).toBeLessThan(pickup.indexOf('Run `/canon:ship` on it'));
+    expect(pickup).toMatch(/`--picked approved` or `--picked blocked`/);
+    const ship = skill('ship');
+    expect(ship).toMatch(/Read a `building` issue\s+then as the role named/);
+    expect(ship).toMatch(/\*\*While picked, note each step on the issue\*\*/);
+    expect(skill('build')).toMatch(
+      /moved it to `building` as its claim: read it as the role named/
+    );
+  });
+
+  it('says an unattended run needs its permissions granted up front', () => {
+    expect(skill('pickup')).toMatch(/\*\*Unattended means no permission prompts either\.\*\*/);
+    expect(skill('setup')).toMatch(/\*\*Nobody is there to approve a permission prompt\.\*\*/);
   });
 });

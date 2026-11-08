@@ -124,14 +124,18 @@ and off means every command behaves exactly as before.
   blockers first; an issue blocked by one with no spec waits. A `building` issue with a commit or
   an update in the last `autonomy.staleHours` (3) means a run is live, and pickup stops; older
   than that, the run died, and pickup blocks it with a question asking the owner to reply
-  `resume`.
+  `resume`. Pickup claims the issue it picks by moving it to `building` before it ships, and ship
+  notes each step on the issue, so a second run sees a live run, not a free issue.
 
 `/canon:pickup --unattended` is what a schedule runs. Unattended, ship never asks in the chat:
 at each point it would ask the owner, it posts the question on the issue, moves it to `blocked`
 and ends. The owner answers on the issue, and the next run carries on. Setup offers to create a
 routine running it every two hours. The cloud environment needs `LINEAR_API_KEY` in its own
 settings and the plugin loaded as [Loading the plugin in a cloud session](#loading-the-plugin-in-a-cloud-session)
-says. A run with nothing to build is one short session that reads the board and ends.
+says. Nobody is there to approve a permission prompt, so that environment
+must allow what `/canon:ship` does (git commits and pushes, `gh api` calls, file edits and
+subagents) without asking. A run with nothing to build is one short session that reads the board
+and ends.
 
 With both switches on, `/canon:define` then `/canon:approve` is all the owner does per change.
 `/canon:production` and the release merge stay theirs.

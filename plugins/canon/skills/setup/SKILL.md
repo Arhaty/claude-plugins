@@ -246,6 +246,10 @@ file that exists and differs, and writes nothing until each one is approved by n
      key command approval.
    - **The routine needs the plugin loaded**, which a repository's `.claude/settings.json` does
      not do in a cloud session: see the plugin README's "Loading the plugin in a cloud session".
+   - **Nobody is there to approve a permission prompt.** The routine's environment must allow
+     what `/canon:ship` does without asking: `git` commits and pushes, `gh api` calls, file edits
+     and subagents. A run that stops on a prompt leaves its issue in `building` until a later run
+     takes it for dead and blocks it.
    - **What it costs when there is nothing to build**: one short run that reads the board, says
      `Nothing to build.` or names the live run, and ends. A run that builds costs what
      `/canon:ship` costs.

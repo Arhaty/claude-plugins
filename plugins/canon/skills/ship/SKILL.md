@@ -1,7 +1,7 @@
 ---
 name: ship
 description: Build an approved spec, loop review, triage and fix until clean, write the canon, land it on the integration branch, and report in five lines
-argument-hint: <spec number, e.g. 043, or the issue ID with a tracker> [--unattended]
+argument-hint: <spec number, e.g. 043, or the issue ID with a tracker> [--picked <role>] [--unattended]
 disable-model-invocation: true
 ---
 
@@ -26,7 +26,7 @@ the variables a command would have filled in, which is why the prompt names both
 and `/code-review` are invoked as they are.
 
 **Unattended.** `--unattended` in `$ARGUMENTS` means nobody is watching: `/canon:pickup` started
-this run from a schedule. The spec number or issue is `$ARGUMENTS` without it. Pass it on to
+this run from a schedule. The spec number or issue is `$ARGUMENTS` without the flags. Pass it on to
 `/canon:build`, and see **When to ask** for what it changes.
 
 ## Before anything
@@ -57,8 +57,16 @@ with an answer after the question (`comments <ID>`), which is a run resuming. `b
 answer: repeat the question and stop. Any other role is `/canon:build`'s own refusal: say which
 and stop. The spec checks stand.
 
+**Picked.** `--picked approved` or `--picked blocked` in the arguments means `/canon:pickup` just
+moved the issue to `building` as its claim, so no second run takes it. Read a `building` issue
+then as the role named, and check it as above: a `blocked` one still needs its answer. Pass the
+flag on to `/canon:build`. **While picked, note each step on the issue** as it starts (build,
+each review round, canon, land) with a one-line `comment <ID>`: a scheduled pickup takes a
+`building` issue with no commit, update or comment for `autonomy.staleHours` for a dead run, and
+a review round or a CI wait can go that long without a commit.
+
 **2. Build.** One subagent, foreground, running `/canon:build` as above with `<ID or NNN>`,
-followed by `--unattended` when this run has it: `You are running under /canon:ship, so report the branch, the pull request number, whether it is ready or waiting on
+followed by `--picked <role>` and `--unattended` when this run has them: `You are running under /canon:ship, so report the branch, the pull request number, whether it is ready or waiting on
 /canon:canon, and anything undone, and nothing about what to run next.`
 
 A pull request left in draft **because the canon hook refused the ready mark** is normal: step 6

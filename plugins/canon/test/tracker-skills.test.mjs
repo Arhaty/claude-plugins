@@ -34,7 +34,7 @@ describe('the tracker in the skills', () => {
     const owners = {
       spec: ['define'],
       approved: ['approve'],
-      building: ['build', 'ship'],
+      building: ['build', 'ship', 'pickup'],
       blocked: ['build', 'ship', 'pickup'],
     };
     for (const [name, role] of moves) {
@@ -48,6 +48,7 @@ describe('the tracker in the skills', () => {
       'build',
       'build',
       'define',
+      'pickup',
       'pickup',
       'ship',
       'ship',

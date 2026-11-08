@@ -1,7 +1,7 @@
 ---
 name: build
 description: Build an approved spec on its branch, behind a draft pull request into the integration branch
-argument-hint: <spec number, e.g. 043, or the issue ID with a tracker> [--unattended]
+argument-hint: <spec number, e.g. 043, or the issue ID with a tracker> [--picked <role>] [--unattended]
 disable-model-invocation: true
 ---
 
@@ -35,7 +35,7 @@ is standing permission to commit and push to it. Never build on the branch the s
 
 **Unattended.** `--unattended` in `$ARGUMENTS` means nobody is watching: a scheduled
 `/canon:pickup` started the run through `/canon:ship`. The spec number or issue is `$ARGUMENTS`
-without it. Every place below that says to ask the owner, including "ask whether to resume", is
+without the flags. Every place below that says to ask the owner, including "ask whether to resume", is
 then a stop, handled as **Stopping for the owner** says. Never wait on a reply, and never guess
 one.
 
@@ -78,7 +78,8 @@ one.
    - **`spec`**: nobody approved it. Point at `/canon:approve`. **`ready`**: there is no spec;
      point at `/canon:define`.
    - **`building`**: a build already started. Say what the branch carries and ask whether to
-     resume.
+     resume. With `--picked approved` or `--picked blocked` in the arguments, `/canon:pickup`
+     moved it to `building` as its claim: read it as the role named instead.
    - **`staging` or `production`**: merged, finished work.
 
    A spec line that disagrees with the role is reported in one line; the role decides.

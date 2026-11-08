@@ -49,7 +49,7 @@ Compare `role`, never the status name: names differ per team, and the config map
 | `ready`      | Prioritised, waiting for a spec                  | the owner                                      |
 | `spec`       | Being specced, or specced and waiting to be read | `/canon:define`                                |
 | `approved`   | The owner approved the spec                      | `/canon:approve`                               |
-| `building`   | Being built                                      | `/canon:build`                                 |
+| `building`   | Being built                                      | `/canon:build`, `/canon:pickup`                |
 | `blocked`    | Claude is waiting on the owner, nothing else     | `/canon:build`, `/canon:ship`, `/canon:pickup` |
 | `staging`    | Merged into the integration branch               | the GitHub integration                         |
 | `production` | Merged into production                           | the GitHub integration                         |
@@ -89,7 +89,7 @@ conditions `/canon:build` and `/canon:ship` name: a product decision the spec di
 conflict that is a decision, a gate failing three times, a dependency the spec did not name, or an
 irreversible action. `/canon:pickup` also sets it on a `building` issue whose run died: no
 commit and no update for `autonomy.staleHours`. Its question asks the owner to reply `resume`, or
-to move the issue back to `approved` to start over.
+to say what to do instead.
 
 **To block**, in this order:
 
