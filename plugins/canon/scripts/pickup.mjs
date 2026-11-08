@@ -1,0 +1,258 @@
+#!/usr/bin/env node
+/**
+ * Which issue `/canon:pickup` builds next, read from the tracker and the remote branches.
+ *
+ *   node pickup.mjs
+ *
+ * Prints one JSON decision and changes nothing; the skill makes every write:
+ *
+ *   { "decision": "live", "live": [...] }        a run is going: stop
+ *   { "decision": "build", "issue": {...},       build this one, after blocking `dead`
+ *     "dead": [...], "waiting": [...] }
+ *   { "decision": "none", "dead": [...],         nothing can be built yet
+ *     "waiting": [...] }
+ *
+ * **One run at a time.** An issue in the `building` role whose branch has a commit, or
+ * whose issue was updated, within `autonomy.staleHours` is a live run. Older than that,
+ * the run died: it is listed in `dead`, for the skill to block, and counts as blocked
+ * with no answer from then on.
+ *
+ * **Candidates** are `blocked` issues the owner has answered, then `approved` ones, each
+ * group by priority (urgent first, none last), then oldest first. A candidate whose
+ * blockers are all done is picked. A blocker that is itself a candidate is resolved
+ * first, recursively, and picked in its place. Any other blocker makes the candidate
+ * wait. A cycle waits too.
+ *
+ * Every tracker read goes through `tracker.mjs`; run `git fetch --prune origin` first,
+ * since the branch times come from the remote-tracking refs.
+ */
+
+import { execFileSync, spawnSync } from 'node:child_process';
+import { realpathSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+import { CONFIG_PATH, loadConfig, projectRoot, withDefaults } from '../hooks/lib/config.mjs';
+import { TrackerError } from './tracker.mjs';
+
+/**
+ * Run `tracker.mjs` as a skill would, in a process of its own, so it finds the key and
+ * the proxy exactly as it does for the skills, and return what it printed.
+ */
+function tracker(argv, { cwd, env, execArgv }) {
+  const script = join(dirname(fileURLToPath(import.meta.url)), 'tracker.mjs');
+  const child = spawnSync(process.execPath, [...execArgv, script, ...argv], {
+    cwd,
+    env,
+    encoding: 'utf8',
+    timeout: 120_000,
+  });
+  if (child.status !== 0) {
+    const reason = (child.stderr || child.error?.message || 'no output').trim();
+    throw new TrackerError(reason.replace(/^tracker: /, ''));
+  }
+  return JSON.parse(child.stdout);
+}
+
+/** Linear's priority: 1 urgent to 4 low, and 0 for none, which sorts last. */
+const rank = (priority) => (priority >= 1 && priority <= 4 ? priority : 5);
+
+const byPriorityThenAge = (a, b) =>
+  rank(a.priority) - rank(b.priority) || String(a.createdAt).localeCompare(String(b.createdAt));
+
+/** Is a blocker out of the way: merged, or completed or cancelled on the tracker? */
+export const isDone = (blocker) =>
+  ['staging', 'production'].includes(blocker.role) ||
+  ['completed', 'canceled'].includes(blocker.stateType);
+
+/** Why a blocker that is not a candidate holds an issue up, in a few words. */
+function holdUp(blocker, dead) {
+  if (dead.has(blocker.identifier)) return 'its run stopped and it is blocked';
+  return (
+    {
+      ready: 'it has no spec yet',
+      spec: 'its spec is not approved',
+      approved: 'it is approved but cannot be built yet',
+      building: 'it is being built',
+      blocked: 'it is blocked with no answer',
+    }[blocker.role] ?? `it is in ${blocker.state || 'a status canon does not map'}`
+  );
+}
+
+/**
+ * The decision, from what the tracker and git returned.
+ *
+ * - `issues`: the `building`, `blocked` and `approved` issues, as `tracker.mjs issues` lists
+ *   them, each with `role`, `priority`, `createdAt`, `updatedAt` and `blockedBy`.
+ * - `answered`: the identifiers of the blocked issues with an answer after the question.
+ * - `branchTimes`: identifier to the newest commit time on its remote branch, in ms.
+ */
+export function choose({ issues, answered, branchTimes = {}, now, staleHours }) {
+  const cutoff = now - staleHours * 3_600_000;
+  const lastActivity = (issue) =>
+    Math.max(Date.parse(issue.updatedAt) || 0, branchTimes[issue.identifier] ?? 0);
+  const brief = (issue) => ({ identifier: issue.identifier, title: issue.title });
+
+  const building = issues.filter((issue) => issue.role === 'building');
+  const live = building.filter((issue) => lastActivity(issue) >= cutoff);
+  if (live.length) {
+    return {
+      decision: 'live',
+      live: live.map((issue) => ({
+        ...brief(issue),
+        lastActivity: new Date(lastActivity(issue)).toISOString(),
+      })),
+    };
+  }
+  const dead = new Set(building.map((issue) => issue.identifier));
+
+  const resumes = issues
+    .filter((issue) => issue.role === 'blocked' && answered.includes(issue.identifier))
+    .sort(byPriorityThenAge);
+  const fresh = issues.filter((issue) => issue.role === 'approved').sort(byPriorityThenAge);
+  const candidates = [...resumes, ...fresh];
+  const candidate = new Map(candidates.map((issue) => [issue.identifier, issue]));
+
+  /** `{ pick }` for the issue to build so that `issue` can be, or `{ waits }` on what. */
+  const resolveIssue = (issue, path) => {
+    if (path.includes(issue.identifier)) {
+      const loop = [...path.slice(path.indexOf(issue.identifier)), issue.identifier];
+      return { waits: [{ identifier: issue.identifier, why: `a cycle: ${loop.join(' → ')}` }] };
+    }
+    const open = (issue.blockedBy ?? []).filter((blocker) => !isDone(blocker));
+    if (open.length === 0) return { pick: issue };
+    const waits = [];
+    for (const blocker of open) {
+      const next = candidate.get(blocker.identifier);
+      if (!next) {
+        waits.push({ identifier: blocker.identifier, why: holdUp(blocker, dead) });
+        continue;
+      }
+      const found = resolveIssue(next, [...path, issue.identifier]);
+      if (found.pick) return found;
+      waits.push(...found.waits);
+    }
+    return { waits };
+  };
+
+  const waiting = [];
+  for (const issue of candidates) {
+    const found = resolveIssue(issue, []);
+    if (found.pick) {
+      const pick = found.pick;
+      return {
+        decision: 'build',
+        issue: {
+          ...brief(pick),
+          role: pick.role,
+          resume: pick.role === 'blocked',
+          // The candidate this unblocks, when the pick is one of its blockers.
+          unblocks: pick === issue ? null : issue.identifier,
+        },
+        dead: building.map(brief),
+        waiting,
+      };
+    }
+    const on = [];
+    for (const wait of found.waits) {
+      if (!on.some((seen) => seen.identifier === wait.identifier)) on.push(wait);
+    }
+    waiting.push({ ...brief(issue), on });
+  }
+  return { decision: 'none', dead: building.map(brief), waiting };
+}
+
+/**
+ * The newest commit time on each building issue's remote branch, found as
+ * `references/tracker.md` says under Names: `origin/<branchName>` with tracker naming,
+ * otherwise `origin/<prefix>/<id in lowercase>-*`.
+ */
+export function branchTimes(root, config, issues) {
+  let refs;
+  try {
+    refs = execFileSync(
+      'git',
+      [
+        '-C',
+        root,
+        'for-each-ref',
+        '--format=%(refname:strip=3)%09%(committerdate:unix)',
+        'refs/remotes/origin',
+      ],
+      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }
+    );
+  } catch {
+    return {};
+  }
+  const branches = refs
+    .split('\n')
+    .filter(Boolean)
+    .map((line) => {
+      const [name, seconds] = line.split('\t');
+      return { name, at: Number(seconds) * 1000 };
+    });
+  const byTracker = config.branches.naming === 'tracker';
+  const times = {};
+  for (const issue of issues) {
+    const id = issue.identifier.toLowerCase();
+    const matches = branches.filter(({ name }) =>
+      byTracker
+        ? issue.branchName && name === issue.branchName
+        : (config.branches.prefixes ?? []).some((prefix) => name.startsWith(`${prefix}/${id}-`))
+    );
+    if (matches.length) times[issue.identifier] = Math.max(...matches.map(({ at }) => at));
+  }
+  return times;
+}
+
+/** Read the board and the branches, and decide. `now` and `execArgv` are for tests. */
+export async function main(
+  argv,
+  { cwd = process.cwd(), env = process.env, now, execArgv = [] } = {}
+) {
+  if (argv.length) throw new TrackerError(`pickup takes no arguments, not ${argv.join(' ')}`, 2);
+  const root = projectRoot({ cwd }, env);
+  const state = loadConfig(root);
+  if (state.status !== 'ok') {
+    throw new TrackerError(
+      state.status === 'invalid'
+        ? `${CONFIG_PATH} is invalid:\n  - ${state.errors.join('\n  - ')}`
+        : `${root} has no ${CONFIG_PATH}. Run /canon:setup first.`
+    );
+  }
+  const config = withDefaults(state.config);
+  if (!config.tracker) {
+    throw new TrackerError('/canon:pickup needs a tracker: it picks issues from its board.');
+  }
+  if (!config.autonomy.pickup) {
+    throw new TrackerError(
+      'Pickup is off for this project (`autonomy.pickup`). /canon:setup turns it on.'
+    );
+  }
+
+  const options = { cwd: root, env, execArgv };
+  const issues = tracker(['issues', 'building,blocked,approved'], options);
+  const answered = [];
+  for (const issue of issues.filter(({ role }) => role === 'blocked')) {
+    const { blocked } = tracker(['comments', issue.identifier], options);
+    if (blocked?.answers?.length) answered.push(issue.identifier);
+  }
+  const building = issues.filter(({ role }) => role === 'building');
+  return choose({
+    issues,
+    answered,
+    branchTimes: branchTimes(root, config, building),
+    now: now ?? Date.now(),
+    staleHours: config.autonomy.staleHours,
+  });
+}
+
+const self = realpathSync(fileURLToPath(import.meta.url));
+if (process.argv[1] && realpathSync(resolve(process.argv[1])) === self) {
+  main(process.argv.slice(2))
+    .then((result) => process.stdout.write(`${JSON.stringify(result, null, 2)}\n`))
+    .catch((error) => {
+      process.stderr.write(`pickup: ${error?.message ?? error}\n`);
+      process.exitCode = error instanceof TrackerError ? error.code : 1;
+    });
+}
