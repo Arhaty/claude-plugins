@@ -35,7 +35,7 @@ describe('the tracker in the skills', () => {
       spec: ['define'],
       approved: ['approve'],
       building: ['build', 'ship'],
-      blocked: ['build', 'ship'],
+      blocked: ['build', 'ship', 'pickup'],
     };
     for (const [name, role] of moves) {
       expect(SETTABLE, `${name} sets ${role}`).toContain(role);
@@ -48,6 +48,8 @@ describe('the tracker in the skills', () => {
       'build',
       'build',
       'define',
+      'pickup',
+      'ship',
       'ship',
       'ship',
     ]);

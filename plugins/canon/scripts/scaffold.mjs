@@ -171,6 +171,7 @@ export function placeholders(config) {
         : `${config.branches.prefixes.map((p) => code(`${p}/`)).join(', ')} followed by a kebab-case description`,
     checks: checks.length ? checks.map(code).join(', ') : 'none configured in `.claude/canon.json`',
     tracker: config.tracker ? trackerSection(config) : '',
+    autonomy: autonomySection(config),
     ...loopValues(config),
     ...specsValues(config),
   };
@@ -355,6 +356,44 @@ function trackerSection({ tracker, owner, branches }) {
     `- A ${status('blocked')} issue has its question in a comment starting \`canon: blocked\`.`,
     '  Answer it in a comment below, or in the session, and re-run the command.',
   ].join('\n');
+}
+
+/**
+ * The CLAUDE.md paragraph for a project that lets Claude review specs or build approved issues
+ * on its own, or nothing: with the flow off, the section reads exactly as it did before.
+ */
+function autonomySection({ autonomy, owner, tracker }) {
+  const review = autonomy?.specReview === true;
+  const pickup = autonomy?.pickup === true && Boolean(tracker);
+  if (!review && !pickup) return '';
+  const lines = ['\n\n### What runs without the owner\n'];
+  if (review) {
+    lines.push(
+      '`/canon:define` has its spec reviewed in a fresh context once the questions are answered,',
+      `fixes what the canon, the code or the Decisions table settles, and asks ${owner} the rest`,
+      'before it hands over. Its last line reports the review. There is no separate review round on',
+      'the spec.'
+    );
+  }
+  if (pickup) {
+    const blocked = `\`${tracker.statuses.blocked}\``;
+    if (review) lines.push('');
+    lines.push(
+      '`/canon:pickup` builds the next approved issue with `/canon:ship`, one issue per run, usually',
+      'from a routine that runs `/canon:pickup --unattended` every two hours. It never asks in the',
+      `chat: it moves the issue to ${blocked} with its question, and the next run carries on once`,
+      `${owner} answers on the issue.`
+    );
+  }
+  if (review && pickup) {
+    lines.push(
+      '',
+      `**For each change, \`/canon:define\` then \`/canon:approve\` is all ${owner} does.** Review,`,
+      'build, canon and staging run on their own. The release, `/canon:production` and its merge,',
+      `stays ${owner}'s.`
+    );
+  }
+  return lines.join('\n');
 }
 
 /** Fill every `{{name}}`. An unknown name throws, so a typo in a template cannot ship. */

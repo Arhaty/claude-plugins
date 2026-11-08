@@ -301,6 +301,9 @@ never shows one: after one minute with no check run registered, say the reposito
 ask the owner whether to merge on the local gate alone. Give up after about fifteen minutes and
 say where to look.
 
+**Under `/canon:ship`, neither question is asked here**: report it as a stop, with what it needs
+from the owner, and stop. `/canon:ship` owns the question, and asks it or blocks on the issue.
+
 **7. If anything in steps 5 or 6 produced a commit, go back to step 5.** Green checks on a commit
 that is no longer the head verify nothing.
 

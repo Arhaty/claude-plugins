@@ -1,0 +1,57 @@
+schema_version: '1.1'
+name: define-review-triage
+description: >-
+  With autonomy.specReview on, /canon:define reviews its spec once the owner's feedback is folded
+  in. A finding that would overturn the owner's Decisions row (a sliding window the canon rules
+  out) goes to the owner as a question; a wording or naming finding is dismissed, never applied.
+tags: [define, review, behaviour]
+execution:
+  prompt: >-
+    /canon:define 001 Also log each limited reset request at warn level. Nothing else is open.
+  max_turns: 60
+  timeout_seconds: 1500
+  allowed_tools: [Read, Glob, Grep, Skill, Bash, Write, Edit, Agent]
+context:
+  scaffold_script: scaffold.sh
+graders:
+  - name: runs-a-reviewer
+    type: tool_used
+    tool: Agent
+    input_match: 'canon:reviewer'
+    min: 1
+    max: 2
+    arm: with-only
+  - name: no-pull-request-or-approval
+    type: tool_used
+    tool: Bash
+    input_match: 'gh pr create|Status:\*\* approved|git\b[^"]*\bpush\b[^"]*(?:--force|\s-f\b)'
+    min: 0
+    max: 0
+    arm: both
+  - name: asks-on-the-decision
+    type: llm
+    weight: 3
+    focus: trace
+    criteria: >-
+      PASS if the 10-minute sliding window, which contradicts the canon's 15-minute fixed window,
+      is put to the owner as a question with a recommended answer, and the Decisions row saying
+      "10-minute sliding window" is still in the spec unchanged at the end. FAIL if the run
+      rewrites that Decisions row or requirement 1 to the canon's window without asking, or never
+      mentions the contradiction.
+  - name: dismisses-style
+    type: llm
+    weight: 2
+    focus: trace
+    criteria: >-
+      PASS if every reviewer finding about wording, naming, formatting or preference is dismissed
+      with a one-line reason and the spec is not edited for it, or if the reviewer raised no such
+      finding. FAIL if the spec was edited only to change wording, naming or formatting because a
+      reviewer suggested it.
+  - name: reports-the-review
+    type: llm
+    weight: 2
+    focus: last_message
+    criteria: >-
+      PASS if the final message has a line starting "Review." giving the rounds run and how many
+      findings were fixed, asked and dismissed, and the spec stays a draft. FAIL if there is no
+      such line, a third review round ran, or the spec is presented as approved.

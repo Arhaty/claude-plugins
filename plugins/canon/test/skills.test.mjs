@@ -223,6 +223,7 @@ describe('skills pre-approve only scoped tools', () => {
     'node "${CLAUDE_PLUGIN_ROOT}/scripts/canon-index.mjs"',
     'node "${CLAUDE_PLUGIN_ROOT}/scripts/canon-index.mjs" --check',
     'node "${CLAUDE_PLUGIN_ROOT}/scripts/config.mjs"',
+    'node "${CLAUDE_PLUGIN_ROOT}/scripts/pickup.mjs"',
   ];
   const SAFE_WILDCARDS = [
     'gh pr ready *',
@@ -349,5 +350,94 @@ describe('the build step and the required check', () => {
     expect(staging).toContain('commits/$sha/check-runs?check_name=<check>&per_page=100');
     expect(staging).toMatch(/a `success` or `pending` run of `<check>` means do not\s+dispatch/);
     expect(staging).toMatch(/A skipped or absent `<check>` is not\s+a pass/);
+  });
+});
+
+describe('the autonomous flow', () => {
+  const define = skill('define');
+  const setup = skill('setup');
+
+  it('reviews the spec in define only with autonomy.specReview on, and otherwise hands over as before', () => {
+    expect(define).toMatch(/\*\*Review the spec, only when `autonomy\.specReview` is `true`\.\*\*/);
+    expect(define).toMatch(/With it `false` or left out,\s+skip to step 7/);
+    expect(define).toMatch(/After step 6 only, one more line: \*\*Review\.\*\*/);
+    // The hand-over that step 7 makes is the one every project got before.
+    expect(define).toMatch(
+      /7\. \*\*Stop with the spec written, the frontier empty and the status `draft`\.\*\*/
+    );
+  });
+
+  it("gives the reviewer the spec's path and the branch, never the conversation, and caps it at two rounds", () => {
+    expect(define).toMatch(/One `canon:reviewer` subagent/);
+    expect(define).toMatch(/Give it the\s+spec's path and the branch, never this conversation/);
+    expect(define).toMatch(/\*\*Round 2, only if round 1 changed the spec\*\*/);
+    expect(define).toMatch(/reviews only what\s+`diff -u <copy> <spec>` changes/);
+    expect(define).toMatch(/\*\*Never a round 3\.\*\*/);
+  });
+
+  it('fixes what is settled, asks on a decision, and dismisses style', () => {
+    expect(define).toMatch(/- \*\*Fix\*\*: a gap whose answer follows from the canon/);
+    expect(define).toMatch(/- \*\*Ask the owner\*\*: the finding would overturn a Decisions row/);
+    expect(define).toMatch(/- \*\*Dismiss\*\*: wording, naming, formatting, preference/);
+    expect(define).toMatch(/dismissed as\s+oscillation/);
+    expect(define).toMatch(/Answering it does not add a review round/);
+  });
+
+  it('asks about the flow in setup with no as the default, and pickup only with a tracker', () => {
+    expect(setup).toMatch(
+      /\*\*Whether Claude reviews specs and builds approved issues on its own\.\*\* Default no/
+    );
+    expect(setup).toMatch(/\*\*Pickup\*\* \(`autonomy\.pickup`\), \*\*only with a tracker\*\*/);
+    expect(setup).toMatch(/Leave `autonomy`\s+out when the owner said no to both switches/);
+    expect(setup).toMatch(/\*\*Offer the schedule, only when `autonomy\.pickup` is on\.\*\*/);
+    expect(setup).toContain('`/canon:pickup --unattended` every 2 hours (`0 */2 * * *`)');
+    expect(setup).toMatch(/needs the tracker's API key/);
+    expect(setup).toMatch(/What it costs when there is nothing to build/);
+  });
+
+  it('runs a step the model cannot invoke by reading its file, and keeps the owner-only commands unreachable', () => {
+    const ship = skill('ship');
+    expect(ship).toContain('Read ${CLAUDE_PLUGIN_ROOT}/skills/<name>/SKILL.md and follow it');
+    // A command fills these in throughout its own file, so a prompt that names them by their
+    // variables would read as the path and the arguments twice over.
+    for (const name of ['ship', 'pickup']) {
+      expect(skill(name), name).not.toMatch(/`?\$\{CLAUDE_PLUGIN_ROOT\}`? in (it|that file) is/);
+      expect(skill(name), name).not.toMatch(/with `?\$ARGUMENTS`? set to/);
+    }
+    expect(ship).not.toMatch(/`Run \/canon:build/);
+    expect(skill('pickup')).toContain('`${CLAUDE_PLUGIN_ROOT}/skills/ship/SKILL.md`');
+    for (const name of ['approve', 'production', 'define', 'setup', 'pickup', 'ship', 'build']) {
+      expect(skill(name), name).toMatch(/^disable-model-invocation: true$/m);
+    }
+    for (const name of ['ship', 'pickup']) {
+      expect(skill(name), name).not.toMatch(/skills\/(approve|production)\/SKILL\.md/);
+    }
+  });
+
+  it('never asks in the chat when unattended: it blocks on the issue and ends', () => {
+    const ship = skill('ship');
+    expect(ship).toMatch(/\*\*Unattended, never ask in the chat and never guess\.\*\*/);
+    expect(ship).toMatch(/post the report with its \*\*Stopped\.\*\* line, and end the run/);
+    expect(ship).toMatch(/Pass it on to\s+`\/canon:build`/);
+    expect(skill('build')).toMatch(/including "ask whether to resume", is\s+then a stop/);
+    expect(skill('staging')).toMatch(
+      /\*\*Under `\/canon:ship`, neither question is asked here\*\*/
+    );
+  });
+
+  it('picks with the script, one issue a run, and blocks a dead run before going on', () => {
+    const pickup = skill('pickup');
+    expect(pickup).toMatch(
+      /\*\*It must have a `tracker` block and `autonomy\.pickup` set to `true`\*\*/
+    );
+    const steps = pickup.slice(pickup.indexOf('## Steps'));
+    expect(steps.indexOf('git fetch --prune origin')).toBeGreaterThanOrEqual(0);
+    expect(steps.indexOf('git fetch --prune origin')).toBeLessThan(
+      steps.indexOf('node "${CLAUDE_PLUGIN_ROOT}/scripts/pickup.mjs"')
+    );
+    expect(pickup).toMatch(/never pick an issue by reading the board yourself/);
+    expect(pickup).toContain('Reply \\`resume\\` to carry on from the branch');
+    expect(pickup).toMatch(/One line, `Nothing to build\.`/);
+    expect(pickup).toMatch(/\*\*One issue per run\.\*\* Never loop back to step 1/);
   });
 });

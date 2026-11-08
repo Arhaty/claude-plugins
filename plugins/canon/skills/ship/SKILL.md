@@ -1,7 +1,7 @@
 ---
 name: ship
 description: Build an approved spec, loop review, triage and fix until clean, write the canon, land it on the integration branch, and report in five lines
-argument-hint: <spec number, e.g. 043, or the issue ID with a tracker>
+argument-hint: <spec number, e.g. 043, or the issue ID with a tracker> [--unattended]
 disable-model-invocation: true
 ---
 
@@ -17,6 +17,17 @@ in the report. The ones that genuinely need the owner are under **When to ask**.
 This command owns the sequence and nothing else. Each step is an existing canon skill run in a
 subagent with a fresh context, pointed at the branch and the spec number, never by pasting. That
 is what keeps this context small enough to run the whole loop.
+
+**How a subagent runs a canon step.** `/canon:build`, `/canon:canon` and `/canon:staging` set
+`disable-model-invocation`, so a subagent cannot invoke them. It reads the skill's file and
+follows it instead: `Read ${CLAUDE_PLUGIN_ROOT}/skills/<name>/SKILL.md and follow it. Its
+arguments are <arguments>, and the plugin root it names is ${CLAUDE_PLUGIN_ROOT}.` The file holds
+the variables a command would have filled in, which is why the prompt names both. `/canon:review`
+and `/code-review` are invoked as they are.
+
+**Unattended.** `--unattended` in `$ARGUMENTS` means nobody is watching: `/canon:pickup` started
+this run from a schedule. The spec number or issue is `$ARGUMENTS` without it. Pass it on to
+`/canon:build`, and see **When to ask** for what it changes.
 
 ## Before anything
 
@@ -46,8 +57,8 @@ with an answer after the question (`comments <ID>`), which is a run resuming. `b
 answer: repeat the question and stop. Any other role is `/canon:build`'s own refusal: say which
 and stop. The spec checks stand.
 
-**2. Build.** One subagent, foreground: `Run /canon:build $ARGUMENTS. You are running under
-/canon:ship, so report the branch, the pull request number, whether it is ready or waiting on
+**2. Build.** One subagent, foreground, running `/canon:build` as above with `<ID or NNN>`,
+followed by `--unattended` when this run has it: `You are running under /canon:ship, so report the branch, the pull request number, whether it is ready or waiting on
 /canon:canon, and anything undone, and nothing about what to run next.`
 
 A pull request left in draft **because the canon hook refused the ready mark** is normal: step 6
@@ -96,11 +107,11 @@ opinions, not new bugs.
 - **Oscillation stops a finding, not the run.** A finding that reappears after it was fixed, or
   contradicts an earlier round, is logged under **Decided alone** and no longer counts.
 
-**6. Canon.** A subagent runs `/canon:canon`. It writes and commits, or says in one line that
+**6. Canon.** A subagent runs `/canon:canon`, as above. It writes and commits, or says in one line that
 nothing settled, which is the line `ALLOW_UNDECIDED_MERGE=1` needs. Carry whichever back. If it
 stopped on a product decision the spec did not settle, go to **When to ask**.
 
-**7. Land.** A subagent runs `/canon:staging`: it archives the spec, marks the pull request
+**7. Land.** A subagent runs `/canon:staging`, as above, told it runs under `/canon:ship`: it archives the spec, marks the pull request
 ready, waits for CI and merges. A conflict it reports as a decision goes to **When to ask**.
 
 **8. Report, five lines, nothing else**, each starting with the bold word:
@@ -112,7 +123,8 @@ ready, waits for CI and merges. A conflict it reports as a decision goes to **Wh
 - **Review.** Rounds run, counts per bucket, the consider items in a few words, and the link to
   the last triage comment.
 
-A sixth line only when the owner told the run to stop: **Stopped.** The step, the reason, what is
+A sixth line only when the owner told the run to stop, or an unattended run stopped at **When to
+ask**: **Stopped.** The step, the reason, what is
 left. Post the same lines as a pull request comment first: the session may never be opened again;
 the pull request will. With a tracker, post them on the issue too, as a plain comment.
 
@@ -136,6 +148,12 @@ With a tracker, block first, as `tracker.md` says under **Blocked**: post the qu
 is posted on the issue, then `set-state <ID> building`, and the run continues. With no answer in
 the session, the issue stays `blocked` and `/canon:ship <ID>` resumes once the owner answers on
 it.
+
+**Unattended, never ask in the chat and never guess.** At every stop above, block on the issue
+the same way (the question with every open point and your recommended answer, then
+`set-state <ID> blocked`), post the report with its **Stopped.** line, and end the run. The
+owner answers on the issue, and the next `/canon:pickup` resumes it. Without a tracker there is
+no issue to block on: post the report on the pull request and end.
 
 ## Hard limits
 

@@ -52,6 +52,8 @@ enforce the git rules around it.
 - whether to use an issue tracker: the team key, where the API key comes from, and which of the
   team's statuses each step of the loop moves an issue to. See
   [Configuring Linear](#configuring-linear).
+- whether Claude reviews specs and, with a tracker, builds approved issues on its own, and
+  whether to schedule that. See [The autonomous flow](#the-autonomous-flow).
 
 It then writes:
 
@@ -93,6 +95,7 @@ to write through a symlink that leads outside the project or nowhere. It doesn't
 | `/canon:staging`           | Archives the spec, waits for CI, and merges the branch into the integration branch.                                       |
 | `/canon:production`        | Opens the release pull request with a manifest of what ships, and stops. The owner merges it.                             |
 | `/canon:ship NNN`          | Runs build, up to three review-and-fix rounds, canon and staging, and reports in five lines.                              |
+| `/canon:pickup`            | Picks the next approved issue from the tracker and runs `/canon:ship` on it, one per run. Opt-in, tracker only.           |
 | `/canon:explain [subject]` | Explains the work in flight in three or four short sections.                                                              |
 
 `/canon:review` checks project rules. Run `/code-review` beside it for correctness bugs.
@@ -100,6 +103,44 @@ to write through a symlink that leads outside the project or nowhere. It doesn't
 With a tracker configured, `/canon:define`, `/canon:build` and `/canon:ship` take an issue ID such
 as `ABC-123` where they would take an idea or a spec number. See
 [Configuring Linear](#configuring-linear).
+
+## The autonomous flow
+
+Without it, the owner runs `/canon:define`, reviews the spec with `/canon:review` in a second
+session, pastes the findings back, and does the same again during the build. Only answering
+define's questions and approving the spec need the owner. `autonomy` in `.claude/canon.json`
+hands the rest to Claude, as two switches `/canon:setup` asks about. Both are off by default,
+and off means every command behaves exactly as before.
+
+- **`autonomy.specReview`**: once the owner's questions are answered, `/canon:define` has the spec
+  reviewed by a `canon:reviewer` subagent in a fresh context, given the spec's path and nothing
+  else. It fixes what the canon, the code or the Decisions table settles, asks the owner about a
+  finding that would overturn a decision, and dismisses wording and preference. A second round
+  reviews only what the first changed; there is never a third. The hand-over ends with a
+  **Review.** line. Works with or without a tracker.
+- **`autonomy.pickup`**, tracker only: `/canon:pickup` builds the next issue with `/canon:ship`,
+  one issue per run, so two runs never race on the integration branch. It takes `blocked` issues
+  the owner has answered, then `approved` ones, by priority and then age, and builds an issue's
+  blockers first; an issue blocked by one with no spec waits. A `building` issue with a commit or
+  an update in the last `autonomy.staleHours` (3) means a run is live, and pickup stops; older
+  than that, the run died, and pickup blocks it with a question asking the owner to reply
+  `resume`.
+
+`/canon:pickup --unattended` is what a schedule runs. Unattended, ship never asks in the chat:
+at each point it would ask the owner, it posts the question on the issue, moves it to `blocked`
+and ends. The owner answers on the issue, and the next run carries on. Setup offers to create a
+routine running it every two hours. The cloud environment needs `LINEAR_API_KEY` in its own
+settings and the plugin loaded as [Loading the plugin in a cloud session](#loading-the-plugin-in-a-cloud-session)
+says. A run with nothing to build is one short session that reads the board and ends.
+
+With both switches on, `/canon:define` then `/canon:approve` is all the owner does per change.
+`/canon:production` and the release merge stay theirs.
+
+**How the steps run.** `/canon:build`, `/canon:canon`, `/canon:staging` and `/canon:ship` set
+`disable-model-invocation`, which keeps a model, a subagent included, from invoking them. So
+`/canon:ship`'s subagents and `/canon:pickup` read those skills' files and follow them, rather
+than invoking them. Nothing became model-invocable: `/canon:approve` and `/canon:production` stay
+the owner's own commands, and no step reads their files.
 
 ## Walkthrough
 

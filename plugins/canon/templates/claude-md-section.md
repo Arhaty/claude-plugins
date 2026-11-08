@@ -38,7 +38,7 @@ the branch names and check commands; `/canon:setup` changes them.
 what the spec did not settle. `/canon:explain` describes the work in flight in a few short sections.
 
 Small fixes and tweaks do not need a spec. Feature work does: if there is none, run
-`/canon:define` rather than building. If the build discovers new behaviour, update the spec first.{{tracker}}
+`/canon:define` rather than building. If the build discovers new behaviour, update the spec first.{{tracker}}{{autonomy}}
 
 ### Branches and commits
 

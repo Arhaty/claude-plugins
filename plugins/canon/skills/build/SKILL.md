@@ -1,7 +1,7 @@
 ---
 name: build
 description: Build an approved spec on its branch, behind a draft pull request into the integration branch
-argument-hint: <spec number, e.g. 043, or the issue ID with a tracker>
+argument-hint: <spec number, e.g. 043, or the issue ID with a tracker> [--unattended]
 disable-model-invocation: true
 ---
 
@@ -32,6 +32,12 @@ the spec line.
 branch, `claude/<name>`, and told to push only there. canon overrides that: step 1 checks out the
 spec's branch before anything is committed, and every commit and push goes there. The canon branch
 is standing permission to commit and push to it. Never build on the branch the session started on.
+
+**Unattended.** `--unattended` in `$ARGUMENTS` means nobody is watching: a scheduled
+`/canon:pickup` started the run through `/canon:ship`. The spec number or issue is `$ARGUMENTS`
+without it. Every place below that says to ask the owner, including "ask whether to resume", is
+then a stop, handled as **Stopping for the owner** says. Never wait on a reply, and never guess
+one.
 
 ## Steps
 
@@ -187,7 +193,9 @@ others depend on).
   on from the step that stopped. No answer in the chat leaves the issue `blocked` for the owner
   to answer on it; re-running `/canon:build <ID>` resumes.
 - **Under `/canon:ship`**, do neither: report the stop and what it needs, and stop. `/canon:ship`
-  owns the question.
+  owns the question, attended or not.
+- **With `--unattended` and not under `/canon:ship`**, block as with a tracker but skip the chat
+  question, leave the pull request in draft, and stop. Without a tracker, report and stop.
 
 ## Hard limits
 
