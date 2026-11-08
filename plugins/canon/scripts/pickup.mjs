@@ -13,7 +13,9 @@
  *     "waiting": [...] }
  *
  * **One run at a time.** An issue in the `building` role whose branch has a commit, or
- * whose issue was updated, within `autonomy.staleHours` is a live run. Older than that,
+ * whose issue was updated or commented on, within `autonomy.staleHours` is a live run.
+ * `/canon:pickup` claims the issue it picks by moving it to `building` before it ships,
+ * and `/canon:ship` notes each step on the issue, so a run that is working stays live. Older than that,
  * the run died: it is listed in `dead`, for the skill to block, and counts as blocked
  * with no answer from then on.
  *
@@ -45,7 +47,9 @@ function tracker(argv, { cwd, env, execArgv }) {
     cwd,
     env,
     encoding: 'utf8',
-    timeout: 120_000,
+    timeout: 300_000,
+    // The whole board, pretty-printed: far past the 1 MB default on a large backlog.
+    maxBuffer: 256 * 1024 * 1024,
   });
   if (child.status !== 0) {
     const reason = (child.stderr || child.error?.message || 'no output').trim();
@@ -83,14 +87,18 @@ function holdUp(blocker, dead) {
  * The decision, from what the tracker and git returned.
  *
  * - `issues`: the `building`, `blocked` and `approved` issues, as `tracker.mjs issues` lists
- *   them, each with `role`, `priority`, `createdAt`, `updatedAt` and `blockedBy`.
- * - `answered`: the identifiers of the blocked issues with an answer after the question.
+ *   them, each with `role`, `priority`, `createdAt`, `updatedAt` and `blockedBy`, and for
+ *   blocked and building ones `answered` and `lastCommentAt`.
  * - `branchTimes`: identifier to the newest commit time on its remote branch, in ms.
  */
-export function choose({ issues, answered, branchTimes = {}, now, staleHours }) {
+export function choose({ issues, branchTimes = {}, now, staleHours }) {
   const cutoff = now - staleHours * 3_600_000;
   const lastActivity = (issue) =>
-    Math.max(Date.parse(issue.updatedAt) || 0, branchTimes[issue.identifier] ?? 0);
+    Math.max(
+      Date.parse(issue.updatedAt) || 0,
+      Date.parse(issue.lastCommentAt ?? '') || 0,
+      branchTimes[issue.identifier] ?? 0
+    );
   const brief = (issue) => ({ identifier: issue.identifier, title: issue.title });
 
   const building = issues.filter((issue) => issue.role === 'building');
@@ -107,32 +115,46 @@ export function choose({ issues, answered, branchTimes = {}, now, staleHours }) 
   const dead = new Set(building.map((issue) => issue.identifier));
 
   const resumes = issues
-    .filter((issue) => issue.role === 'blocked' && answered.includes(issue.identifier))
+    .filter((issue) => issue.role === 'blocked' && issue.answered)
     .sort(byPriorityThenAge);
   const fresh = issues.filter((issue) => issue.role === 'approved').sort(byPriorityThenAge);
   const candidates = [...resumes, ...fresh];
   const candidate = new Map(candidates.map((issue) => [issue.identifier, issue]));
 
-  /** `{ pick }` for the issue to build so that `issue` can be, or `{ waits }` on what. */
+  /**
+   * `{ pick }` for the issue to build so that `issue` can be, or `{ waits }` on what. An
+   * issue's answer does not depend on how it was reached, so each is worked out once: a
+   * board where blockers share blockers would otherwise be walked once per path.
+   */
+  const settled = new Map();
   const resolveIssue = (issue, path) => {
+    // Back on the path is a cycle, and says nothing about the issue on its own: not cached.
     if (path.includes(issue.identifier)) {
       const loop = [...path.slice(path.indexOf(issue.identifier)), issue.identifier];
       return { waits: [{ identifier: issue.identifier, why: `a cycle: ${loop.join(' → ')}` }] };
     }
+    if (!settled.has(issue.identifier)) settled.set(issue.identifier, resolveOnce(issue, path));
+    return settled.get(issue.identifier);
+  };
+  const resolveOnce = (issue, path) => {
     const open = (issue.blockedBy ?? []).filter((blocker) => !isDone(blocker));
     if (open.length === 0) return { pick: issue };
-    const waits = [];
+    // One entry per issue waited on, so lists that share blockers do not add up.
+    const waits = new Map();
+    const add = (wait) => {
+      if (!waits.has(wait.identifier)) waits.set(wait.identifier, wait);
+    };
     for (const blocker of open) {
       const next = candidate.get(blocker.identifier);
       if (!next) {
-        waits.push({ identifier: blocker.identifier, why: holdUp(blocker, dead) });
+        add({ identifier: blocker.identifier, why: holdUp(blocker, dead) });
         continue;
       }
       const found = resolveIssue(next, [...path, issue.identifier]);
       if (found.pick) return found;
-      waits.push(...found.waits);
+      for (const wait of found.waits) add(wait);
     }
-    return { waits };
+    return { waits: [...waits.values()] };
   };
 
   const waiting = [];
@@ -153,11 +175,7 @@ export function choose({ issues, answered, branchTimes = {}, now, staleHours }) 
         waiting,
       };
     }
-    const on = [];
-    for (const wait of found.waits) {
-      if (!on.some((seen) => seen.identifier === wait.identifier)) on.push(wait);
-    }
-    waiting.push({ ...brief(issue), on });
+    waiting.push({ ...brief(issue), on: found.waits });
   }
   return { decision: 'none', dead: building.map(brief), waiting };
 }
@@ -232,15 +250,9 @@ export async function main(
 
   const options = { cwd: root, env, execArgv };
   const issues = tracker(['issues', 'building,blocked,approved'], options);
-  const answered = [];
-  for (const issue of issues.filter(({ role }) => role === 'blocked')) {
-    const { blocked } = tracker(['comments', issue.identifier], options);
-    if (blocked?.answers?.length) answered.push(issue.identifier);
-  }
   const building = issues.filter(({ role }) => role === 'building');
   return choose({
     issues,
-    answered,
     branchTimes: branchTimes(root, config, building),
     now: now ?? Date.now(),
     staleHours: config.autonomy.staleHours,

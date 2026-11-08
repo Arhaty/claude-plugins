@@ -5,7 +5,9 @@
  *
  *   node tracker.mjs issue <ID>                 the issue, with its status's role
  *   node tracker.mjs issues <role>[,<role>...]  the team's issues in those roles, with
- *                                               priority, dates, branch and blockers
+ *                                               priority, dates, branch and blockers, and
+ *                                               for blocked and building ones, whether the
+ *                                               owner answered and the last comment's time
  *   node tracker.mjs comments <ID>              every comment, and whether the owner
  *                                               has answered the open blocked question
  *   node tracker.mjs comment <ID> [--blocked]   post stdin as a comment, marked as canon's
@@ -498,14 +500,29 @@ export async function main(
     case 'issues': {
       const roles = [...new Set(listed())];
       const found = await client.issues(roles.map((role) => tracker.statuses[role]));
-      return found.map(({ blockedBy, ...issue }) => ({
-        ...issue,
-        role: roleOf(tracker, issue.state),
-        blockedBy: blockedBy.map((blocker) => ({
-          ...blocker,
-          role: roleOf(tracker, blocker.state),
-        })),
-      }));
+      // A blocked or building issue's comments say whether the owner answered and when the
+      // run last reported, read here in parallel rather than one `comments` call each.
+      return Promise.all(
+        found.map(async ({ blockedBy, ...issue }) => {
+          const role = roleOf(tracker, issue.state);
+          const entry = {
+            ...issue,
+            role,
+            blockedBy: blockedBy.map((blocker) => ({
+              ...blocker,
+              role: roleOf(tracker, blocker.state),
+            })),
+          };
+          if (role !== 'blocked' && role !== 'building') return entry;
+          const comments = await client.comments(issue.identifier);
+          const blocked = blockedState(comments);
+          return {
+            ...entry,
+            answered: Boolean(blocked?.answers.length),
+            lastCommentAt: comments.at(-1)?.createdAt ?? null,
+          };
+        })
+      );
     }
     case 'comments': {
       const comments = await client.comments(id());

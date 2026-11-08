@@ -46,7 +46,7 @@ const blocker = (identifier, role, stateType = 'started') => ({
   stateType,
 });
 const decide = (issues, extra = {}) =>
-  choose({ issues, answered: [], branchTimes: {}, now: NOW, staleHours: 3, ...extra });
+  choose({ issues, branchTimes: {}, now: NOW, staleHours: 3, ...extra });
 
 describe('choosing the next issue', () => {
   it('takes the most urgent approved issue, then the oldest, with no priority last', () => {
@@ -68,7 +68,8 @@ describe('choosing the next issue', () => {
       issue('ABC-3', 'blocked', { priority: 1 }),
     ];
     expect(decide(issues).issue.identifier).toBe('ABC-1');
-    const answered = decide(issues, { answered: ['ABC-2'] });
+    issues[1].answered = true;
+    const answered = decide(issues);
     expect(answered.issue).toMatchObject({ identifier: 'ABC-2', role: 'blocked', resume: true });
   });
 
@@ -170,6 +171,33 @@ describe('choosing the next issue', () => {
     const byUpdate = issue('ABC-3', 'building', { updatedAt: hoursAgo(1) });
     expect(decide([approved, byUpdate]).decision).toBe('live');
     expect(decide([approved, byUpdate], { staleHours: 0.5 }).decision).toBe('build');
+  });
+
+  it('keeps a run live while it comments on its issue, as ship does at each step', () => {
+    const quiet = issue('ABC-1', 'building', {
+      updatedAt: hoursAgo(5),
+      lastCommentAt: hoursAgo(1),
+    });
+    expect(decide([quiet, issue('ABC-2', 'approved')]).decision).toBe('live');
+  });
+
+  it('works out a board whose blockers share blockers once per issue, not once per path', () => {
+    // Each issue is blocked by the two before it, and the first waits on an issue with no spec:
+    // walked path by path, that is about 2^40 visits.
+    const chain = [issue('ABC-1', 'approved', { blockedBy: [blocker('ABC-99', 'ready')] })];
+    for (let n = 2; n <= 40; n++) {
+      const before = (k) => blocker(`ABC-${k}`, 'approved');
+      chain.push(
+        issue(`ABC-${n}`, 'approved', {
+          blockedBy: [before(n - 1), ...(n > 2 ? [before(n - 2)] : [])],
+        })
+      );
+    }
+    const started = Date.now();
+    const decision = decide(chain.reverse());
+    expect(Date.now() - started).toBeLessThan(1_000);
+    expect(decision.decision).toBe('none');
+    expect(decision.waiting.length).toBe(40);
   });
 
   it('lists a dead run to block, and lets nothing that waits on it through', () => {
