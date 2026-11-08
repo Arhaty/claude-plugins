@@ -183,11 +183,22 @@ export function createClient({ apiKey, team, fetch: fetchImpl = fetch, timeoutMs
   }
 
   /**
+   * Page sizes for `issues`, kept under Linear's 10,000-point complexity limit: a
+   * connection's children cost its `first` times over, so the nested relations cost
+   * about `ISSUE_PAGE * RELATION_PAGE * 4` points. `test/tracker.test.mjs` checks it.
+   */
+  const ISSUE_PAGE = 25;
+  const RELATION_PAGE = 25;
+  const RELATION_FIELDS = `nodes { type issue { identifier state { name type } } }
+    pageInfo { hasNextPage endCursor }`;
+
+  /**
    * The team's issues in any of the statuses `names`, oldest first, paged to the end,
    * each with what `/canon:pickup` orders and gates on: the priority, when it was
    * created and last updated, its branch name, and the issues that block it with their
    * status. Linear stores "A blocks B" as a relation on A, so B's blockers are its
-   * inverse relations of type `blocks`.
+   * inverse relations of type `blocks`. An issue with more relations than one page
+   * holds is paged to the end on its own, so no blocker is cut off.
    */
   async function issues(names) {
     const nodes = [];
@@ -197,10 +208,11 @@ export function createClient({ apiKey, team, fetch: fetchImpl = fetch, timeoutMs
         `query Issues($team: String!, $states: [String!]!, $after: String) {
           issues(
             filter: { team: { key: { eq: $team } }, state: { name: { in: $states } } }
-            first: 100
+            first: ${ISSUE_PAGE}
             after: $after
           ) {
             nodes {
+              id
               identifier
               title
               branchName
@@ -208,9 +220,7 @@ export function createClient({ apiKey, team, fetch: fetchImpl = fetch, timeoutMs
               createdAt
               updatedAt
               state { name type }
-              inverseRelations(first: 50) {
-                nodes { type issue { identifier state { name type } } }
-              }
+              inverseRelations(first: ${RELATION_PAGE}) { ${RELATION_FIELDS} }
             }
             pageInfo { hasNextPage endCursor }
           }
@@ -222,6 +232,23 @@ export function createClient({ apiKey, team, fetch: fetchImpl = fetch, timeoutMs
       if (!page?.pageInfo?.hasNextPage || !page.pageInfo.endCursor) break;
       after = page.pageInfo.endCursor;
     }
+    for (const node of nodes) {
+      const relations = node.inverseRelations ?? {};
+      relations.nodes ??= [];
+      let info = relations.pageInfo;
+      while (info?.hasNextPage && info.endCursor) {
+        const data = await request(
+          `query Blockers($id: String!, $after: String) {
+            issue(id: $id) { inverseRelations(first: 50, after: $after) { ${RELATION_FIELDS} } }
+          }`,
+          { id: node.id, after: info.endCursor }
+        );
+        const more = data.issue?.inverseRelations;
+        relations.nodes.push(...(more?.nodes ?? []));
+        info = more?.pageInfo;
+      }
+      node.inverseRelations = relations;
+    }
     return nodes
       .map((node) => ({
         identifier: node.identifier,
@@ -232,7 +259,7 @@ export function createClient({ apiKey, team, fetch: fetchImpl = fetch, timeoutMs
         updatedAt: node.updatedAt,
         state: node.state?.name ?? '',
         stateType: node.state?.type ?? '',
-        blockedBy: (node.inverseRelations?.nodes ?? [])
+        blockedBy: node.inverseRelations.nodes
           .filter((relation) => relation.type === 'blocks' && relation.issue)
           .map(({ issue: blocker }) => ({
             identifier: blocker.identifier,
