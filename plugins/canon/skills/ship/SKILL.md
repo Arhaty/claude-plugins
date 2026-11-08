@@ -7,6 +7,10 @@ disable-model-invocation: true
 
 Ship spec **$ARGUMENTS** from `approved` to the integration branch.
 
+**`<target>` below is the spec number or issue alone**: the first word of the arguments, with
+`--picked <role>` and `--unattended` left out wherever they appear. Every lookup, gate and
+subagent prompt uses `<target>`; only the flags are passed on as flags.
+
 Every decision the owner was going to be asked was asked in `/canon:define` and sits in the
 spec's `## Decisions` table, and `/canon:approve` refused the spec while anything was open. So the
 contract here is `.claude/rules/principles.md`'s: never block on the human for reversible work,
@@ -26,7 +30,7 @@ the variables a command would have filled in, which is why the prompt names both
 and `/code-review` are invoked as they are.
 
 **Unattended.** `--unattended` in `$ARGUMENTS` means nobody is watching: `/canon:pickup` started
-this run from a schedule. The spec number or issue is `$ARGUMENTS` without the flags. Pass it on to
+this run from a schedule. Pass it on to
 `/canon:build`, and see **When to ask** for what it changes.
 
 ## Before anything
@@ -38,7 +42,7 @@ Below, `<owner>` and `<integration>` mean its `owner` and `branches.integration`
 where the branch's spec is, when it is committed and how it is archived, and it overrides the steps below where they differ.
 
 **If it has a `tracker` block**, read `${CLAUDE_PLUGIN_ROOT}/references/tracker.md` now.
-`$ARGUMENTS` is then the issue's identifier, `<ID>` below.
+`<target>` is then the issue's identifier, `<ID>` below.
 
 **The branch the session started on is not the spec's.** A cloud session is handed a generated
 branch, `claude/<name>`, and told to push only there. canon overrides that: `/canon:build` checks
@@ -48,7 +52,7 @@ each subagent; one that reports a commit anywhere else is a stop.
 
 ## Steps
 
-**1. Check the gate, here.** Fetch, find `docs/specs/$ARGUMENTS-<slug>.md` on its remote branch,
+**1. Check the gate, here.** Fetch, find `docs/specs/<target>-<slug>.md` on its remote branch,
 and read its `**Status:**` line. It must say `approved`, `## Still open` must be `None.`, and
 `## Decisions` must exist. Anything else: say which and stop. Never set `approved` yourself.
 
@@ -60,10 +64,15 @@ and stop. The spec checks stand.
 **Picked.** `--picked approved` or `--picked blocked` in the arguments means `/canon:pickup` just
 moved the issue to `building` as its claim, so no second run takes it. Read a `building` issue
 then as the role named, and check it as above: a `blocked` one still needs its answer. Pass the
-flag on to `/canon:build`. **While picked, note each step on the issue** as it starts (build,
-each review round, canon, land) with a one-line `comment <ID>`: a scheduled pickup takes a
-`building` issue with no commit, update or comment for `autonomy.staleHours` for a dead run, and
-a review round or a CI wait can go that long without a commit.
+flag on to `/canon:build`. **A refusal while picked is a stop, not a plain refusal**: the gate,
+or `/canon:build`, refusing leaves the claim in `building`, where the next pickups would read a
+live run and then a dead one, and the reason would be lost. Block on the issue instead, with the
+refusal as the question, as **When to ask** says.
+
+**With `autonomy.pickup` on, note each step on the issue** as it starts (build, each review
+round, canon, land) with a one-line `comment <ID>`, attended or not: a scheduled pickup takes a
+`building` issue with no commit, update or comment for `autonomy.staleHours` for a dead run and
+blocks it, and a review round or a CI wait can go that long without a commit.
 
 **2. Build.** One subagent, foreground, running `/canon:build` as above with `<ID or NNN>`,
 followed by `--picked <role>` and `--unattended` when this run has them: `You are running under /canon:ship, so report the branch, the pull request number, whether it is ready or waiting on
@@ -76,7 +85,7 @@ a stop the build reported for the owner: go to **When to ask**.
 **3. Review: two read-only subagents in one message.** Each gets the spec number and the branch,
 never the conversation:
 
-- `/canon:review $ARGUMENTS`, using the `canon:reviewer` agent where it is available: the canon,
+- `/canon:review <target>`, using the `canon:reviewer` agent where it is available: the canon,
   the rule files, reuse and the spec.
 - `/code-review`, scoped to `origin/<integration>...HEAD` in round one: correctness.
 

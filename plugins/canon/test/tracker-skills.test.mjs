@@ -34,8 +34,8 @@ describe('the tracker in the skills', () => {
     const owners = {
       spec: ['define'],
       approved: ['approve'],
-      building: ['build', 'ship', 'pickup'],
-      blocked: ['build', 'ship', 'pickup'],
+      building: ['build', 'ship'],
+      blocked: ['build', 'ship'],
     };
     for (const [name, role] of moves) {
       expect(SETTABLE, `${name} sets ${role}`).toContain(role);
@@ -48,8 +48,6 @@ describe('the tracker in the skills', () => {
       'build',
       'build',
       'define',
-      'pickup',
-      'pickup',
       'ship',
       'ship',
       'ship',
@@ -69,6 +67,13 @@ describe('the tracker in the skills', () => {
     );
     expect(skill('build')).toMatch(/refuse unless the issue's role is `approved` or `blocked`/);
     expect(skill('ship')).toMatch(/the gate is the issue's role/);
+  });
+
+  it("moves pickup's two roles through its script, which the client still refuses beyond", () => {
+    const pickup = read('scripts/pickup.mjs');
+    expect(pickup).toContain("tracker(['set-state', id, 'building'], options)");
+    expect(pickup).toContain("tracker(['set-state', id, 'blocked'], options)");
+    expect([...pickup.matchAll(/'set-state'/g)].length).toBe(2);
   });
 
   it('approves on the tracker only after the push', () => {

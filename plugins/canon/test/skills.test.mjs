@@ -230,6 +230,8 @@ describe('skills pre-approve only scoped tools', () => {
     'node "${CLAUDE_PLUGIN_ROOT}/scripts/tracker.mjs" *',
     'node "${CLAUDE_PLUGIN_ROOT}/scripts/gh-get.mjs" *',
     'node "${CLAUDE_PLUGIN_ROOT}/scripts/scaffold.mjs" plan *',
+    // `claim` and `block` write only to the tracker the skill is there to move.
+    'node "${CLAUDE_PLUGIN_ROOT}/scripts/pickup.mjs" *',
   ];
   const PLAIN_TOOLS = ['Read', 'Grep', 'Glob', 'AskUserQuestion'];
 
@@ -436,7 +438,10 @@ describe('the autonomous flow', () => {
       steps.indexOf('node "${CLAUDE_PLUGIN_ROOT}/scripts/pickup.mjs"')
     );
     expect(pickup).toMatch(/never pick an issue by reading the board yourself/);
-    expect(pickup).toContain('Reply \\`resume\\` to carry on from the branch');
+    expect(pickup).toContain('node "${CLAUDE_PLUGIN_ROOT}/scripts/pickup.mjs" block <ID>');
+    // A pipe is a compound command, which an unattended run could stall on.
+    const code = [...pickup.matchAll(/```bash\n([^]*?)```/g)].map((m) => m[1]).join('\n');
+    expect(code).not.toMatch(/\|/);
     expect(pickup).toMatch(/One line, `Nothing to build\.`/);
     expect(pickup).toMatch(/\*\*One issue per run\.\*\* Never loop back to step 1/);
     // Moving back to approved would carry on from the dead branch, not start over.
@@ -445,13 +450,19 @@ describe('the autonomous flow', () => {
 
   it('claims the picked issue before shipping, and notes each step so the run stays live', () => {
     const pickup = skill('pickup');
-    const claim = pickup.indexOf('set-state <ID> building');
+    const claim = pickup.indexOf('pickup.mjs" claim <ID>');
     expect(claim).toBeGreaterThanOrEqual(0);
     expect(claim).toBeLessThan(pickup.indexOf('Run `/canon:ship` on it'));
     expect(pickup).toMatch(/`--picked approved` or `--picked blocked`/);
     const ship = skill('ship');
     expect(ship).toMatch(/Read a `building` issue\s+then as the role named/);
-    expect(ship).toMatch(/\*\*While picked, note each step on the issue\*\*/);
+    expect(pickup).toMatch(/\*\*`claimed: false` means another run has it\*\*/);
+    expect(ship).toMatch(/\*\*With `autonomy\.pickup` on, note each step on the issue\*\*/);
+    expect(ship).toMatch(/note each step on the issue\*\*[^]*?attended or not/);
+    expect(ship).toMatch(/\*\*A refusal while picked is a stop, not a plain refusal\*\*/);
+    expect(skill('build')).toMatch(
+      /let no hour pass without a\s+push or a one-line `comment <ID>`/
+    );
     expect(skill('build')).toMatch(
       /moved it to `building` as its claim: read it as the role named/
     );
@@ -461,4 +472,17 @@ describe('the autonomous flow', () => {
     expect(skill('pickup')).toMatch(/\*\*Unattended means no permission prompts either\.\*\*/);
     expect(skill('setup')).toMatch(/\*\*Nobody is there to approve a permission prompt\.\*\*/);
   });
+});
+
+describe('the flags never reach a lookup', () => {
+  it.each(['ship', 'build'])(
+    '%s looks up the spec and the issue by <target>, not the arguments',
+    (name) => {
+      const text = skill(name);
+      expect(text).toMatch(/\*\*`<target>` below is the spec number or issue alone\*\*/);
+      expect(text).not.toMatch(/docs\/specs\/\$ARGUMENTS/);
+      expect(text).not.toMatch(/\/canon:review \$ARGUMENTS/);
+      expect(text).not.toMatch(/`\$ARGUMENTS` is then the issue's identifier/);
+    }
+  );
 });

@@ -124,8 +124,10 @@ and off means every command behaves exactly as before.
   blockers first; an issue blocked by one with no spec waits. A `building` issue with a commit or
   an update in the last `autonomy.staleHours` (3) means a run is live, and pickup stops; older
   than that, the run died, and pickup blocks it with a question asking the owner to reply
-  `resume`. Pickup claims the issue it picks by moving it to `building` before it ships, and ship
-  notes each step on the issue, so a second run sees a live run, not a free issue.
+  `resume`. Pickup claims the issue it picks by moving it to `building` and posting a note naming the
+  run; two runs that decided at the same moment both claim, and only the one whose note came
+  first goes on. With pickup on, ship and build report progress on the issue, attended or not,
+  so a working run, a long build by hand included, is never taken for dead.
 
 `/canon:pickup --unattended` is what a schedule runs. Unattended, ship never asks in the chat:
 at each point it would ask the owner, it posts the question on the issue, moves it to `blocked`

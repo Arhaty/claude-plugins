@@ -6,6 +6,7 @@ disable-model-invocation: true
 allowed-tools:
   - Bash(node "${CLAUDE_PLUGIN_ROOT}/scripts/config.mjs")
   - Bash(node "${CLAUDE_PLUGIN_ROOT}/scripts/pickup.mjs")
+  - Bash(node "${CLAUDE_PLUGIN_ROOT}/scripts/pickup.mjs" *)
   - Bash(node "${CLAUDE_PLUGIN_ROOT}/scripts/tracker.mjs" *)
   - Bash(git fetch --prune origin)
   - Read
@@ -53,14 +54,16 @@ now.
    comment within `autonomy.staleHours` (3 by default). Say which issue and when, in one line, and stop.
    Two runs at once would race on the integration branch.
 
-3. **Block every issue in `dead` first.** Its run stopped without finishing. For each, as
-   `tracker.md` says under **Blocked**, minus the chat question:
+3. **Block every issue in `dead` first.** Its run stopped without finishing. For each:
 
    ```bash
-   printf '%s' "The run stopped without finishing. Reply \`resume\` to carry on from the branch, or say what to do instead." \
-     | node "${CLAUDE_PLUGIN_ROOT}/scripts/tracker.mjs" comment <ID> --blocked
-   node "${CLAUDE_PLUGIN_ROOT}/scripts/tracker.mjs" set-state <ID> blocked
+   node "${CLAUDE_PLUGIN_ROOT}/scripts/pickup.mjs" block <ID>
    ```
+
+   It posts the question as `tracker.md` says under **Blocked**, minus the chat question, asking
+   the owner to reply `resume` to carry on from the branch or to say what to do instead, and
+   moves the issue to `blocked`. One command with no pipe, so an unattended run is never stopped
+   by a permission prompt here.
 
    The decision already counts these as blocked with no answer, so carry on with it.
 
@@ -73,10 +76,16 @@ now.
    branch.
 
    **Claim it first**, before anything else touches it:
-   `node "${CLAUDE_PLUGIN_ROOT}/scripts/tracker.mjs" set-state <ID> building`. A second pickup
-   started now meets a `building` issue updated a moment ago, takes it for a live run and stops,
-   so two runs never ship the same issue. Then post a `canon: note` on the issue saying the run
-   picked it up.
+
+   ```bash
+   node "${CLAUDE_PLUGIN_ROOT}/scripts/pickup.mjs" claim <ID>
+   ```
+
+   It moves the issue to `building` and posts a note naming this run. A pickup started after
+   that meets a live run and stops. Two that decided at the same moment both claim, and each
+   reads the claim notes back: only the run whose note came first gets `claimed: true`.
+   **`claimed: false` means another run has it**: say which run, in one line, and stop without
+   touching the issue.
 
    Run `/canon:ship` on it **in this context**, by reading
    `${CLAUDE_PLUGIN_ROOT}/skills/ship/SKILL.md` and following it. Its arguments are `<ID>`, then
@@ -94,7 +103,7 @@ now.
 - **One issue per run.** Never loop back to step 1.
 - **Never pick an issue `pickup.mjs` did not.** Its order is the owner's: blocked issues they
   answered, then approved ones, by priority and then age, blockers first.
-- **Two status moves of its own: a dead run to `blocked`, and the picked issue to `building` as
-  its claim.** Every other move is ship's, build's or the GitHub integration's. Never `approved`: that is the owner's, through `/canon:approve`.
+- **Two status moves of its own, both through `pickup.mjs`: a dead run to `blocked`, and the
+  picked issue to `building` as its claim.** Every other move is ship's, build's or the GitHub integration's. Never `approved`: that is the owner's, through `/canon:approve`.
 - **Unattended, never ask in the chat.** Block on the issue and end the run.
 - **Never run `/canon:approve`, `/canon:production` or `/canon:define`.**
