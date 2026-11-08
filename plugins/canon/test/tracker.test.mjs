@@ -14,7 +14,9 @@ import { pathToFileURL } from 'node:url';
 import { trust, trustKeyCommand } from '../hooks/lib/config.mjs';
 import {
   BLOCKED_MARKER,
+  COMMENT_READS,
   blockedState,
+  inBatches,
   envFileValue,
   Relaunched,
   httpsProxy,
@@ -249,6 +251,23 @@ describe('the Linear provider', () => {
   it('refuses to start without a key', () => {
     expect(() => createClient({ apiKey: '', team: 'ABC' })).toThrow();
     expect(new LinearError('x') instanceof Error).toBe(true);
+  });
+});
+
+describe('reading comments for a board', () => {
+  it('keeps results in order and never runs more than the limit at once', async () => {
+    let running = 0;
+    let most = 0;
+    const results = await inBatches([5, 1, 4, 2, 3, 0, 6], COMMENT_READS, async (n) => {
+      running += 1;
+      most = Math.max(most, running);
+      await new Promise((done) => setTimeout(done, n));
+      running -= 1;
+      return n * 10;
+    });
+    expect(results).toEqual([50, 10, 40, 20, 30, 0, 60]);
+    expect(most).toBe(COMMENT_READS);
+    expect(await inBatches([], 4, async () => 1)).toEqual([]);
   });
 });
 

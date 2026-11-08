@@ -386,6 +386,26 @@ function explainUnauthorized(client, explain) {
   );
 }
 
+/**
+ * How many issues' comments `issues` reads at once: enough to keep a large board quick,
+ * few enough that the burst stays clear of the tracker's rate limit.
+ */
+export const COMMENT_READS = 4;
+
+/** `work` over `items` with at most `limit` running at once, results in order. */
+export async function inBatches(items, limit, work) {
+  const results = new Array(items.length);
+  let next = 0;
+  const worker = async () => {
+    while (next < items.length) {
+      const at = next++;
+      results[at] = await work(items[at]);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return results;
+}
+
 /** Run one command and return what to print. */
 export async function main(
   argv,
@@ -501,28 +521,26 @@ export async function main(
       const roles = [...new Set(listed())];
       const found = await client.issues(roles.map((role) => tracker.statuses[role]));
       // A blocked or building issue's comments say whether the owner answered and when the
-      // run last reported, read here in parallel rather than one `comments` call each.
-      return Promise.all(
-        found.map(async ({ blockedBy, ...issue }) => {
-          const role = roleOf(tracker, issue.state);
-          const entry = {
-            ...issue,
-            role,
-            blockedBy: blockedBy.map((blocker) => ({
-              ...blocker,
-              role: roleOf(tracker, blocker.state),
-            })),
-          };
-          if (role !== 'blocked' && role !== 'building') return entry;
-          const comments = await client.comments(issue.identifier);
-          const blocked = blockedState(comments);
-          return {
-            ...entry,
-            answered: Boolean(blocked?.answers.length),
-            lastCommentAt: comments.at(-1)?.createdAt ?? null,
-          };
-        })
-      );
+      // run last reported, read here a few at a time rather than one `comments` call each.
+      return inBatches(found, COMMENT_READS, async ({ blockedBy, ...issue }) => {
+        const role = roleOf(tracker, issue.state);
+        const entry = {
+          ...issue,
+          role,
+          blockedBy: blockedBy.map((blocker) => ({
+            ...blocker,
+            role: roleOf(tracker, blocker.state),
+          })),
+        };
+        if (role !== 'blocked' && role !== 'building') return entry;
+        const comments = await client.comments(issue.identifier);
+        const blocked = blockedState(comments);
+        return {
+          ...entry,
+          answered: Boolean(blocked?.answers.length),
+          lastCommentAt: comments.at(-1)?.createdAt ?? null,
+        };
+      });
     }
     case 'comments': {
       const comments = await client.comments(id());

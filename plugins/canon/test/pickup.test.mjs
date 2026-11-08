@@ -9,7 +9,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { choose, main } from '../scripts/pickup.mjs';
+import { CLAIM_WINDOW_MS, DEAD_QUESTION, choose, claimant, main } from '../scripts/pickup.mjs';
 import {
   CONFIG,
   ROOT,
@@ -216,6 +216,24 @@ describe('choosing the next issue', () => {
   });
 });
 
+describe('a claim', () => {
+  const note = (run, minutesAgo, now) => ({
+    body: `canon: note\n\nPicked up by /canon:pickup, run ${run}.`,
+    createdAt: new Date(now - minutesAgo * 60_000).toISOString(),
+  });
+
+  it('goes to the run whose note came first within the window', () => {
+    const now = Date.now();
+    expect(claimant([note('aa11', 2, now), note('bb22', 1, now)], now)).toBe('aa11');
+    // A claim older than the window is an earlier run's, long since over.
+    const old = CLAIM_WINDOW_MS / 60_000 + 5;
+    expect(claimant([note('aa11', old, now), note('bb22', 1, now)], now)).toBe('bb22');
+    expect(claimant([{ body: 'Picked up by /canon:pickup, run cc33.', createdAt: '' }], now)).toBe(
+      null
+    );
+  });
+});
+
 describe('pickup.mjs', () => {
   let project;
   let savedProjectDir;
@@ -238,7 +256,10 @@ describe('pickup.mjs', () => {
     autonomy,
     ...extra,
   });
-  const run = (options = {}) => main([], { cwd: project, env: {}, now: NOW, ...options });
+  const run = (options = {}, argv = []) =>
+    main(argv, { cwd: project, env: {}, now: NOW, ...options });
+  const readFixture = () =>
+    JSON.parse(readFileSync(join(project, '.claude/tracker-fixture.json'), 'utf8'));
 
   beforeEach(() => {
     savedProjectDir = process.env.CLAUDE_PROJECT_DIR;
@@ -315,6 +336,47 @@ describe('pickup.mjs', () => {
     });
     git('update-ref', 'refs/remotes/origin/ada/abc-1-old', 'HEAD');
     expect((await run()).decision).toBe('live');
+  });
+
+  it('claims the picked issue: moves it to building and notes the run', async () => {
+    fixture({ 'ABC-2': { title: 'Next', state: 'Approved', updatedAt: hoursAgo(50) } });
+    expect(await run({ token: 'aa11' }, ['claim', 'ABC-2'])).toEqual({
+      claimed: true,
+      run: 'aa11',
+    });
+    const issue = readFixture().issues['ABC-2'];
+    expect(issue.state).toBe('In Progress');
+    expect(issue.comments.at(-1).body).toBe('canon: note\n\nPicked up by /canon:pickup, run aa11.');
+    // The claim is activity: a second pickup now sees a live run, not a free issue.
+    expect((await run({ now: Date.now() })).decision).toBe('live');
+  });
+
+  it('gives way to a run that claimed the same issue first', async () => {
+    fixture({ 'ABC-2': { title: 'Next', state: 'Approved' } });
+    await run({ token: 'aa11' }, ['claim', 'ABC-2']);
+    expect(await run({ token: 'bb22' }, ['claim', 'ABC-2'])).toEqual({
+      claimed: false,
+      run: 'bb22',
+      by: 'aa11',
+    });
+  });
+
+  it('blocks a dead run with the question, and refuses anything else', async () => {
+    fixture({ 'ABC-1': { title: 'Old run', state: 'In Progress' } });
+    expect(await run({}, ['block', 'ABC-1'])).toEqual({ blocked: 'ABC-1' });
+    const issue = readFixture().issues['ABC-1'];
+    expect(issue.state).toBe('Blocked');
+    expect(issue.comments.at(-1).body).toBe(`canon: blocked\n\n${DEAD_QUESTION}`);
+    expect(DEAD_QUESTION).not.toMatch(/approved/);
+    for (const argv of [
+      ['claim'],
+      ['block', 'nope'],
+      ['unclaim', 'ABC-1'],
+      ['claim', 'ABC-1', 'x'],
+    ]) {
+      const error = await run({}, argv).catch((e) => e);
+      expect(error.code, argv.join(' ')).toBe(2);
+    }
   });
 
   it('runs as the skill runs it, and passes a tracker failure on', () => {

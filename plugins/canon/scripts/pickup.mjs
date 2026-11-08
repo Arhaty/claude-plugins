@@ -2,9 +2,11 @@
 /**
  * Which issue `/canon:pickup` builds next, read from the tracker and the remote branches.
  *
- *   node pickup.mjs
+ *   node pickup.mjs              decide, and change nothing
+ *   node pickup.mjs claim <ID>   take the picked issue for this run, or learn another has
+ *   node pickup.mjs block <ID>   block a dead run with the question for the owner
  *
- * Prints one JSON decision and changes nothing; the skill makes every write:
+ * The decision is one JSON object:
  *
  *   { "decision": "live", "live": [...] }        a run is going: stop
  *   { "decision": "build", "issue": {...},       build this one, after blocking `dead`
@@ -15,9 +17,14 @@
  * **One run at a time.** An issue in the `building` role whose branch has a commit, or
  * whose issue was updated or commented on, within `autonomy.staleHours` is a live run.
  * `/canon:pickup` claims the issue it picks by moving it to `building` before it ships,
- * and `/canon:ship` notes each step on the issue, so a run that is working stays live. Older than that,
- * the run died: it is listed in `dead`, for the skill to block, and counts as blocked
- * with no answer from then on.
+ * and with pickup on, `/canon:ship` and `/canon:build` note their progress on the issue,
+ * attended or not, so a run that is working stays live. Older than that, the run died:
+ * it is listed in `dead`, for the skill to block, and counts as blocked with no answer
+ * from then on.
+ *
+ * **A claim** moves the issue to `building` and posts a note naming this run. Two runs
+ * that decided at the same moment both claim; each then reads the issue's claim notes
+ * from the last `CLAIM_WINDOW_MS`, and only the run whose note came first goes on.
  *
  * **Candidates** are `blocked` issues the owner has answered, then `approved` ones, each
  * group by priority (urgent first, none last), then oldest first. A candidate whose
@@ -30,6 +37,7 @@
  */
 
 import { execFileSync, spawnSync } from 'node:child_process';
+import { randomBytes } from 'node:crypto';
 import { realpathSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -41,11 +49,12 @@ import { TrackerError } from './tracker.mjs';
  * Run `tracker.mjs` as a skill would, in a process of its own, so it finds the key and
  * the proxy exactly as it does for the skills, and return what it printed.
  */
-function tracker(argv, { cwd, env, execArgv }) {
+function tracker(argv, { cwd, env, execArgv }, input) {
   const script = join(dirname(fileURLToPath(import.meta.url)), 'tracker.mjs');
   const child = spawnSync(process.execPath, [...execArgv, script, ...argv], {
     cwd,
     env,
+    ...(input === undefined ? {} : { input }),
     encoding: 'utf8',
     timeout: 300_000,
     // The whole board, pretty-printed: far past the 1 MB default on a large backlog.
@@ -223,12 +232,60 @@ export function branchTimes(root, config, issues) {
   return times;
 }
 
-/** Read the board and the branches, and decide. `now` and `execArgv` are for tests. */
+/** How far back a claim note by another run counts against this one. */
+export const CLAIM_WINDOW_MS = 15 * 60_000;
+
+const CLAIM_NOTE = /^canon: note\s+Picked up by \/canon:pickup, run ([0-9a-f]+)\./;
+
+export const DEAD_QUESTION =
+  'The run stopped without finishing. Reply `resume` to carry on from the branch, or say what ' +
+  'to do instead.';
+
+/**
+ * Of the claim notes on an issue, the run whose note came first in the window, or null.
+ * Comments come oldest first, so the first match wins.
+ */
+export function claimant(comments, now) {
+  for (const comment of comments) {
+    const run = CLAIM_NOTE.exec(comment.body ?? '')?.[1];
+    if (run && now - Date.parse(comment.createdAt) <= CLAIM_WINDOW_MS) return run;
+  }
+  return null;
+}
+
+/** Take `id` for this run: move it to `building`, post the note, and see who was first. */
+function claim(id, options, token) {
+  tracker(['set-state', id, 'building'], options);
+  tracker(['comment', id], options, `Picked up by /canon:pickup, run ${token}.`);
+  const { comments } = tracker(['comments', id], options);
+  const first = claimant(comments, Date.now());
+  return first === token
+    ? { claimed: true, run: token }
+    : { claimed: false, run: token, by: first };
+}
+
+/** Block a dead run, as `references/tracker.md` says under Blocked, minus the chat question. */
+function block(id, options) {
+  tracker(['comment', id, '--blocked'], options, DEAD_QUESTION);
+  tracker(['set-state', id, 'blocked'], options);
+  return { blocked: id };
+}
+
+/**
+ * Decide, claim or block. `now`, `execArgv` and `token` are for tests.
+ */
 export async function main(
   argv,
-  { cwd = process.cwd(), env = process.env, now, execArgv = [] } = {}
+  { cwd = process.cwd(), env = process.env, now, execArgv = [], token } = {}
 ) {
-  if (argv.length) throw new TrackerError(`pickup takes no arguments, not ${argv.join(' ')}`, 2);
+  const [command, id, ...extra] = argv;
+  const writes = ['claim', 'block'].includes(command);
+  if (argv.length && !(writes && /^[A-Za-z0-9]+-[0-9]+$/.test(id ?? '') && !extra.length)) {
+    throw new TrackerError(
+      `pickup takes nothing, claim <ID> or block <ID>, not ${argv.join(' ')}`,
+      2
+    );
+  }
   const root = projectRoot({ cwd }, env);
   const state = loadConfig(root);
   if (state.status !== 'ok') {
@@ -249,6 +306,8 @@ export async function main(
   }
 
   const options = { cwd: root, env, execArgv };
+  if (command === 'claim') return claim(id, options, token ?? randomBytes(4).toString('hex'));
+  if (command === 'block') return block(id, options);
   const issues = tracker(['issues', 'building,blocked,approved'], options);
   const building = issues.filter(({ role }) => role === 'building');
   return choose({

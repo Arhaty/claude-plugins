@@ -153,6 +153,8 @@ export function createClient({ root, team }) {
         throw new FixtureError(`Team ${team} has no status named ${name} (moving ${id})`);
       }
       issue.state = name;
+      // Linear moves `updatedAt` on every change to the issue; pickup reads it as activity.
+      issue.updatedAt = new Date().toISOString();
       save(data);
     },
 
