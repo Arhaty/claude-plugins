@@ -96,6 +96,49 @@ describe('the Linear provider', () => {
     expect(state.requests.filter((r) => r.operation === 'Comments').length).toBe(3);
   });
 
+  it("lists the team's issues in the given statuses, paged, oldest first, with their blockers", async () => {
+    const at = (day) => new Date(Date.UTC(2026, 0, day)).toISOString();
+    state.states.ABC.push({ id: 's7', name: 'Cancelled', type: 'canceled', position: 7 });
+    const issue = (n, extra) => ({
+      ...state.issues['ABC-1'],
+      id: `uuid-${n}`,
+      title: `Issue ${n}`,
+      branchName: `abc-${n}-issue`,
+      createdAt: at(10 - n),
+      updatedAt: at(20),
+      ...extra,
+    });
+    state.issues['ABC-2'] = issue(2, { state: 'Approved', priority: 2, blockedBy: ['ABC-3'] });
+    state.issues['ABC-3'] = issue(3, { state: 'Approved', related: ['ABC-1'] });
+    state.issues['ABC-4'] = issue(4, { state: 'Blocked', blockedBy: ['ABC-5'] });
+    state.issues['ABC-5'] = issue(5, { state: 'Cancelled' });
+    state.issues['XYZ-6'] = issue(6, { state: 'Approved', team: 'XYZ' });
+
+    const found = await client.issues(['Approved', 'Blocked']);
+    expect(found.map((i) => i.identifier)).toEqual(['ABC-4', 'ABC-3', 'ABC-2']);
+    expect(found[2]).toEqual({
+      identifier: 'ABC-2',
+      title: 'Issue 2',
+      branchName: 'abc-2-issue',
+      priority: 2,
+      createdAt: at(8),
+      updatedAt: at(20),
+      state: 'Approved',
+      stateType: 'started',
+      blockedBy: [{ identifier: 'ABC-3', state: 'Approved', stateType: 'started' }],
+    });
+    // A related issue is not a blocker; a cancelled one keeps its type.
+    expect(found[1].blockedBy).toEqual([]);
+    expect(found[0].blockedBy).toEqual([
+      { identifier: 'ABC-5', state: 'Cancelled', stateType: 'canceled' },
+    ]);
+    expect(state.requests.filter((r) => r.operation === 'Issues').length).toBe(2);
+    expect(state.requests.at(-1).variables).toMatchObject({
+      team: 'ABC',
+      states: ['Approved', 'Blocked'],
+    });
+  });
+
   it('moves an issue to a status by name, and refuses a name the team does not have', async () => {
     await client.setState('ABC-1', 'In Spec');
     expect(state.issues['ABC-1'].state).toBe('In Spec');
@@ -258,6 +301,32 @@ describe('tracker.mjs', () => {
     expect(await run(['issue', 'ABC-1'])).toMatchObject({ state: 'Todo', role: 'ready' });
     state.issues['ABC-1'].state = 'Triage';
     expect((await run(['issue', 'ABC-1'])).role).toBeNull();
+  });
+
+  it('lists issues by role, with the role of each issue and each blocker', async () => {
+    state.issues['ABC-1'].state = 'Approved';
+    state.issues['ABC-2'] = {
+      ...state.issues['ABC-1'],
+      id: 'uuid-2',
+      state: 'In Staging',
+      blockedBy: [],
+    };
+    state.issues['ABC-1'].blockedBy = ['ABC-2'];
+    const found = await run(['issues', 'approved,blocked']);
+    expect(found.length).toBe(1);
+    expect(found[0]).toMatchObject({ identifier: 'ABC-1', role: 'approved' });
+    expect(found[0].blockedBy).toEqual([
+      { identifier: 'ABC-2', state: 'In Staging', stateType: 'started', role: 'staging' },
+    ]);
+    expect(state.requests.at(-1).variables.states).toEqual(['Approved', 'Blocked']);
+  });
+
+  it('refuses issues with no roles, or a role canon does not have, before reading a key', async () => {
+    for (const argv of [['issues'], ['issues', 'approved,done'], ['issues', 'approved', 'x']]) {
+      const error = await rejects(() => run(argv, { env: {} }), /issues needs roles/);
+      expect(error.code, argv.join(' ')).toBe(2);
+    }
+    expect(state.requests).toEqual([]);
   });
 
   it("sets the four roles a skill owns, by the team's names", async () => {
@@ -862,6 +931,29 @@ describe('the fixture tracker', () => {
       missing: ['domain-typo'],
     });
     expect(fixture().issues['ABC-7'].comments[0].body).toBe('canon: blocked\n\nWhich limit?');
+  });
+
+  it('lists issues by role, with blockers and their state types', async () => {
+    const data = fixture();
+    data.states.push({ name: 'Cancelled', type: 'canceled' });
+    data.issues['ABC-8'] = {
+      title: 'Second',
+      state: 'Approved',
+      priority: 1,
+      createdAt: '2026-01-02T00:00:00Z',
+      blockedBy: ['ABC-9'],
+    };
+    data.issues['ABC-9'] = { title: 'Dropped', state: 'Cancelled' };
+    writeFileSync(join(project, '.claude/tracker-fixture.json'), JSON.stringify(data));
+    const found = await run(['issues', 'approved,building']);
+    expect(found.map((issue) => [issue.identifier, issue.role])).toEqual([
+      ['ABC-7', 'building'],
+      ['ABC-8', 'approved'],
+    ]);
+    expect(found[1]).toMatchObject({ priority: 1, branchName: 'abc-8-second' });
+    expect(found[1].blockedBy).toEqual([
+      { identifier: 'ABC-9', state: 'Cancelled', stateType: 'canceled', role: null },
+    ]);
   });
 
   it('posts after a comment whose date it cannot read', async () => {

@@ -2,8 +2,8 @@
  * Linear, behind the interface `scripts/tracker.mjs` expects of a provider:
  *
  *   createClient({ apiKey, team, fetch?, timeoutMs? }) -> {
- *     issue(id), comments(id), comment(id, body), setState(id, name),
- *     label(id, add, remove), states(),
+ *     issue(id), issues(names), comments(id), comment(id, body),
+ *     setState(id, name), label(id, add, remove), states(),
  *   }
  *
  * Every method takes an identifier such as `ABC-123` and works in status names;
@@ -182,6 +182,67 @@ export function createClient({ apiKey, team, fetch: fetchImpl = fetch, timeoutMs
     return nodes.sort((a, b) => a.position - b.position);
   }
 
+  /**
+   * The team's issues in any of the statuses `names`, oldest first, paged to the end,
+   * each with what `/canon:pickup` orders and gates on: the priority, when it was
+   * created and last updated, its branch name, and the issues that block it with their
+   * status. Linear stores "A blocks B" as a relation on A, so B's blockers are its
+   * inverse relations of type `blocks`.
+   */
+  async function issues(names) {
+    const nodes = [];
+    let after = null;
+    for (;;) {
+      const data = await request(
+        `query Issues($team: String!, $states: [String!]!, $after: String) {
+          issues(
+            filter: { team: { key: { eq: $team } }, state: { name: { in: $states } } }
+            first: 100
+            after: $after
+          ) {
+            nodes {
+              identifier
+              title
+              branchName
+              priority
+              createdAt
+              updatedAt
+              state { name type }
+              inverseRelations(first: 50) {
+                nodes { type issue { identifier state { name type } } }
+              }
+            }
+            pageInfo { hasNextPage endCursor }
+          }
+        }`,
+        { team, states: names, after }
+      );
+      const page = data.issues;
+      nodes.push(...(page?.nodes ?? []));
+      if (!page?.pageInfo?.hasNextPage || !page.pageInfo.endCursor) break;
+      after = page.pageInfo.endCursor;
+    }
+    return nodes
+      .map((node) => ({
+        identifier: node.identifier,
+        title: node.title,
+        branchName: node.branchName ?? '',
+        priority: node.priority ?? 0,
+        createdAt: node.createdAt,
+        updatedAt: node.updatedAt,
+        state: node.state?.name ?? '',
+        stateType: node.state?.type ?? '',
+        blockedBy: (node.inverseRelations?.nodes ?? [])
+          .filter((relation) => relation.type === 'blocks' && relation.issue)
+          .map(({ issue: blocker }) => ({
+            identifier: blocker.identifier,
+            state: blocker.state?.name ?? '',
+            stateType: blocker.state?.type ?? '',
+          })),
+      }))
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+  }
+
   async function setState(identifier, name) {
     const node = await raw(identifier);
     const state = (await states()).find((candidate) => candidate.name === name);
@@ -308,5 +369,5 @@ export function createClient({ apiKey, team, fetch: fetchImpl = fetch, timeoutMs
     };
   }
 
-  return { issue, comments, comment, setState, label, states };
+  return { issue, issues, comments, comment, setState, label, states };
 }

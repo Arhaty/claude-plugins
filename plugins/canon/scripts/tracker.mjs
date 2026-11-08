@@ -4,6 +4,8 @@
  * this and nothing else does.
  *
  *   node tracker.mjs issue <ID>                 the issue, with its status's role
+ *   node tracker.mjs issues <role>[,<role>...]  the team's issues in those roles, with
+ *                                               priority, dates, branch and blockers
  *   node tracker.mjs comments <ID>              every comment, and whether the owner
  *                                               has answered the open blocked question
  *   node tracker.mjs comment <ID> [--blocked]   post stdin as a comment, marked as canon's
@@ -405,7 +407,7 @@ export async function main(
     args.splice(at, 2);
   }
   const [command, ...rest] = args;
-  const known = ['issue', 'comments', 'comment', 'set-state', 'label', 'states'];
+  const known = ['issue', 'issues', 'comments', 'comment', 'set-state', 'label', 'states'];
   if (!known.includes(command)) {
     throw usage(`unknown command '${command ?? ''}'. Expected one of: ${known.join(', ')}`);
   }
@@ -427,8 +429,19 @@ export async function main(
     if (!words[0]) throw usage(`${command} needs an issue identifier, e.g. ${tracker.team}-123`);
     return words[0];
   };
+  const listed = () =>
+    (words[0] ?? '')
+      .split(',')
+      .map((role) => role.trim())
+      .filter(Boolean);
   // Everything argv alone can get wrong, before a key command runs or a request leaves.
-  if (command !== 'states') id();
+  if (command === 'issues') {
+    const roles = listed();
+    const wrong = roles.filter((role) => !ROLES.includes(role));
+    if (roles.length === 0 || wrong.length || words.length > 1) {
+      throw usage(`issues needs roles, e.g. issues approved,blocked. Roles: ${ROLES.join(', ')}`);
+    }
+  } else if (command !== 'states') id();
   if (command === 'set-state' && !ROLES.includes(words[1])) {
     throw usage(`set-state needs a role: ${SETTABLE.join(', ')}`);
   }
@@ -481,6 +494,18 @@ export async function main(
     case 'issue': {
       const issue = await client.issue(id());
       return { ...issue, role: roleOf(tracker, issue.state) };
+    }
+    case 'issues': {
+      const roles = [...new Set(listed())];
+      const found = await client.issues(roles.map((role) => tracker.statuses[role]));
+      return found.map(({ blockedBy, ...issue }) => ({
+        ...issue,
+        role: roleOf(tracker, issue.state),
+        blockedBy: blockedBy.map((blocker) => ({
+          ...blocker,
+          role: roleOf(tracker, blocker.state),
+        })),
+      }));
     }
     case 'comments': {
       const comments = await client.comments(id());

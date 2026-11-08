@@ -39,6 +39,10 @@ export function linearState(overrides = {}) {
         state: 'Todo',
         labels: [],
         comments: [],
+        priority: 0,
+        createdAt: '2026-01-01T00:00:00.000Z',
+        updatedAt: '2026-01-01T00:00:00.000Z',
+        blockedBy: [],
       },
     },
     requests: [],
@@ -93,6 +97,54 @@ export function fakeLinear(state, { onChange = () => {} } = {}) {
       case 'Issue':
         data = { issue: found ? shape(found) : null };
         break;
+      case 'Issues': {
+        const type = (name) =>
+          Object.values(state.states)
+            .flat()
+            .find((candidate) => candidate.name === name)?.type ?? 'started';
+        const matching = Object.entries(state.issues)
+          .filter(([, issue]) => issue.team === variables.team)
+          .filter(([, issue]) => variables.states.includes(issue.state));
+        const start = variables.after ? Number(variables.after) : 0;
+        const page = matching.slice(start, start + 2);
+        data = {
+          issues: {
+            nodes: page.map(([identifier, issue]) => ({
+              identifier,
+              title: issue.title,
+              branchName: issue.branchName,
+              priority: issue.priority ?? 0,
+              createdAt: issue.createdAt,
+              updatedAt: issue.updatedAt,
+              state: { name: issue.state, type: type(issue.state) },
+              // Linear keeps "A blocks B" on A; B sees it as an inverse relation.
+              inverseRelations: {
+                nodes: [
+                  ...(issue.blockedBy ?? []).map((blocker) => ({
+                    type: 'blocks',
+                    issue: {
+                      identifier: blocker,
+                      state: {
+                        name: state.issues[blocker].state,
+                        type: type(state.issues[blocker].state),
+                      },
+                    },
+                  })),
+                  ...(issue.related ?? []).map((other) => ({
+                    type: 'related',
+                    issue: { identifier: other, state: { name: 'Todo', type: 'unstarted' } },
+                  })),
+                ],
+              },
+            })),
+            pageInfo: {
+              hasNextPage: start + 2 < matching.length,
+              endCursor: start + 2 < matching.length ? String(start + 2) : null,
+            },
+          },
+        };
+        break;
+      }
       case 'Comments': {
         const all = found[1].comments;
         const start = variables.after ? Number(variables.after) : 0;

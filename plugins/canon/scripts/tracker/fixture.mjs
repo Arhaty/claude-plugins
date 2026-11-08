@@ -4,13 +4,17 @@
  * back to the file, so a run can be checked by reading it afterwards.
  *
  *   {
- *     "states": ["Todo", "In Spec", ...],
+ *     "states": ["Todo", "In Spec", ..., { "name": "Cancelled", "type": "canceled" }],
  *     "labels": ["domain-auth", ...],
  *     "issues": {
  *       "ABC-7": { "title": "...", "description": "...", "state": "Todo", "branchName": "...",
- *                  "labels": [], "comments": [{ "body": "...", "createdAt": "..." }] }
+ *                  "labels": [], "comments": [{ "body": "...", "createdAt": "..." }],
+ *                  "priority": 2, "createdAt": "...", "updatedAt": "...",
+ *                  "blockedBy": ["ABC-5"] }
  *     }
  *   }
+ *
+ * A state is a name, or `{ name, type }` with Linear's type (`completed`, `canceled`...).
  *
  * Same interface as `linear.mjs`. Not something `/canon:setup` offers: a project
  * picks it by writing `"provider": "fixture"` by hand.
@@ -54,6 +58,13 @@ export function createClient({ root, team }) {
   };
   const save = (data) => writeFileSync(file, `${JSON.stringify(data, null, 2)}\n`);
 
+  /** Each state as `{ name, type }`, from a name or an object. */
+  const stateList = (data) =>
+    (data.states ?? []).map((state) =>
+      typeof state === 'string' ? { name: state, type: 'fixture' } : state
+    );
+  const typeOf = (data, name) => stateList(data).find((state) => state.name === name)?.type ?? '';
+
   /** The data and the issue, refused unless it exists and belongs to the team. */
   const find = (identifier) => {
     const { team: owner, identifier: id } = parseIdentifier(identifier);
@@ -79,6 +90,29 @@ export function createClient({ root, team }) {
         state: issue.state ?? '',
         labels: [...issue.labels],
       };
+    },
+
+    async issues(names) {
+      const data = load();
+      const all = data.issues ?? {};
+      return Object.entries(all)
+        .filter(([, issue]) => names.includes(issue.state))
+        .map(([id, issue]) => ({
+          identifier: id,
+          title: issue.title ?? '',
+          branchName: issue.branchName ?? defaultBranchName(id, issue.title ?? ''),
+          priority: issue.priority ?? 0,
+          createdAt: issue.createdAt ?? '',
+          updatedAt: issue.updatedAt ?? issue.createdAt ?? '',
+          state: issue.state ?? '',
+          stateType: typeOf(data, issue.state),
+          blockedBy: (issue.blockedBy ?? []).map((blocker) => ({
+            identifier: blocker,
+            state: all[blocker]?.state ?? '',
+            stateType: typeOf(data, all[blocker]?.state),
+          })),
+        }))
+        .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
     },
 
     async comments(identifier) {
@@ -108,14 +142,14 @@ export function createClient({ root, team }) {
     },
 
     async states() {
-      const states = load().states ?? [];
+      const states = stateList(load());
       if (states.length === 0) throw new FixtureError(`${FIXTURE_PATH} lists no states`);
-      return states.map((name) => ({ name, type: 'fixture' }));
+      return states.map(({ name, type }) => ({ name, type }));
     },
 
     async setState(identifier, name) {
       const { data, issue, id } = find(identifier);
-      if (!(data.states ?? []).includes(name)) {
+      if (!stateList(data).some((state) => state.name === name)) {
         throw new FixtureError(`Team ${team} has no status named ${name} (moving ${id})`);
       }
       issue.state = name;
