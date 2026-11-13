@@ -1,11 +1,14 @@
 ---
 name: build
 description: Build an approved spec on its branch, behind a draft pull request into the integration branch
-argument-hint: <spec number, e.g. 043, or the issue ID with a tracker>
+argument-hint: <spec number, e.g. 043, or the issue ID with a tracker> [--picked <role>] [--unattended]
 disable-model-invocation: true
 ---
 
 Build spec **$ARGUMENTS** to what it says.
+
+**`<target>` below is the spec number or issue alone**: the first word of the arguments, with
+`--picked <role>` and `--unattended` left out wherever they appear.
 
 The spec was argued out in `/canon:define` and approved with `/canon:approve`. Its
 `**Status:** approved` line records that, and this command reads the record rather than taking a
@@ -25,7 +28,7 @@ where the gate is reported, never count it as a pass. With a `build` command, re
 where the branch's spec is, when it is committed and how it is archived, and it overrides the steps below where they differ.
 
 **If it has a `tracker` block**, read `${CLAUDE_PLUGIN_ROOT}/references/tracker.md` now.
-`$ARGUMENTS` is then the issue's identifier, `<ID>` below, and the issue's role is the gate, not
+`<target>` is then the issue's identifier, `<ID>` below, and the issue's role is the gate, not
 the spec line.
 
 **The branch the session started on is not the spec's.** A cloud session is handed a generated
@@ -33,10 +36,15 @@ branch, `claude/<name>`, and told to push only there. canon overrides that: step
 spec's branch before anything is committed, and every commit and push goes there. The canon branch
 is standing permission to commit and push to it. Never build on the branch the session started on.
 
+**Unattended.** `--unattended` in `$ARGUMENTS` means nobody is watching: a scheduled
+`/canon:pickup` started the run through `/canon:ship`. Every place below that says to ask the owner, including "ask whether to resume", is
+then a stop, handled as **Stopping for the owner** says. Never wait on a reply, and never guess
+one.
+
 ## Steps
 
 1. **Find the branch `/canon:approve` pushed, and check it out.** The spec is
-   `docs/specs/$ARGUMENTS-<slug>.md` and its branch is `<prefix>/<slug>`.
+   `docs/specs/<target>-<slug>.md` and its branch is `<prefix>/<slug>`.
 
    ```bash
    git fetch --prune origin
@@ -72,7 +80,8 @@ is standing permission to commit and push to it. Never build on the branch the s
    - **`spec`**: nobody approved it. Point at `/canon:approve`. **`ready`**: there is no spec;
      point at `/canon:define`.
    - **`building`**: a build already started. Say what the branch carries and ask whether to
-     resume.
+     resume. With `--picked approved` or `--picked blocked` in the arguments, `/canon:pickup`
+     moved it to `building` as its claim: read it as the role named instead.
    - **`staging` or `production`**: merged, finished work.
 
    A spec line that disagrees with the role is reported in one line; the role decides.
@@ -135,7 +144,11 @@ is standing permission to commit and push to it. Never build on the branch the s
      then commit each unit as its own change and push.
    - **A unit that overruns its paths voids its wave**; it is rebuilt sequentially.
 
-8. **Build to the spec.** `CLAUDE.md` and `.claude/rules/` govern. No dependency the spec does not
+8. **Build to the spec.** With a tracker and `autonomy.pickup` on, let no hour pass without a
+   push or a one-line `comment <ID>` saying where the build stands: a scheduled pickup takes a
+   `building` issue quiet for `autonomy.staleHours` for a dead run, attended or not.
+
+   `CLAUDE.md` and `.claude/rules/` govern. No dependency the spec does not
    name, no abstraction for something that exists once, no placeholder text presented as real.
    One logical change per commit, each with `Spec: NNN` in the body (and `Part of <ID>` with a
    tracker) and the project's commit conventions. Push with `git push -u origin HEAD` as you go.
@@ -187,7 +200,9 @@ others depend on).
   on from the step that stopped. No answer in the chat leaves the issue `blocked` for the owner
   to answer on it; re-running `/canon:build <ID>` resumes.
 - **Under `/canon:ship`**, do neither: report the stop and what it needs, and stop. `/canon:ship`
-  owns the question.
+  owns the question, attended or not.
+- **With `--unattended` and not under `/canon:ship`**, block as with a tracker but skip the chat
+  question, leave the pull request in draft, and stop. Without a tracker, report and stop.
 
 ## Hard limits
 

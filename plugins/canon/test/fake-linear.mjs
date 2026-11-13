@@ -39,6 +39,10 @@ export function linearState(overrides = {}) {
         state: 'Todo',
         labels: [],
         comments: [],
+        priority: 0,
+        createdAt: '2026-01-01T00:00:00.000Z',
+        updatedAt: '2026-01-01T00:00:00.000Z',
+        blockedBy: [],
       },
     },
     requests: [],
@@ -71,11 +75,44 @@ export function fakeLinear(state, { onChange = () => {} } = {}) {
     },
   });
 
+  const stateType = (name) =>
+    Object.values(state.states)
+      .flat()
+      .find((candidate) => candidate.name === name)?.type ?? 'started';
+  /**
+   * An issue's inverse relations, two to a page: Linear keeps "A blocks B" on A, so B sees
+   * it as an inverse relation. Related issues come first, so a blocker can sit past a page.
+   */
+  const relationPage = (issue, start) => {
+    const all = [
+      ...(issue.related ?? []).map((other) => ({
+        type: 'related',
+        issue: { identifier: other, state: { name: 'Todo', type: 'unstarted' } },
+      })),
+      ...(issue.blockedBy ?? []).map((blocker) => ({
+        type: 'blocks',
+        issue: {
+          identifier: blocker,
+          state: {
+            name: state.issues[blocker].state,
+            type: stateType(state.issues[blocker].state),
+          },
+        },
+      })),
+    ];
+    const more = start + 2 < all.length;
+    return {
+      nodes: all.slice(start, start + 2),
+      pageInfo: { hasNextPage: more, endCursor: more ? String(start + 2) : null },
+    };
+  };
+
   return async (url, init) => {
     const { query, variables } = JSON.parse(init.body);
     const operation = /^\s*(?:query|mutation)\s+(\w+)/.exec(query)?.[1] ?? 'unknown';
     state.requests.push({
       operation,
+      query,
       variables,
       url,
       authorized: init.headers.authorization === state.key,
@@ -92,6 +129,36 @@ export function fakeLinear(state, { onChange = () => {} } = {}) {
     switch (operation) {
       case 'Issue':
         data = { issue: found ? shape(found) : null };
+        break;
+      case 'Issues': {
+        const matching = Object.entries(state.issues)
+          .filter(([, issue]) => issue.team === variables.team)
+          .filter(([, issue]) => variables.states.includes(issue.state));
+        const start = variables.after ? Number(variables.after) : 0;
+        const page = matching.slice(start, start + 2);
+        data = {
+          issues: {
+            nodes: page.map(([identifier, issue]) => ({
+              id: issue.id,
+              identifier,
+              title: issue.title,
+              branchName: issue.branchName,
+              priority: issue.priority ?? 0,
+              createdAt: issue.createdAt,
+              updatedAt: issue.updatedAt,
+              state: { name: issue.state, type: stateType(issue.state) },
+              inverseRelations: relationPage(issue, 0),
+            })),
+            pageInfo: {
+              hasNextPage: start + 2 < matching.length,
+              endCursor: start + 2 < matching.length ? String(start + 2) : null,
+            },
+          },
+        };
+        break;
+      }
+      case 'Blockers':
+        data = { issue: { inverseRelations: relationPage(found[1], Number(variables.after)) } };
         break;
       case 'Comments': {
         const all = found[1].comments;

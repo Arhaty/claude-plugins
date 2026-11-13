@@ -103,8 +103,20 @@ file that exists and differs, and writes nothing until each one is approved by n
      supported. Without one, the spec's `**Status:**` line is the gate and the config gets no
      `tracker` block; skip the tracker questions below.
 
-   If an existing config has a `tracker` or `ci` block, its values are the defaults too, ahead of
-   anything detected.
+   - **Whether Claude reviews specs and builds approved issues on its own.** Default no, and no
+     keeps every step the owner's, exactly as before. Two switches, asked together:
+     - **Spec review** (`autonomy.specReview`): `/canon:define` has its spec reviewed in a fresh
+       context before handing it over, fixes what the canon, the code or the Decisions table
+       settles, and asks the owner about the rest. Works with or without a tracker.
+     - **Pickup** (`autonomy.pickup`), **only with a tracker**: `/canon:pickup` builds the next
+       approved issue with `/canon:ship`, one per run, and blocks on the issue for anything it
+       needs from the owner. Without a tracker, do not offer it.
+
+     With both on, `/canon:define` then `/canon:approve` is all the owner does. Ask the tracker
+     questions first when the owner wants a tracker, so pickup is offered only then.
+
+   If an existing config has a `tracker`, `ci` or `autonomy` block, its values are the defaults
+   too, ahead of anything detected.
 
    **The tracker, when the owner wants one.** Read `${CLAUDE_PLUGIN_ROOT}/references/tracker.md`
    first for what each role means.
@@ -152,11 +164,14 @@ file that exists and differs, and writes nothing until each one is approved by n
      "formatFile": ["<argv>", "..."] or null,
      "urls": { "preview": "<pattern or null>", "staging": "<url or null>", "production": "<url or null>" },
      "tracker": { "provider": "linear", "team": "<KEY>", "statuses": { "ready": "<status>", "...": "..." }, "labelPrefix": "domain-", "apiKeyCommand": ["<argv>"] or null },
-     "ci": { "workflow": "<file>.yml", "baseInput": "<input or null>" }
+     "ci": { "workflow": "<file>.yml", "baseInput": "<input or null>" },
+     "autonomy": { "specReview": true, "pickup": true }
    }
    ```
 
-   Leave `tracker` out entirely when the owner wants none, and `ci` likewise. `urls` may be left
+   Leave `tracker` out entirely when the owner wants none, and `ci` likewise. Leave `autonomy`
+   out when the owner said no to both switches, and leave out a switch that is no; keep an
+   existing `staleHours` as it is. `urls` may be left
    out too, or any URL in it: left out means none. Keep every other key an existing config has,
    such as `branches.deleteAfterMerge` or the `specs` block, as it is: setup does not ask about
    them, and dropping one changes what the skills do. With no `specs` block, leave it out.
@@ -222,7 +237,27 @@ file that exists and differs, and writes nothing until each one is approved by n
    shadow `/canon:*`. Offer to do it; do it only on a yes. Keep any project-specific command,
    hook, rule or skill the plugin does not replace.
 
-7. **Report**, in a few lines: the files created, updated and left alone; that nothing is
+7. **Offer the schedule, only when `autonomy.pickup` is on.** Ask whether to create a scheduled
+   routine that runs `/canon:pickup --unattended` every 2 hours (`0 */2 * * *`) on this
+   repository. Say, before the answer:
+
+   - **The cloud environment needs the tracker's API key**, `LINEAR_API_KEY`, in its own
+     environment settings: a routine runs in a fresh cloud container with no `.env.local` and no
+     key command approval.
+   - **The routine needs the plugin loaded**, which a repository's `.claude/settings.json` does
+     not do in a cloud session: see the plugin README's "Loading the plugin in a cloud session".
+   - **Nobody is there to approve a permission prompt.** The routine's environment must allow
+     what `/canon:ship` does without asking: `git` commits and pushes, `gh api` calls, file edits
+     and subagents. A run that stops on a prompt leaves its issue in `building` until a later run
+     takes it for dead and blocks it.
+   - **What it costs when there is nothing to build**: one short run that reads the board, says
+     `Nothing to build.` or names the live run, and ends. A run that builds costs what
+     `/canon:ship` costs.
+
+   On a yes, create it with the `/schedule` skill, with that prompt and cron. On a no, say the
+   owner can run `/canon:pickup` by hand, or create the routine later.
+
+8. **Report**, in a few lines: the files created, updated and left alone; that nothing is
    committed; the next steps:
 
    - Commit the setup on a branch cut from the integration branch (the hooks refuse an edit on a

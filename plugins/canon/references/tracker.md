@@ -20,12 +20,19 @@ use an MCP server for it, and never read the API key into the conversation: the 
 ```bash
 tracker="${CLAUDE_PLUGIN_ROOT}/scripts/tracker.mjs"
 node "$tracker" issue ABC-123                  # title, description, labels, state, role
+node "$tracker" issues approved,blocked        # the team's issues in those roles, for pickup
 node "$tracker" comments ABC-123               # every comment, and the blocked question if any
 printf '%s' "$body" | node "$tracker" comment ABC-123
 printf '%s' "$question" | node "$tracker" comment ABC-123 --blocked
 node "$tracker" set-state ABC-123 building     # spec, approved, building or blocked
 node "$tracker" label ABC-123 +domain-auth     # add with +, remove with -
 ```
+
+`issues` lists every issue of the team in the roles given, oldest first, each with its `role`,
+`priority` (Linear's: 1 urgent to 4 low, 0 none), `createdAt`, `updatedAt`, `branchName`, and
+`blockedBy`: the issues that block it, each with its `state`, its `stateType` (Linear's
+`completed`, `canceled` and so on) and its `role`. `/canon:pickup` reads it through
+`scripts/pickup.mjs`, which decides what to build; a skill never orders the board itself.
 
 Output is JSON. Exit 1 is a failure and exit 2 a usage error, with the reason on stderr: stop and
 pass it on rather than working around it.
@@ -37,15 +44,15 @@ on a question for the owner, `canon: note` on anything else. A comment without o
 
 Compare `role`, never the status name: names differ per team, and the config maps them.
 
-| Role         | Means                                            | Set by                        |
-| ------------ | ------------------------------------------------ | ----------------------------- |
-| `ready`      | Prioritised, waiting for a spec                  | the owner                     |
-| `spec`       | Being specced, or specced and waiting to be read | `/canon:define`               |
-| `approved`   | The owner approved the spec                      | `/canon:approve`              |
-| `building`   | Being built                                      | `/canon:build`                |
-| `blocked`    | Claude is waiting on the owner, nothing else     | `/canon:build`, `/canon:ship` |
-| `staging`    | Merged into the integration branch               | the GitHub integration        |
-| `production` | Merged into production                           | the GitHub integration        |
+| Role         | Means                                            | Set by                                         |
+| ------------ | ------------------------------------------------ | ---------------------------------------------- |
+| `ready`      | Prioritised, waiting for a spec                  | the owner                                      |
+| `spec`       | Being specced, or specced and waiting to be read | `/canon:define`                                |
+| `approved`   | The owner approved the spec                      | `/canon:approve`                               |
+| `building`   | Being built                                      | `/canon:build`, `/canon:pickup`                |
+| `blocked`    | Claude is waiting on the owner, nothing else     | `/canon:build`, `/canon:ship`, `/canon:pickup` |
+| `staging`    | Merged into the integration branch               | the GitHub integration                         |
+| `production` | Merged into production                           | the GitHub integration                         |
 
 `role: null` is a status the config does not map: say which and stop. **Never set `staging` or
 `production`**, even when the board looks stuck: a merge that did not move an issue is a pull
@@ -80,7 +87,9 @@ request body to fix, and a status set by hand hides it. The client refuses them 
 `blocked` means Claude is waiting on the owner, and nothing else. It is set at one of the stop
 conditions `/canon:build` and `/canon:ship` name: a product decision the spec did not settle, a
 conflict that is a decision, a gate failing three times, a dependency the spec did not name, or an
-irreversible action.
+irreversible action. `/canon:pickup` also sets it on a `building` issue whose run died: no
+commit and no update for `autonomy.staleHours`. Its question asks the owner to reply `resume`, or
+to say what to do instead.
 
 **To block**, in this order:
 
@@ -89,7 +98,8 @@ irreversible action.
    comment with the line `canon: blocked`, which is what marks it.
 2. `node "$tracker" set-state ABC-123 blocked`.
 3. **Ask the same question in the chat** with `AskUserQuestion`, recommended option first. The
-   comment is for an owner who is not watching the session; it is never the only way to answer.
+   comment is for an owner who is not watching the session; it is never the only way to answer. An unattended run (`--unattended`, from a schedule) skips this step: nobody is
+   watching, so the comment is the only way, and the run ends there.
 
 **An answer in the chat** wins: post it on the issue with `comment` (no `--blocked`), so the issue
 holds the decision too, then `set-state building` and carry on from the step that stopped.

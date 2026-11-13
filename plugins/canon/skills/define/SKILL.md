@@ -242,13 +242,55 @@ for a new spec is a stop: ask for the issue.
    recommendation and stop. Revise the spec after each round, write each answer into
    `Decisions`, and say what moved rather than restating the spec. Two to four rounds is normal.
 
-6. **Stop with the spec written, the frontier empty and the status `draft`.** Say where the file
+6. **Review the spec, only when `autonomy.specReview` is `true`.** With it `false` or left out,
+   skip to step 7: the owner reviews the spec, as before. With it on, the frontier is empty and
+   the spec is about to be handed over, so check it now as the document a build will follow
+   without asking anyone. That spares the owner shuttling `/canon:review` findings between
+   sessions.
+
+   **Round 1.** One `canon:reviewer` subagent, foreground, with a fresh context. Give it the
+   spec's path and the branch, never this conversation: `Run /canon:review <spec path>` on the
+   branch, checking the spec as the contract a build follows without asking anyone: a
+   requirement that contradicts the canon, a rule file or the spec's own `## Decisions`; a case
+   the build would have to decide; a requirement with no verification step; a file missing from
+   `## Where`; reuse the `## Reuse check` missed; scope beyond what the brief asked. Findings
+   only, each with its consequence; "nothing found" is a valid result. `/canon:review`'s bar
+   applies as it stands: do not restate it in the prompt.
+
+   **Triage, here.** This context holds the Decisions table and the owner's answers; the
+   reviewer had neither. Verify each finding against the spec, the canon and the code before
+   acting on it, and sort it:
+
+   - **Fix**: a gap whose answer follows from the canon, the code or a Decisions row. Edit the
+     spec; where the fix takes a choice, add a Decisions row marked `Claude, recommended`.
+   - **Ask the owner**: the finding would overturn a Decisions row, or raises a product decision
+     nothing settles. Put these to the owner in one question round in step 5's format, and fold
+     the answers in as step 5 does. Answering it does not add a review round.
+   - **Dismiss**: wording, naming, formatting, preference, an alternative that is no better, out
+     of scope, or already answered by the canon or a Decisions row. One line each saying why.
+
+   **Round 2, only if round 1 changed the spec**: the same subagent brief, scoped to what changed
+   since round 1, with the whole spec as context. Before round 1's edits, copy the spec to a
+   scratch file outside the project; round 2's reviewer gets both paths and reviews only what
+   `diff -u <copy> <spec>` changes. Re-reviewing unchanged text produces new opinions, not new
+   gaps. Triage it the same way. A finding that returns after it was fixed, or contradicts
+   round 1, is dismissed as oscillation. **Never a round 3.**
+
+   The review ends on a round with nothing to fix or ask, or after round 2. Then commit and push
+   as a revision round does (`docs: revise spec NNN`), unless `specs.commitWhileDrafting` is
+   `false`, and go to step 7.
+
+7. **Stop with the spec written, the frontier empty and the status `draft`.** Say where the file
    is, how many decisions it holds, the last commit's sha and the pushed branch, and that
    `/canon:approve` is next. With a tracker, also the
    issue's status and any label that was missing from the workspace.
 
+   After step 6 only, one more line: **Review.** Rounds run, how many findings were fixed, asked
+   and dismissed, and each dismissed one in a few words with why.
+
 ## Hard limits
 
+- **Two review rounds at most** in step 6, and only with `autonomy.specReview` on.
 - **Two research rounds at most.** A question still open after two is a decision: put it in the
   next round with your recommendation.
 - **Each question round asks the whole frontier.** One question per message is the slow failure.

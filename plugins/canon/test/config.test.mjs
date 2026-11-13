@@ -137,6 +137,53 @@ describe('validate', () => {
     expect(validate({ ...valid(), tracker: TRACKER, specs })).toEqual([error]);
   });
 
+  it('leaves the autonomous flow off when autonomy is left out, or each switch is', () => {
+    expect(withDefaults(valid()).autonomy).toEqual({
+      specReview: false,
+      pickup: false,
+      staleHours: 3,
+    });
+    expect(withDefaults({ ...valid(), autonomy: { specReview: true } }).autonomy).toEqual({
+      specReview: true,
+      pickup: false,
+      staleHours: 3,
+    });
+  });
+
+  it('takes an autonomy block, spec review without a tracker and pickup with one', () => {
+    for (const autonomy of [{}, { specReview: true }, { specReview: false, pickup: false }]) {
+      expect(validate({ ...valid(), autonomy }), JSON.stringify(autonomy)).toEqual([]);
+    }
+    for (const autonomy of [
+      { specReview: true, pickup: true },
+      { pickup: true, staleHours: 6 },
+      { pickup: true, staleHours: 0.5 },
+    ]) {
+      expect(
+        validate({ ...valid(), tracker: TRACKER, autonomy }),
+        JSON.stringify(autonomy)
+      ).toEqual([]);
+    }
+  });
+
+  it.each([
+    ['yes', '`autonomy` must be an object, or left out'],
+    [{ specReview: 'yes' }, '`autonomy.specReview` must be true or false, or left out'],
+    [{ pickup: 1 }, '`autonomy.pickup` must be true or false, or left out'],
+    [{ staleHours: 0 }, '`autonomy.staleHours` must be a number of hours above 0 and at most 72'],
+    [{ staleHours: '3' }, '`autonomy.staleHours` must be a number of hours above 0 and at most 72'],
+    [{ staleHours: 100 }, '`autonomy.staleHours` must be a number of hours above 0 and at most 72'],
+    [{ schedule: '2h' }, '`autonomy.schedule` is not a known key'],
+  ])('refuses autonomy %j', (autonomy, error) => {
+    expect(validate({ ...valid(), tracker: TRACKER, autonomy })).toEqual([error]);
+  });
+
+  it('refuses pickup with no tracker to pick from', () => {
+    expect(validate({ ...valid(), autonomy: { pickup: true } })).toEqual([
+      '`autonomy.pickup` needs a `tracker` block, whose board it picks issues from',
+    ]);
+  });
+
   it('accepts claudeMd as a boolean and refuses anything else', () => {
     expect(validate({ ...valid(), claudeMd: false })).toEqual([]);
     expect(validate({ ...valid(), claudeMd: true })).toEqual([]);

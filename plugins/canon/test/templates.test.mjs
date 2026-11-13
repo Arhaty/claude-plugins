@@ -252,6 +252,52 @@ describe('scaffold', () => {
     rmSync(home, { recursive: true, force: true });
   });
 
+  it('renders every file exactly as before with the autonomous flow off', () => {
+    for (const base of [config(), { ...config(), tracker: TRACKER }]) {
+      const files = (settings) =>
+        Object.fromEntries(render(root, settings).map(({ path, content }) => [path, content]));
+      const before = files(base);
+      for (const autonomy of [{}, { specReview: false, pickup: false }]) {
+        const after = files({ ...base, autonomy });
+        expect(Object.keys(after)).toEqual(Object.keys(before));
+        for (const [path, content] of Object.entries(before)) {
+          // The config file holds the answers themselves; every other file is unchanged.
+          if (path === '.claude/canon.json') continue;
+          expect(after[path], `${path} with ${JSON.stringify(autonomy)}`).toBe(content);
+        }
+      }
+    }
+    apply(root, config());
+    expect(readFileSync(join(root, 'CLAUDE.md'), 'utf8')).not.toMatch(/pickup|runs without/);
+  });
+
+  it('says what runs without the owner, and offers pickup only with a tracker', () => {
+    const section = (extra) => {
+      const dir = mkdtempSync(join(tmpdir(), 'canon-scaffold-'));
+      try {
+        apply(dir, { ...config(), ...extra });
+        return readFileSync(join(dir, 'CLAUDE.md'), 'utf8');
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    };
+    const review = section({ autonomy: { specReview: true } });
+    expect(review).toMatch(/### What runs without the owner\n\n`\/canon:define` has its spec/);
+    expect(review).not.toMatch(/canon:pickup/);
+
+    const both = section({ tracker: TRACKER, autonomy: { specReview: true, pickup: true } });
+    expect(both).toMatch(/`\/canon:pickup --unattended` every two hours/);
+    expect(both).toMatch(/moves the issue to `Blocked` with its question/);
+    expect(both).toMatch(
+      /\*\*For each change, `\/canon:define` then `\/canon:approve` is all Ada does\.\*\*/
+    );
+    expect(both).toMatch(/### What runs without the owner[^]*### Branches and commits/);
+
+    const pickupOnly = section({ tracker: TRACKER, autonomy: { pickup: true } });
+    expect(pickupOnly).toMatch(/canon:pickup/);
+    expect(pickupOnly).not.toMatch(/is all Ada does/);
+  });
+
   it('writes the tracker paragraph only for a project with a tracker', () => {
     apply(root, config());
     const plain = readFileSync(join(root, 'CLAUDE.md'), 'utf8');

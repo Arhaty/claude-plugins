@@ -4,6 +4,10 @@
  * this and nothing else does.
  *
  *   node tracker.mjs issue <ID>                 the issue, with its status's role
+ *   node tracker.mjs issues <role>[,<role>...]  the team's issues in those roles, with
+ *                                               priority, dates, branch and blockers, and
+ *                                               for blocked and building ones, whether the
+ *                                               owner answered and the last comment's time
  *   node tracker.mjs comments <ID>              every comment, and whether the owner
  *                                               has answered the open blocked question
  *   node tracker.mjs comment <ID> [--blocked]   post stdin as a comment, marked as canon's
@@ -382,6 +386,26 @@ function explainUnauthorized(client, explain) {
   );
 }
 
+/**
+ * How many issues' comments `issues` reads at once: enough to keep a large board quick,
+ * few enough that the burst stays clear of the tracker's rate limit.
+ */
+export const COMMENT_READS = 4;
+
+/** `work` over `items` with at most `limit` running at once, results in order. */
+export async function inBatches(items, limit, work) {
+  const results = new Array(items.length);
+  let next = 0;
+  const worker = async () => {
+    while (next < items.length) {
+      const at = next++;
+      results[at] = await work(items[at]);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return results;
+}
+
 /** Run one command and return what to print. */
 export async function main(
   argv,
@@ -405,7 +429,7 @@ export async function main(
     args.splice(at, 2);
   }
   const [command, ...rest] = args;
-  const known = ['issue', 'comments', 'comment', 'set-state', 'label', 'states'];
+  const known = ['issue', 'issues', 'comments', 'comment', 'set-state', 'label', 'states'];
   if (!known.includes(command)) {
     throw usage(`unknown command '${command ?? ''}'. Expected one of: ${known.join(', ')}`);
   }
@@ -427,8 +451,19 @@ export async function main(
     if (!words[0]) throw usage(`${command} needs an issue identifier, e.g. ${tracker.team}-123`);
     return words[0];
   };
+  const listed = () =>
+    (words[0] ?? '')
+      .split(',')
+      .map((role) => role.trim())
+      .filter(Boolean);
   // Everything argv alone can get wrong, before a key command runs or a request leaves.
-  if (command !== 'states') id();
+  if (command === 'issues') {
+    const roles = listed();
+    const wrong = roles.filter((role) => !ROLES.includes(role));
+    if (roles.length === 0 || wrong.length || words.length > 1) {
+      throw usage(`issues needs roles, e.g. issues approved,blocked. Roles: ${ROLES.join(', ')}`);
+    }
+  } else if (command !== 'states') id();
   if (command === 'set-state' && !ROLES.includes(words[1])) {
     throw usage(`set-state needs a role: ${SETTABLE.join(', ')}`);
   }
@@ -481,6 +516,31 @@ export async function main(
     case 'issue': {
       const issue = await client.issue(id());
       return { ...issue, role: roleOf(tracker, issue.state) };
+    }
+    case 'issues': {
+      const roles = [...new Set(listed())];
+      const found = await client.issues(roles.map((role) => tracker.statuses[role]));
+      // A blocked or building issue's comments say whether the owner answered and when the
+      // run last reported, read here a few at a time rather than one `comments` call each.
+      return inBatches(found, COMMENT_READS, async ({ blockedBy, ...issue }) => {
+        const role = roleOf(tracker, issue.state);
+        const entry = {
+          ...issue,
+          role,
+          blockedBy: blockedBy.map((blocker) => ({
+            ...blocker,
+            role: roleOf(tracker, blocker.state),
+          })),
+        };
+        if (role !== 'blocked' && role !== 'building') return entry;
+        const comments = await client.comments(issue.identifier);
+        const blocked = blockedState(comments);
+        return {
+          ...entry,
+          answered: Boolean(blocked?.answers.length),
+          lastCommentAt: comments.at(-1)?.createdAt ?? null,
+        };
+      });
     }
     case 'comments': {
       const comments = await client.comments(id());

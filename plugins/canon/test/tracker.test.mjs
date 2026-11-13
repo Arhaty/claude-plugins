@@ -14,7 +14,9 @@ import { pathToFileURL } from 'node:url';
 import { trust, trustKeyCommand } from '../hooks/lib/config.mjs';
 import {
   BLOCKED_MARKER,
+  COMMENT_READS,
   blockedState,
+  inBatches,
   envFileValue,
   Relaunched,
   httpsProxy,
@@ -94,6 +96,67 @@ describe('the Linear provider', () => {
     expect(comments.map((c) => c.id)).toEqual(['c0', 'c1', 'c2', 'c3', 'c4']);
     expect(Object.keys(comments[0]).sort()).toEqual(['body', 'createdAt', 'id']);
     expect(state.requests.filter((r) => r.operation === 'Comments').length).toBe(3);
+  });
+
+  it("lists the team's issues in the given statuses, paged, oldest first, with their blockers", async () => {
+    const at = (day) => new Date(Date.UTC(2026, 0, day)).toISOString();
+    state.states.ABC.push({ id: 's7', name: 'Cancelled', type: 'canceled', position: 7 });
+    const issue = (n, extra) => ({
+      ...state.issues['ABC-1'],
+      id: `uuid-${n}`,
+      title: `Issue ${n}`,
+      branchName: `abc-${n}-issue`,
+      createdAt: at(10 - n),
+      updatedAt: at(20),
+      ...extra,
+    });
+    // Three related issues come before the blocker, so it sits past the first relation page.
+    state.issues['ABC-2'] = issue(2, {
+      state: 'Approved',
+      priority: 2,
+      blockedBy: ['ABC-3'],
+      related: ['ABC-1', 'ABC-1', 'ABC-1'],
+    });
+    state.issues['ABC-3'] = issue(3, { state: 'Approved', related: ['ABC-1'] });
+    state.issues['ABC-4'] = issue(4, { state: 'Blocked', blockedBy: ['ABC-5'] });
+    state.issues['ABC-5'] = issue(5, { state: 'Cancelled' });
+    state.issues['XYZ-6'] = issue(6, { state: 'Approved', team: 'XYZ' });
+
+    const found = await client.issues(['Approved', 'Blocked']);
+    expect(found.map((i) => i.identifier)).toEqual(['ABC-4', 'ABC-3', 'ABC-2']);
+    expect(found[2]).toEqual({
+      identifier: 'ABC-2',
+      title: 'Issue 2',
+      branchName: 'abc-2-issue',
+      priority: 2,
+      createdAt: at(8),
+      updatedAt: at(20),
+      state: 'Approved',
+      stateType: 'started',
+      blockedBy: [{ identifier: 'ABC-3', state: 'Approved', stateType: 'started' }],
+    });
+    // A related issue is not a blocker; a cancelled one keeps its type.
+    expect(found[1].blockedBy).toEqual([]);
+    expect(found[0].blockedBy).toEqual([
+      { identifier: 'ABC-5', state: 'Cancelled', stateType: 'canceled' },
+    ]);
+    expect(state.requests.filter((r) => r.operation === 'Issues').length).toBe(2);
+    expect(state.requests.filter((r) => r.operation === 'Blockers').length).toBe(1);
+    expect(state.requests.findLast((r) => r.operation === 'Issues').variables).toMatchObject({
+      team: 'ABC',
+      states: ['Approved', 'Blocked'],
+    });
+  });
+
+  it("keeps the issues query under Linear's 10,000-point complexity limit", async () => {
+    await client.issues(['Todo']);
+    const { query } = state.requests.find((r) => r.operation === 'Issues');
+    const first = (field) => Number(new RegExp(`${field}\\([^)]*?first: (\\d+)`).exec(query)?.[1]);
+    const issues = Number(/^\s*first: (\d+)$/m.exec(query)?.[1]);
+    const relations = first('inverseRelations');
+    expect(issues > 0 && relations > 0, query).toBe(true);
+    // Each relation is about 3.4 points (the relation, its issue and that issue's state).
+    expect(issues * (relations * 3.4 + 10)).toBeLessThan(5_000);
   });
 
   it('moves an issue to a status by name, and refuses a name the team does not have', async () => {
@@ -191,6 +254,23 @@ describe('the Linear provider', () => {
   });
 });
 
+describe('reading comments for a board', () => {
+  it('keeps results in order and never runs more than the limit at once', async () => {
+    let running = 0;
+    let most = 0;
+    const results = await inBatches([5, 1, 4, 2, 3, 0, 6], COMMENT_READS, async (n) => {
+      running += 1;
+      most = Math.max(most, running);
+      await new Promise((done) => setTimeout(done, n));
+      running -= 1;
+      return n * 10;
+    });
+    expect(results).toEqual([50, 10, 40, 20, 30, 0, 60]);
+    expect(most).toBe(COMMENT_READS);
+    expect(await inBatches([], 4, async () => 1)).toEqual([]);
+  });
+});
+
 describe('a blocked issue', () => {
   // With the owner's own key, Claude's question and the owner's reply come from the
   // same user, so these carry one author on purpose: nothing may read it.
@@ -258,6 +338,57 @@ describe('tracker.mjs', () => {
     expect(await run(['issue', 'ABC-1'])).toMatchObject({ state: 'Todo', role: 'ready' });
     state.issues['ABC-1'].state = 'Triage';
     expect((await run(['issue', 'ABC-1'])).role).toBeNull();
+  });
+
+  it('lists issues by role, with the role of each issue and each blocker', async () => {
+    state.issues['ABC-1'].state = 'Approved';
+    state.issues['ABC-2'] = {
+      ...state.issues['ABC-1'],
+      id: 'uuid-2',
+      state: 'In Staging',
+      blockedBy: [],
+    };
+    state.issues['ABC-1'].blockedBy = ['ABC-2'];
+    const found = await run(['issues', 'approved,blocked']);
+    expect(found.length).toBe(1);
+    expect(found[0]).toMatchObject({ identifier: 'ABC-1', role: 'approved' });
+    expect(found[0].blockedBy).toEqual([
+      { identifier: 'ABC-2', state: 'In Staging', stateType: 'started', role: 'staging' },
+    ]);
+    expect(state.requests.at(-1).variables.states).toEqual(['Approved', 'Blocked']);
+  });
+
+  it("reads a blocked or building issue's comments for whether it was answered and when", async () => {
+    state.issues['ABC-1'].state = 'Blocked';
+    state.issues['ABC-1'].comments = [
+      { id: 'c1', body: 'canon: blocked\n\nWhich limit?', createdAt: '2026-01-01T00:00:00Z' },
+      { id: 'c2', body: 'canon: note\n\nReport.', createdAt: '2026-01-01T01:00:00Z' },
+    ];
+    state.issues['ABC-2'] = { ...state.issues['ABC-1'], id: 'uuid-2', state: 'Approved' };
+    const listed = async () =>
+      Object.fromEntries((await run(['issues', 'blocked,approved'])).map((i) => [i.identifier, i]));
+    let found = await listed();
+    expect(found['ABC-1']).toMatchObject({
+      answered: false,
+      lastCommentAt: '2026-01-01T01:00:00Z',
+    });
+    // An approved issue's comments are not read.
+    expect('answered' in found['ABC-2']).toBe(false);
+    state.issues['ABC-1'].comments.push({
+      id: 'c3',
+      body: 'Five a minute.',
+      createdAt: '2026-01-02T00:00:00Z',
+    });
+    found = await listed();
+    expect(found['ABC-1'].answered).toBe(true);
+  });
+
+  it('refuses issues with no roles, or a role canon does not have, before reading a key', async () => {
+    for (const argv of [['issues'], ['issues', 'approved,done'], ['issues', 'approved', 'x']]) {
+      const error = await rejects(() => run(argv, { env: {} }), /issues needs roles/);
+      expect(error.code, argv.join(' ')).toBe(2);
+    }
+    expect(state.requests).toEqual([]);
   });
 
   it("sets the four roles a skill owns, by the team's names", async () => {
@@ -862,6 +993,29 @@ describe('the fixture tracker', () => {
       missing: ['domain-typo'],
     });
     expect(fixture().issues['ABC-7'].comments[0].body).toBe('canon: blocked\n\nWhich limit?');
+  });
+
+  it('lists issues by role, with blockers and their state types', async () => {
+    const data = fixture();
+    data.states.push({ name: 'Cancelled', type: 'canceled' });
+    data.issues['ABC-8'] = {
+      title: 'Second',
+      state: 'Approved',
+      priority: 1,
+      createdAt: '2026-01-02T00:00:00Z',
+      blockedBy: ['ABC-9'],
+    };
+    data.issues['ABC-9'] = { title: 'Dropped', state: 'Cancelled' };
+    writeFileSync(join(project, '.claude/tracker-fixture.json'), JSON.stringify(data));
+    const found = await run(['issues', 'approved,building']);
+    expect(found.map((issue) => [issue.identifier, issue.role])).toEqual([
+      ['ABC-7', 'building'],
+      ['ABC-8', 'approved'],
+    ]);
+    expect(found[1]).toMatchObject({ priority: 1, branchName: 'abc-8-second' });
+    expect(found[1].blockedBy).toEqual([
+      { identifier: 'ABC-9', state: 'Cancelled', stateType: 'canceled', role: null },
+    ]);
   });
 
   it('posts after a comment whose date it cannot read', async () => {

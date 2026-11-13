@@ -2,8 +2,8 @@
  * Linear, behind the interface `scripts/tracker.mjs` expects of a provider:
  *
  *   createClient({ apiKey, team, fetch?, timeoutMs? }) -> {
- *     issue(id), comments(id), comment(id, body), setState(id, name),
- *     label(id, add, remove), states(),
+ *     issue(id), issues(names), comments(id), comment(id, body),
+ *     setState(id, name), label(id, add, remove), states(),
  *   }
  *
  * Every method takes an identifier such as `ABC-123` and works in status names;
@@ -182,6 +182,94 @@ export function createClient({ apiKey, team, fetch: fetchImpl = fetch, timeoutMs
     return nodes.sort((a, b) => a.position - b.position);
   }
 
+  /**
+   * Page sizes for `issues`, kept under Linear's 10,000-point complexity limit: a
+   * connection's children cost its `first` times over, so the nested relations cost
+   * about `ISSUE_PAGE * RELATION_PAGE * 4` points. `test/tracker.test.mjs` checks it.
+   */
+  const ISSUE_PAGE = 25;
+  const RELATION_PAGE = 25;
+  const RELATION_FIELDS = `nodes { type issue { identifier state { name type } } }
+    pageInfo { hasNextPage endCursor }`;
+
+  /**
+   * The team's issues in any of the statuses `names`, oldest first, paged to the end,
+   * each with what `/canon:pickup` orders and gates on: the priority, when it was
+   * created and last updated, its branch name, and the issues that block it with their
+   * status. Linear stores "A blocks B" as a relation on A, so B's blockers are its
+   * inverse relations of type `blocks`. An issue with more relations than one page
+   * holds is paged to the end on its own, so no blocker is cut off.
+   */
+  async function issues(names) {
+    const nodes = [];
+    let after = null;
+    for (;;) {
+      const data = await request(
+        `query Issues($team: String!, $states: [String!]!, $after: String) {
+          issues(
+            filter: { team: { key: { eq: $team } }, state: { name: { in: $states } } }
+            first: ${ISSUE_PAGE}
+            after: $after
+          ) {
+            nodes {
+              id
+              identifier
+              title
+              branchName
+              priority
+              createdAt
+              updatedAt
+              state { name type }
+              inverseRelations(first: ${RELATION_PAGE}) { ${RELATION_FIELDS} }
+            }
+            pageInfo { hasNextPage endCursor }
+          }
+        }`,
+        { team, states: names, after }
+      );
+      const page = data.issues;
+      nodes.push(...(page?.nodes ?? []));
+      if (!page?.pageInfo?.hasNextPage || !page.pageInfo.endCursor) break;
+      after = page.pageInfo.endCursor;
+    }
+    for (const node of nodes) {
+      const relations = node.inverseRelations ?? {};
+      relations.nodes ??= [];
+      let info = relations.pageInfo;
+      while (info?.hasNextPage && info.endCursor) {
+        const data = await request(
+          `query Blockers($id: String!, $after: String) {
+            issue(id: $id) { inverseRelations(first: 50, after: $after) { ${RELATION_FIELDS} } }
+          }`,
+          { id: node.id, after: info.endCursor }
+        );
+        const more = data.issue?.inverseRelations;
+        relations.nodes.push(...(more?.nodes ?? []));
+        info = more?.pageInfo;
+      }
+      node.inverseRelations = relations;
+    }
+    return nodes
+      .map((node) => ({
+        identifier: node.identifier,
+        title: node.title,
+        branchName: node.branchName ?? '',
+        priority: node.priority ?? 0,
+        createdAt: node.createdAt,
+        updatedAt: node.updatedAt,
+        state: node.state?.name ?? '',
+        stateType: node.state?.type ?? '',
+        blockedBy: node.inverseRelations.nodes
+          .filter((relation) => relation.type === 'blocks' && relation.issue)
+          .map(({ issue: blocker }) => ({
+            identifier: blocker.identifier,
+            state: blocker.state?.name ?? '',
+            stateType: blocker.state?.type ?? '',
+          })),
+      }))
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+  }
+
   async function setState(identifier, name) {
     const node = await raw(identifier);
     const state = (await states()).find((candidate) => candidate.name === name);
@@ -308,5 +396,5 @@ export function createClient({ apiKey, team, fetch: fetchImpl = fetch, timeoutMs
     };
   }
 
-  return { issue, comments, comment, setState, label, states };
+  return { issue, issues, comments, comment, setState, label, states };
 }

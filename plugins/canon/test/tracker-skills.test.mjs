@@ -50,6 +50,7 @@ describe('the tracker in the skills', () => {
       'define',
       'ship',
       'ship',
+      'ship',
     ]);
   });
 
@@ -66,6 +67,13 @@ describe('the tracker in the skills', () => {
     );
     expect(skill('build')).toMatch(/refuse unless the issue's role is `approved` or `blocked`/);
     expect(skill('ship')).toMatch(/the gate is the issue's role/);
+  });
+
+  it("moves pickup's two roles through its script, which the client still refuses beyond", () => {
+    const pickup = read('scripts/pickup.mjs');
+    expect(pickup).toContain("tracker(['set-state', id, 'building'], options)");
+    expect(pickup).toContain("tracker(['set-state', id, 'blocked'], options)");
+    expect([...pickup.matchAll(/'set-state'/g)].length).toBe(2);
   });
 
   it('approves on the tracker only after the push', () => {
