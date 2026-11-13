@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Download a pinned release binary, verify its SHA-256, and put it on PATH.
+# Download a pinned release binary, verify its SHA-256, install it in bin-dir, and print its path.
+# Run the tool from that path: bin-dir is not added to PATH.
 #
 #   .github/scripts/install-tool.sh <actionlint|zizmor|typos|lychee> [bin-dir]
 #
@@ -65,5 +66,4 @@ found="$(find "$work" -type f -name "$tool" | head -n 1)"
 [ -n "$found" ] || { echo "install-tool: $tool not found in the archive" >&2; exit 1; }
 mkdir -p "$bin"
 install -m 0755 "$found" "$bin/$tool"
-if [ -n "${GITHUB_PATH:-}" ]; then echo "$bin" >> "$GITHUB_PATH"; fi
 echo "$bin/$tool"
