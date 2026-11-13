@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.8.0](https://github.com/Arhaty/claude-plugins/compare/canon-v0.7.0...canon-v0.8.0) (2026-11-13)
+
+
+### Features
+
+* **canon:** review specs in define and pick up approved issues on a schedule ([#75](https://github.com/Arhaty/claude-plugins/issues/75)) ([c7687b2](https://github.com/Arhaty/claude-plugins/commit/c7687b2edc468655e6c23cb7ebed7ae73a6d3694))
+
 ## [0.7.0](https://github.com/Arhaty/claude-plugins/compare/canon-v0.6.0...canon-v0.7.0) (2026-11-07)
 
 
