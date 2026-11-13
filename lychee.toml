@@ -7,4 +7,6 @@ exclude = [
   # Placeholder hosts in templates, examples and docs.
   '^https?://([a-z0-9-]+\.)?example\.com',
   '\{branch\}',
+  # Real pages that answer automated requests with 403.
+  '^https://claude\.ai/',
 ]
