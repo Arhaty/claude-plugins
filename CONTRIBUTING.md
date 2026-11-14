@@ -12,7 +12,7 @@ Requires macOS or Linux, Node 20 or later, and pnpm.
 
 ```bash
 pnpm install
-pnpm test           # node --test over plugins/*/test, no dependencies
+pnpm test           # node --test over plugins/*/test, then claude plugin test for hooks modules
 pnpm validate       # claude plugin validate --strict on the marketplace and each plugin
 pnpm format:check   # prettier
 pnpm lint           # markdownlint
@@ -46,6 +46,10 @@ repository:
 - **Hooks and scripts import Node built-ins only** (`node:` specifiers) and each other. Each
   plugin's `test/builtins.test.mjs` fails on anything else. Plugins are installed without
   `npm install`, so a package import works on your machine and breaks on every install.
+- **A hooks module is the one exception.** A `.tsx` or `.ts` file listed under `modules` in
+  `hooks/hooks.json` is loaded by Claude Code itself, with no Node, and imports `'claude-code'`,
+  which the engine provides, plus files of its own plugin. Its tests are `test/*.test.ts(x)`, run by
+  `claude plugin test` (`pnpm test:modules`).
 
 ### canon
 
@@ -76,6 +80,17 @@ Paths below are relative to `plugins/write/`.
   `templates/write.schema.json`, in `validate` in `scripts/scaffold.mjs`, and in `/write:setup`.
 - **Presets use `{{language}}` and nothing else** unless `render` fills the new placeholder; an
   unknown one throws.
+
+### pulse
+
+Paths below are relative to `plugins/pulse/`.
+
+- **Every hook change comes with a test** in `test/register.test.tsx`, using made-up session ids
+  and titles: a session the row keeps and one it drops.
+- **Type-check against the engine's own types.** Claude Code writes them to
+  `.claude-plugin/types/` the first time it loads the plugin in an interactive session
+  (`claude --plugin-dir plugins/pulse`); the folder is ignored. Then run
+  `pnpm --package=typescript dlx tsc -p plugins/pulse`.
 
 ## Evals
 

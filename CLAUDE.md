@@ -7,7 +7,7 @@ each lives in `plugins/<name>/` with its own `.claude-plugin/plugin.json`, READM
 ## Commands
 
 ```bash
-pnpm test           # node --test over plugins/*/test
+pnpm test           # node --test over plugins/*/test, then claude plugin test for hooks modules
 pnpm validate       # claude plugin validate --strict, marketplace and each plugin
 pnpm format         # prettier --write; format:check in CI
 pnpm lint           # markdownlint
@@ -19,7 +19,8 @@ Run `pnpm test`, `pnpm validate`, `pnpm format:check` and `pnpm lint` before pro
 
 - **Plugin code imports `node:` built-ins only.** Hooks and scripts are installed without
   `npm install`. The devDependencies are CI tooling and are never imported by a plugin;
-  `test/builtins.test.mjs` fails on anything else.
+  `test/builtins.test.mjs` fails on anything else. A hooks module (a `.tsx` under `modules` in
+  `hooks/hooks.json`, as in pulse) is loaded by the engine and imports `'claude-code'` instead.
 - **Every hook change ships with tests**, including the case it must refuse.
 - **macOS and Linux only.** No Windows-specific code paths.
 - **Never bump a version or edit a CHANGELOG by hand.** release-please owns both.

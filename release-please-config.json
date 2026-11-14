@@ -30,6 +30,19 @@
           "jsonpath": "$.version"
         }
       ]
+    },
+    "plugins/pulse": {
+      "component": "pulse",
+      "package-name": "pulse",
+      "initial-version": "0.1.0",
+      "changelog-path": "CHANGELOG.md",
+      "extra-files": [
+        {
+          "type": "json",
+          "path": ".claude-plugin/plugin.json",
+          "jsonpath": "$.version"
+        }
+      ]
     }
   }
 }

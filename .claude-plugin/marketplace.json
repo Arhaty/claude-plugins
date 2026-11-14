@@ -23,6 +23,14 @@
       "category": "productivity",
       "homepage": "https://github.com/arhaty/claude-plugins/tree/main/plugins/write",
       "license": "MIT"
+    },
+    {
+      "name": "pulse",
+      "source": "./plugins/pulse",
+      "description": "A row above the prompt listing your Claude Code cloud sessions that are running, queued or waiting on you, each linked to claude.ai/code.",
+      "category": "productivity",
+      "homepage": "https://github.com/arhaty/claude-plugins/tree/main/plugins/pulse",
+      "license": "MIT"
     }
   ]
 }

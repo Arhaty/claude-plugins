@@ -9,7 +9,8 @@
   },
   "packageManager": "pnpm@9.15.1",
   "scripts": {
-    "test": "node --test plugins/*/test/*.test.mjs",
+    "test": "node --test plugins/*/test/*.test.mjs && pnpm test:modules",
+    "test:modules": "for p in plugins/*/; do if ls \"$p\"test/*.test.ts* >/dev/null 2>&1; then claude plugin test \"$p\" || exit 1; fi; done",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "lint": "markdownlint-cli2",
