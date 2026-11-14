@@ -5,6 +5,8 @@ import type { CloudSnapshot, CloudTask } from '../types';
 
 const snapshot = atom({ plugin: 'pulse', key: 'snapshot' } as const, null);
 const isHidden = atom({ plugin: 'pulse', key: 'isHidden' } as const, false);
+// In session state, not the module: a reload starts the module over and would toast again.
+const toldNoLogin = atom({ plugin: 'pulse', key: 'toldNoLogin' } as const, false);
 
 const POLL_MS = 60_000;
 const API = 'https://api.anthropic.com/v1/code/sessions?limit=100';
@@ -15,13 +17,16 @@ const TITLE_MAX = 28;
 const NO_LOGIN = 'pulse: cloud sessions need a claude.ai login, so the row stays hidden';
 
 // Only sessions doing something right now, or waiting on you; idle ones are just unarchived history.
-const LABELS: Record<string, { icon: string; color: string; text: string }> = {
-  running: { icon: '●', color: 'green', text: 'running' },
-  starting: { icon: '●', color: 'green', text: 'starting' },
-  pending: { icon: '◌', color: 'gray', text: 'queued' },
-  requires_action: { icon: '◆', color: 'yellow', text: 'needs you' },
-  waiting: { icon: '◆', color: 'yellow', text: 'needs you' },
-};
+// A Map, so an inherited key such as `constructor` is never a status.
+const LABELS = new Map<string, { icon: string; color: string; text: string }>([
+  ['running', { icon: '●', color: 'green', text: 'running' }],
+  ['starting', { icon: '●', color: 'green', text: 'starting' }],
+  ['pending', { icon: '◌', color: 'gray', text: 'queued' }],
+  ['requires_action', { icon: '◆', color: 'yellow', text: 'needs you' }],
+  ['waiting', { icon: '◆', color: 'yellow', text: 'needs you' }],
+]);
+// Only these are waiting on you; a pending_action left on a running session is stale.
+const NEEDS_YOU = new Set(['requires_action', 'waiting']);
 
 // claude.ai addresses sessions as session_…, the API may hand back cse_….
 function webId(id: string): string {
@@ -51,8 +56,8 @@ function toTask(r: any): CloudTask | null {
   const title = String(r?.title ?? '').trim();
   // `status` is only "active" or "archived"; the run state lives in `worker_status`.
   const status = r?.status === 'archived' ? 'archived' : String(r?.worker_status ?? 'idle');
-  if (isPlaceholder(title) || !(status in LABELS)) return null;
-  const tool = r?.external_metadata?.pending_action?.tool_name;
+  if (isPlaceholder(title) || !LABELS.has(status)) return null;
+  const tool = NEEDS_YOU.has(status) ? r?.external_metadata?.pending_action?.tool_name : null;
   return {
     id,
     title,
@@ -60,6 +65,28 @@ function toTask(r: any): CloudTask | null {
     url: `https://claude.ai/code/${webId(id)}`,
     pendingTool: typeof tool === 'string' ? tool : null,
   };
+}
+
+const text = (v: unknown): string => (typeof v === 'string' ? v : '');
+
+// The row is one line: whitespace collapsed, and never longer than DETAIL_MAX.
+const DETAIL_MAX = 120;
+function oneLine(s: string): string {
+  const chars = [...s.replace(/\s+/g, ' ').trim()];
+  return chars.length > DETAIL_MAX ? `${chars.slice(0, DETAIL_MAX - 1).join('')}…` : chars.join('');
+}
+
+// The API's own message when the body says one, else the start of the body.
+function errorDetail(body: string): string {
+  try {
+    const json = JSON.parse(body);
+    const found =
+      text(json?.error?.message) || text(json?.error) || text(json?.detail) || text(json?.message);
+    if (found) return oneLine(found);
+  } catch {
+    // not JSON: fall through to the raw body
+  }
+  return oneLine(body);
 }
 
 /** One check: the snapshot to show, or 'no-login'. Never throws. */
@@ -76,14 +103,10 @@ async function check($: EngineInterface): Promise<CloudSnapshot | 'no-login'> {
     for (let page = 0; page < MAX_PAGES; page++) {
       const res = await $.http.fetch(url, { headers, auth: auth.handle });
       if (!res.ok) {
-        let detail = '';
-        try {
-          detail = JSON.parse(res.text)?.error?.message ?? '';
-        } catch {
-          detail = res.text.slice(0, 120);
-        }
+        const detail = errorDetail(res.text);
+        // A later page failing keeps what the earlier pages found, marked as incomplete.
         return {
-          tasks: [],
+          tasks: [...tasks.values()],
           error: `cloud tasks: HTTP ${res.status}${detail ? ` – ${detail}` : ''}`,
         };
       }
@@ -105,41 +128,91 @@ async function check($: EngineInterface): Promise<CloudSnapshot | 'no-login'> {
 
     return { tasks: [...tasks.values()], error: null };
   } catch (err) {
-    return { tasks: [], error: `cloud tasks: ${err instanceof Error ? err.message : String(err)}` };
+    const message = oneLine(err instanceof Error ? err.message : String(err));
+    return { tasks: [], error: `cloud tasks: ${message}` };
   }
 }
 
 // The session's own: the module starts over on a reload, and session.start sets them again.
-let isActive = false; // the session can draw the row: interactive, on a surface with a prompt
+let isInteractive = false;
 let timer: Timer | null = null;
-let latest = 0;
-let toldNoLogin = false;
+let running: Promise<void> | null = null;
+let isAgain = false;
 
 function stop(): void {
   timer?.cancel();
   timer = null;
 }
 
-async function poll($: EngineInterface): Promise<void> {
-  if (!isActive || (await read($, isHidden))) return;
-  const seq = ++latest;
+// Asked on every poll, not once at start: a desktop client may attach later.
+async function canDraw($: EngineInterface): Promise<boolean> {
+  if (!isInteractive) return false;
+  const surfaces = await $.session.surfaces();
+  return surfaces.some((s) => s === 'terminal' || s === 'desktop');
+}
+
+/**
+ * One check at a time. A poll asked for while one runs is folded into a single
+ * check after it, so a slow API never leaves every answer superseded.
+ */
+function poll($: EngineInterface): Promise<void> {
+  if (running !== null) {
+    isAgain = true;
+    return running;
+  }
+  running = (async () => {
+    try {
+      do {
+        isAgain = false;
+        try {
+          await pollOnce($);
+        } catch {
+          // State torn down mid-check (the session ending): nothing left to draw on.
+        }
+      } while (isAgain);
+    } finally {
+      running = null;
+      isAgain = false;
+    }
+  })();
+  return running;
+}
+
+async function pollOnce($: EngineInterface): Promise<void> {
+  if (await read($, isHidden)) return;
+  if (!(await canDraw($))) {
+    // The last surface with a prompt left: stop, and drop what it would redraw on return.
+    stop();
+    await update($, snapshot, () => null);
+    return;
+  }
   const result = await check($);
-  // A newer poll started while this one waited: its answer wins.
-  if (seq !== latest || (await read($, isHidden))) return;
+  if (await read($, isHidden)) return;
 
   if (result === 'no-login') {
     // Permanent until the person logs in: no row and no timer; each main turn checks again.
     stop();
     await update($, snapshot, () => null);
-    if (!toldNoLogin) {
-      toldNoLogin = true;
+    if (!(await read($, toldNoLogin))) {
+      await update($, toldNoLogin, () => true);
       $.ui.toast(NO_LOGIN);
     }
     return;
   }
 
+  if (await read($, toldNoLogin)) await update($, toldNoLogin, () => false); // a later logout tells again
   timer ??= $.clock.every(POLL_MS, () => void poll($));
-  await update($, snapshot, () => result);
+  await update($, snapshot, (prev) => (result.error === null ? result : keepFound(prev, result)));
+}
+
+/**
+ * A failed check keeps the sessions the last good one found, under the new ones, so one
+ * transient error marks the row incomplete rather than replacing it.
+ */
+function keepFound(prev: CloudSnapshot | null, failed: CloudSnapshot): CloudSnapshot {
+  const tasks = new Map((prev?.tasks ?? []).map((t) => [t.id, t] as const));
+  for (const t of failed.tasks) tasks.set(t.id, t);
+  return { tasks: [...tasks.values()], error: failed.error };
 }
 
 async function hide($: EngineInterface): Promise<void> {
@@ -151,10 +224,27 @@ export const register: Register = (on) => {
   on('session.start', async ($, e, next) => {
     const started = await next(e);
     stop();
-    toldNoLogin = false;
-    isActive = e.isInteractive && (e.surface === 'terminal' || e.surface === 'desktop');
+    isInteractive = e.isInteractive;
     void poll($);
     return started;
+  });
+
+  // A desktop client attaching can turn the row on for a session that started without one.
+  // Only desktop: a phone never draws the row, and a session already polling needs no extra check.
+  on('session.attach', { surface: 'desktop' }, async ($, e, next) => {
+    const result = await next(e);
+    if (timer === null) void poll($);
+    return result;
+  });
+
+  // The last surface with a prompt leaving stops the timer; the check says whether it was.
+  on('session.detach', async ($, e, next) => {
+    const result = await next(e);
+    if (timer !== null && !(await canDraw($))) {
+      stop();
+      await update($, snapshot, () => null);
+    }
+    return result;
   });
 
   // Refresh when a main turn ends, so new tasks you just launched show up quickly.
@@ -169,27 +259,30 @@ export const register: Register = (on) => {
     if (e.props.hasSurvey || snap === null || (await read($, isHidden))) {
       return next(e);
     }
-    if (snap.error === null && snap.tasks.length === 0) return next(e);
+    // A snapshot stored before a reload may hold a status this version no longer shows.
+    const tasks = snap.tasks.filter((t) => LABELS.has(t.status));
+    if (snap.error === null && tasks.length === 0) return next(e);
 
     const { Box, Button, Link, Text } = $.ui.resolve(e);
 
-    if (snap.error !== null) {
+    if (tasks.length === 0) {
       return (
         <Box>
           <Text dimColor>☁ {snap.error} </Text>
           <Button key="retry" label="Retry" onPress={() => poll($)} />
+          <Button key="hide" label="Hide" onPress={() => hide($)} />
         </Box>
       );
     }
 
-    const shown = snap.tasks.slice(0, 4);
-    const extra = snap.tasks.length - shown.length;
+    const shown = tasks.slice(0, 4);
+    const extra = tasks.length - shown.length;
 
     return (
       <Box flexDirection="row" flexWrap="wrap">
-        <Text dimColor>☁ {snap.tasks.length} cloud: </Text>
+        <Text dimColor>☁ {tasks.length} cloud: </Text>
         {shown.map((t) => {
-          const l = LABELS[t.status] ?? { icon: '○', color: 'gray', text: t.status };
+          const l = LABELS.get(t.status)!; // filtered above
           const state = t.pendingTool ? `${l.text}: approve ${t.pendingTool}` : l.text;
           return (
             <Text key={t.id}>
@@ -199,6 +292,7 @@ export const register: Register = (on) => {
           );
         })}
         {extra > 0 ? <Text dimColor>+{extra} more </Text> : null}
+        {snap.error !== null ? <Text dimColor>(incomplete: {snap.error}) </Text> : null}
         <Button key="refresh" label="↻" onPress={() => poll($)} />
         <Button key="hide" label="Hide" onPress={() => hide($)} />
       </Box>

@@ -44,6 +44,8 @@ sessions, and local sessions shared over Remote Control, are left out.
 
 Pulse checks when the session starts, every 60 s after that, and after each of your turns, so a
 cloud session you just launched shows up quickly. A check reads up to five pages of 100 sessions.
+If a check fails after one that worked, the row keeps the sessions it already showed and marks
+itself incomplete.
 
 ## Privacy
 
@@ -56,4 +58,4 @@ in the session's memory and is not written to disk.
 
 The endpoint pulse reads is the one Claude Code itself uses to list cloud sessions. It is not a
 documented public API and may change without notice. If it does, the row shows the HTTP error, with
-a **Retry** button.
+**Retry** and **Hide** buttons.

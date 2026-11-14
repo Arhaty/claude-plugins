@@ -15,6 +15,6 @@ export type CloudSnapshot = {
 
 declare module 'claude-code' {
   interface PluginState {
-    pulse: { snapshot: CloudSnapshot | null; isHidden: boolean };
+    pulse: { snapshot: CloudSnapshot | null; isHidden: boolean; toldNoLogin: boolean };
   }
 }
