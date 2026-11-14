@@ -11,7 +11,6 @@ export type CloudTask = {
 export type CloudSnapshot = {
   tasks: CloudTask[];
   error: string | null;
-  checkedAt: number;
 };
 
 declare module 'claude-code' {

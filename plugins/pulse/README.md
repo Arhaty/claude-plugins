@@ -12,8 +12,10 @@ names the tool it wants approved. When nothing is active, the row hides itself.
 
 - Claude Code signed in with a claude.ai account. Pulse uses the session's own credential, through
   `$.session.authorize()`. With an API key or a third-party provider there is no claude.ai login to
-  use, and the row says `cloud tasks need a claude.ai login` instead.
-- A terminal or desktop session: those are the surfaces that draw the row above the prompt.
+  use: pulse says so once in a toast, draws no row and makes no requests. If you log in during the
+  session, it starts after your next turn.
+- An interactive terminal or desktop session: those draw the row above the prompt. In `claude -p`
+  or an SDK session pulse does nothing.
 
 ## Install
 
@@ -38,14 +40,14 @@ A session waiting on a tool approval reads `needs you: approve <tool>`. Idle and
 sessions, and local sessions shared over Remote Control, are left out.
 
 - **↻** checks again now.
-- **Hide** hides the row for the rest of the session.
+- **Hide** hides the row and stops checking for the rest of the session.
 
 Pulse checks when the session starts, every 60 s after that, and after each of your turns, so a
-cloud session you just launched shows up quickly.
+cloud session you just launched shows up quickly. A check reads up to five pages of 100 sessions.
 
 ## Privacy
 
-Pulse has no server and no telemetry. It sends one request,
+Pulse has no server and no telemetry. It sends one request per page,
 `GET https://api.anthropic.com/v1/code/sessions`, with your session's claude.ai credential. Claude
 Code attaches the credential itself; pulse holds only an opaque handle to it. What it reads stays
 in the session's memory and is not written to disk.
