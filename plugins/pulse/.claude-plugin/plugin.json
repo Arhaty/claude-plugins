@@ -1,6 +1,6 @@
 {
   "name": "pulse",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "Shows your running, queued and waiting Claude Code cloud sessions in a row above the prompt, each linked to claude.ai/code.",
   "author": {
     "name": "Arhaty",
@@ -9,7 +9,12 @@
   "homepage": "https://github.com/arhaty/claude-plugins/tree/main/plugins/pulse",
   "repository": "https://github.com/arhaty/claude-plugins",
   "license": "MIT",
-  "keywords": ["cloud", "sessions", "status", "remote"],
+  "keywords": [
+    "cloud",
+    "sessions",
+    "status",
+    "remote"
+  ],
   "types": "./types/index.d.ts",
   "metadata": {
     "requires": "Claude Code signed in with a claude.ai account"
