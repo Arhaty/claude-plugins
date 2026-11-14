@@ -1,4 +1,5 @@
 {
   "plugins/canon": "0.8.0",
-  "plugins/write": "0.3.0"
+  "plugins/write": "0.3.0",
+  "plugins/pulse": "0.0.0"
 }

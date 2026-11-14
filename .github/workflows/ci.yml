@@ -52,6 +52,10 @@ jobs:
           for plugin in plugins/*/; do
             pnpm exec claude plugin validate "$plugin" --strict
           done
+      # Hooks modules (.tsx) are tested by the engine's own runner, which comes with the
+      # pinned CLI; the test job above stays install-free for the node scripts.
+      - name: Test hooks modules
+        run: pnpm test:modules
       - name: Format
         run: pnpm format:check
       - name: Markdown lint
