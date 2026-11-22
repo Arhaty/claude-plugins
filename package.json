@@ -17,7 +17,7 @@
     "validate": "claude plugin validate . --strict && for p in plugins/*/; do claude plugin validate \"$p\" --strict || exit 1; done"
   },
   "devDependencies": {
-    "@anthropic-ai/claude-code": "2.1.323",
+    "@anthropic-ai/claude-code": "2.1.328",
     "markdownlint-cli2": "0.24.1",
     "prettier": "3.10.1"
   }
